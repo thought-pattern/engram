@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from nltk.tokenize import sent_tokenize
 
-from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
+from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
 from engram.nltk_data import ensure_resource
 
 
@@ -17,24 +17,6 @@ def ensure_punkt() -> None:
     """Ensure the punkt tokenizers are present (cached, runs once)."""
     ensure_resource("tokenizers/punkt", "punkt")
     ensure_resource("tokenizers/punkt_tab", "punkt_tab")
-
-
-def substitution_maps(
-    contractions=DEFAULT_CONTRACTIONS,
-    person=DEFAULT_PERSON,
-    person2=DEFAULT_PERSON2,
-    gender=DEFAULT_GENDER,
-    custom=(),
-) -> dict:
-    """Build a container dict holding all substitution maps."""
-    maps = {
-        "contractions": dict(contractions),
-        "person": dict(person),
-        "person2": dict(person2),
-        "gender": dict(gender),
-        "custom": dict(custom or ()),
-    }
-    return maps
 
 
 def get_all_input_subs(maps: dict) -> dict[str, str]:

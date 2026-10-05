@@ -32,7 +32,7 @@ depend on Tapestry. Dynamic labels are literal text, never extra format fields.
 from nltk.corpus import wordnet
 
 from engram.constants import FRAME_OVERRIDES, VOWELS
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 from engram.text import initialize_nltk_readers
 
 
@@ -78,7 +78,7 @@ def frame_for_label(label: str) -> str:
     Degrades to a bare active frame if the model is unavailable, so a lost
     spaCy install weakens phrasing rather than breaking recall.
     """
-    nlp = get_nlp(disable=("parser", "ner"))
+    nlp = SPACY_PIPELINES.pipeline(disable=("parser", "ner"))
     normalized = label.lower().strip()
     literal_label = label.replace("{", "{{").replace("}", "}}")
     if not nlp:

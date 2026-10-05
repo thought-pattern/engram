@@ -4,36 +4,36 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import nlp
 from engram.config import engram_config
+from engram.constants import Tier
 from engram.core import Engram
-from engram.models import Tier
-from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns, input_kind, is_question
+from engram.nlp import extract_entities, extract_fact, fact_query_patterns, input_kind, is_question
 
 
 def test_fact_extractor_extract_simple_is():
     """Test extracting 'X is Y' facts."""
     fact = extract_fact("The sky is blue")
     assert fact
-    assert fact["subject"] == "sky"
-    assert fact["predicate"] == "is"
-    assert fact["obj"] == "blue"
-    assert fact["original"] == "The sky is blue."
+    assert fact.get("subject", "") == "sky"
+    assert fact.get("predicate", "") == "is"
+    assert fact.get("obj", "") == "blue"
+    assert fact.get("original", "") == "The sky is blue."
 
 
 def test_fact_extractor_extract_simple_are():
     """Test extracting 'X are Y' facts."""
     fact = extract_fact("Cats are mammals")
     assert fact
-    assert fact["subject"] == "Cats"
-    assert fact["predicate"] == "are"
-    assert fact["obj"] == "mammals"
+    assert fact.get("subject", "") == "Cats"
+    assert fact.get("predicate", "") == "are"
+    assert fact.get("obj", "") == "mammals"
 
 
 def test_fact_extractor_extract_complex_subject():
     """Test extracting facts with complex subjects."""
     fact = extract_fact("The capital of France is Paris")
     assert fact
-    assert fact["subject"] == "capital of France"
-    assert fact["obj"] == "Paris"
+    assert fact.get("subject", "") == "capital of France"
+    assert fact.get("obj", "") == "Paris"
 
 
 def test_fact_extractor_skip_questions():
@@ -66,7 +66,7 @@ def test_fact_extractor_skip_short_input():
 
 def test_fact_extractor_query_patterns_is():
     """Test query pattern generation for 'is' facts."""
-    fact = extracted_fact(subject="sky", predicate="is", obj="blue", original="The sky is blue.")
+    fact = {"subject": "sky", "predicate": "is", "obj": "blue", "original": "The sky is blue."}
     patterns = fact_query_patterns(fact)
     assert "SKY" in patterns
     assert "WHAT IS SKY" in patterns
@@ -81,7 +81,7 @@ def test_fact_extractor_query_patterns_is():
 
 def test_fact_extractor_query_patterns_are():
     """Test query pattern generation for 'are' facts."""
-    fact = extracted_fact(subject="cats", predicate="are", obj="mammals", original="Cats are mammals.")
+    fact = {"subject": "cats", "predicate": "are", "obj": "mammals", "original": "Cats are mammals."}
     patterns = fact_query_patterns(fact)
     assert "CATS" in patterns
     assert "WHAT ARE CATS" in patterns
@@ -172,17 +172,17 @@ def test_fact_extraction_guardrails_reject_long_subject():
 
 def test_fact_extraction_guardrails_accept_plain_noun_phrase_subjects():
     fact = extract_fact("The capital of France is Paris")
-    assert fact["subject"] == "capital of France"
+    assert fact.get("subject", "") == "capital of France"
     fact = extract_fact("The sky is blue")
-    assert fact["subject"] == "sky"
+    assert fact.get("subject", "") == "sky"
 
 
 def test_fact_extraction_guardrails_accept_single_noun_like_ing_subject():
     fact = extract_fact("Lightning is an electrical discharge")
 
-    assert fact["subject"] == "Lightning"
-    assert fact["predicate"] == "is"
-    assert fact["obj"] == "an electrical discharge"
+    assert fact.get("subject", "") == "Lightning"
+    assert fact.get("predicate", "") == "is"
+    assert fact.get("obj", "") == "an electrical discharge"
 
 
 """Tests for the public question/intent detection."""
@@ -251,8 +251,8 @@ def test_fact_extraction_soak_regressions_reject_possessive_object():
 
 
 def test_fact_extraction_soak_regressions_legitimate_facts_still_learn():
-    assert extract_fact("Honey is made by bees")["subject"] == "Honey"
-    assert extract_fact("Rex is a golden retriever")["subject"] == "Rex"
+    assert extract_fact("Honey is made by bees").get("subject", "") == "Honey"
+    assert extract_fact("Rex is a golden retriever").get("subject", "") == "Rex"
 
 
 """A leading near-miss of a question word is a typo'd question."""
@@ -278,7 +278,7 @@ def test_typo_question_detection_typo_questions_never_learned_as_facts():
 
 
 def test_typo_question_detection_real_word_subjects_still_learn():
-    assert extract_fact("The cow is a farm animal")["subject"] == "cow"
+    assert extract_fact("The cow is a farm animal").get("subject", "") == "cow"
 
 
 @pytest_mark.parametrize("extractor", (extract_fact, extract_entities))

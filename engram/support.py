@@ -58,12 +58,13 @@ def validate_support_visibility(value) -> dict:
         engagement_id = require_any_text(engagement_id, "support engagement_id", MAX_METADATA_BYTES)
     else:
         raise ValueError("support visibility kind is not registered")
-    return {
+    result = {
         "kind": kind,
         "company_id": company_id,
         "customer_id": customer_id,
         "engagement_id": engagement_id,
     }
+    return result
 
 
 def validate_support_reference(value) -> dict:
@@ -124,11 +125,14 @@ def validate_statement_scope_bindings(value) -> tuple:
     for item in value:
         if not isinstance(item, dict) or set(item) != {"statement_id", "visibility_scope"}:
             raise ValueError("statement scope binding fields are malformed")
-        identifier = require_any_text(item.get("statement_id"), "scope binding statement_id", MAX_METADATA_BYTES)
-        scope = validate_support_visibility(item.get("visibility_scope"))
-        key = (identifier, scope.get("kind"), *(scope.get(field) or "" for field in ("company_id", "customer_id", "engagement_id")))
+        identifier = require_any_text(item.get("statement_id", ""), "scope binding statement_id", MAX_METADATA_BYTES)
+        scope = validate_support_visibility(item.get("visibility_scope", {}))
+        # Absent identifiers are empty mappings; they key as "" beside real identifiers.
+        identifiers = tuple(scope.get(field, "") or "" for field in ("company_id", "customer_id", "engagement_id"))
+        key = (identifier, scope.get("kind", ""), *identifiers)
         if key in seen:
             raise ValueError("statement scope bindings contain a duplicate")
         seen.add(key)
         bindings.append({"statement_id": identifier, "visibility_scope": scope})
-    return tuple(bindings)
+    result = tuple(bindings)
+    return result

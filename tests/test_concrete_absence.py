@@ -3,7 +3,7 @@
 from json import dumps as json_dumps
 
 from engram.core import Engram
-from engram.pipeline import pipeline_result
+from engram.pipeline import respond
 from engram.service import EngramCore
 
 
@@ -30,7 +30,7 @@ def test_representative_outputs_are_recursively_concrete() -> None:
 
     values = {
         "status": core.status(),
-        "pipeline": pipeline_result("", "none"),
+        "pipeline": respond(engram, "xyzzy plugh"),
         "fact": fact,
         "inspection": core.inspect_conversation("0", conversation_token=started.get("conversation_token", "")),
         "report": runtime.report(),

@@ -26,13 +26,8 @@ from engram.models import Tier, session as make_session, session_update_dialogue
 from engram.nlp import extract_fact
 
 SEED_PATH = Path(__file__).resolve().parent.parent / "engram" / "data" / "seed.json"
-
-
-def seeded_engram() -> Engram:
-    engram = Engram()
-    seed = json_loads(SEED_PATH.read_text(encoding="utf-8"))
-    engram.load_static_data(seed.get("pairs", []))
-    return engram
+# Read-only: load_static_data copies every pair into its own statements.
+SEED_PAIRS = json_loads(SEED_PATH.read_text(encoding="utf-8")).get("pairs", [])
 
 
 def test_dialogue_acts_classifies_common_conversational_moves() -> None:
@@ -74,7 +69,7 @@ def test_topic_and_entity_interpretation_fact_subject_becomes_topic_and_entity()
     entities = extract_dialogue_entities("Kyoto is beautiful in spring.", fact=fact, topic=topic)
 
     assert topic == "Kyoto"
-    assert {entity["text"] for entity in entities} == {"Kyoto"}
+    assert {entity.get("text", "") for entity in entities} == {"Kyoto"}
 
 
 def test_topic_and_entity_interpretation_pronoun_keeps_previous_topic() -> None:
@@ -165,7 +160,8 @@ def test_topic_and_entity_interpretation_capitalized_discourse_frames_preserve_t
 
     for text in examples:
         entities = extract_dialogue_entities(text)
-        assert not {"To", "If", "In", "Allow", "With", "One"} & {entity["text"] for entity in entities}
+        assert all("text" in entity for entity in entities)
+        assert not {"To", "If", "In", "Allow", "With", "One"} & {entity.get("text", "") for entity in entities}
         assert infer_active_topic(text, entities=entities, previous_topic="gardens") == "gardens"
 
 
@@ -183,7 +179,7 @@ def test_topic_and_entity_interpretation_session_entities_are_canonical_by_surfa
     session_update_dialogue(session, DIALOGUE_STATEMENT, entities=[{"text": "Alice", "label": "PROPER_NOUN"}])
     session_update_dialogue(session, DIALOGUE_FACT, active_topic="Alice", entities=[{"text": "Alice", "label": "SUBJECT"}])
 
-    assert session["entities"] == [{"text": "Alice", "label": "SUBJECT"}]
+    assert session.get("entities", []) == [{"text": "Alice", "label": "SUBJECT"}]
 
 
 def test_topic_and_entity_interpretation_recalled_topic_uses_the_original_subject_casing() -> None:
@@ -220,7 +216,9 @@ def test_conversational_fact_admission_rejects_hedged_transient_and_meta_asserti
     for text in examples:
         fact = extract_fact(text)
         assert fact
-        assert not conversational_fact_admission(fact, text).get("admitted", False)
+        admission = conversational_fact_admission(fact, text)
+        assert "admitted" in admission
+        assert not admission.get("admitted", False)
 
 
 def test_conversational_fact_admission_admission_explains_rejection_reason() -> None:
@@ -242,31 +240,34 @@ def test_conversational_fact_admission_admission_explains_rejection_reason() -> 
 
 
 def test_conversation_integration_topic_shift_uses_the_normalized_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "Let us talk about cities for a while.", user_id="Robin")
 
-    assert result["pattern"] == "LET US TALK ABOUT *"
-    assert result["active_topic"] == "cities"
-    assert "cities" in result["response"].lower()
+    assert result.get("pattern", "") == "LET US TALK ABOUT *"
+    assert result.get("active_topic", "") == "cities"
+    assert "cities" in result.get("response", "").lower()
 
 
 def test_conversation_integration_return_to_is_an_explicit_topic_shift() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Robin")
     pipeline.chat(engram, "Dune is a science fiction novel.", user_id="Robin")
 
     result = pipeline.chat(engram, "Let's return to Kyoto.", user_id="Robin")
 
-    assert result["dialogue_act"] == DIALOGUE_TOPIC_SHIFT
-    assert result["active_topic"] == "Kyoto"
-    assert result["source"] == "pattern"
+    assert result.get("dialogue_act", "") == DIALOGUE_TOPIC_SHIFT
+    assert result.get("active_topic", "") == "Kyoto"
+    assert result.get("source", "") == "pattern"
 
 
 def test_conversation_integration_discourse_frames_do_not_displace_an_established_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     result = pipeline.chat(engram, "What first comes to mind when you consider gardens?", user_id="Robin")
-    assert result["active_topic"] == "gardens"
+    assert result.get("active_topic", "") == "gardens"
     examples = (
         "To answer with brevity and warmth: gardens reward patient attention.",
         "If gardens had a chair, they would choose the one by the window.",
@@ -279,24 +280,26 @@ def test_conversation_integration_discourse_frames_do_not_displace_an_establishe
 
     for text in examples:
         result = pipeline.chat(engram, text, user_id="Robin")
-        assert result["active_topic"] == "gardens"
+        assert result.get("active_topic", "") == "gardens"
 
     result = pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Robin")
-    assert result["active_topic"] == "Kyoto"
+    assert result.get("active_topic", "") == "Kyoto"
 
 
 def test_conversation_integration_closing_keeps_the_matched_category() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "Thank you. That is enough for today.", user_id="Robin")
 
-    assert result["dialogue_act"] == DIALOGUE_CLOSING
-    assert result["pattern"] == "THAT IS *"
-    assert result["source"] == "pattern"
+    assert result.get("dialogue_act", "") == DIALOGUE_CLOSING
+    assert result.get("pattern", "") == "THAT IS *"
+    assert result.get("source", "") == "pattern"
 
 
 def test_conversation_integration_closing_survives_a_trailing_farewell_statement() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(
         engram,
@@ -304,152 +307,177 @@ def test_conversation_integration_closing_survives_a_trailing_farewell_statement
         user_id="Robin",
     )
 
-    assert result["dialogue_act"] == DIALOGUE_CLOSING
-    assert result["source"] == "pattern"
-    assert result["response"]
+    assert result.get("dialogue_act", "") == DIALOGUE_CLOSING
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "")
 
 
 def test_conversation_integration_a_request_after_goodbye_reopens_the_turn() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "Goodbye. What is your name?", user_id="Robin")
 
-    assert result["dialogue_act"] == DIALOGUE_QUESTION
-    assert result["pattern"] == "WHAT IS YOUR NAME"
-    assert "ENGRAM" in result["response"]
+    assert result.get("dialogue_act", "") == DIALOGUE_QUESTION
+    assert result.get("pattern", "") == "WHAT IS YOUR NAME"
+    assert "ENGRAM" in result.get("response", "")
 
 
 def test_conversation_integration_trailing_gratitude_does_not_hide_an_earlier_question() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "What should I call you? Thank you.", user_id="Robin")
 
-    assert result["dialogue_act"] == DIALOGUE_QUESTION
-    assert result["pattern"] == "THANK YOU"
-    assert "ENGRAM" in result["response"]
+    assert result.get("dialogue_act", "") == DIALOGUE_QUESTION
+    assert result.get("pattern", "") == "THANK YOU"
+    assert "ENGRAM" in result.get("response", "")
 
 
 def test_conversation_integration_topic_and_entities_are_per_user_in_process() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Alice")
     pipeline.chat(engram, "Hello.", user_id="Carol")
 
-    assert engram.sessions["Alice"]["active_topic"] == "Kyoto"
-    assert any(entity["text"] == "Kyoto" for entity in engram.sessions["Alice"]["entities"])
-    assert engram.sessions["Carol"]["active_topic"] == ""
+    alice_session = engram.sessions.get("Alice", {})
+    carol_session = engram.sessions.get("Carol", {})
+    assert alice_session.get("active_topic", "") == "Kyoto"
+    assert any(entity.get("text", "") == "Kyoto" for entity in alice_session.get("entities", []))
+    assert "active_topic" in carol_session
+    assert carol_session.get("active_topic", "") == ""
 
-    assert engram.sessions["Alice"]["active_topic"] == "Kyoto"
-    assert any(entity["text"] == "Kyoto" for entity in engram.sessions["Alice"]["entities"])
+    alice_session = engram.sessions.get("Alice", {})
+    assert alice_session.get("active_topic", "") == "Kyoto"
+    assert any(entity.get("text", "") == "Kyoto" for entity in alice_session.get("entities", []))
 
 
 def test_conversation_integration_category_is_spoken_while_the_fact_stays_stored() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Cherry blossoms are ephemeral.", user_id="Robin")
 
     result = pipeline.chat(engram, "Their brevity makes them memorable.", user_id="Robin")
 
-    assert result["active_topic"] == "Cherry blossoms"
-    assert result["source"] == "pattern"
-    learned = [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]
-    assert any("ephemeral" in statement["text"] for statement in learned)
+    assert result.get("active_topic", "") == "Cherry blossoms"
+    assert result.get("source", "") == "pattern"
+    learned = [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
+    assert any("ephemeral" in statement.get("text", "") for statement in learned)
 
 
 def test_conversation_integration_unrelated_question_replaces_stale_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Saturn is less dense than water.", user_id="Robin")
 
     result = pipeline.chat(engram, "How large is the universe?", user_id="Robin")
 
-    assert result["active_topic"] == "universe"
-    assert "Saturn" not in result["response"]
+    assert result.get("active_topic", "") == "universe"
+    assert "response" in result
+    assert "Saturn" not in result.get("response", "")
 
 
 def test_conversation_integration_unresolved_unrelated_question_clears_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Writing is a form of thinking.", user_id="Robin")
 
     result = pipeline.chat(engram, "What would you create if you could make one small tool?", user_id="Robin")
 
-    assert result["active_topic"] == ""
-    assert "writing" not in result["response"].lower()
+    assert "active_topic" in result
+    assert result.get("active_topic", "") == ""
+    assert "response" in result
+    assert "writing" not in result.get("response", "").lower()
 
 
 def test_conversation_integration_fact_recall_promotes_its_subject_to_active_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Sushi is good.", user_id="Robin")
     pipeline.chat(engram, "Writing is a form of thinking.", user_id="Robin")
 
     result = pipeline.chat(engram, "What is good?", user_id="Robin")
 
-    assert result["response"] == "Sushi is good."
-    assert result["active_topic"] == "Sushi"
+    assert result.get("response", "") == "Sushi is good."
+    assert result.get("active_topic", "") == "Sushi"
 
 
 def test_conversation_integration_fact_recall_preserves_acronym_topic_casing() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "ENIAC is an early electronic computer.", user_id="Robin")
 
     result = pipeline.chat(engram, "What is ENIAC?", user_id="Robin")
 
-    assert result["response"] == "ENIAC is an early electronic computer."
-    assert result["active_topic"] == "ENIAC"
+    assert result.get("response", "") == "ENIAC is an early electronic computer."
+    assert result.get("active_topic", "") == "ENIAC"
 
 
 def test_conversation_integration_natural_memory_question_uses_fact_recall() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Alice is an architect.", user_id="Robin")
     pipeline.chat(engram, "Carol is a biologist.", user_id="Robin")
 
     result = pipeline.chat(engram, "What do you remember about Alice?", user_id="Robin")
 
-    assert result["response"] == "Alice is an architect."
-    assert result["active_topic"] == "Alice"
+    assert result.get("response", "") == "Alice is an architect."
+    assert result.get("active_topic", "") == "Alice"
 
 
 def test_conversation_integration_broad_that_is_pattern_keeps_its_category() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Kyoto is beautiful in spring.", user_id="Robin")
 
     result = pipeline.chat(engram, "That is the detail I wanted you to retain.", user_id="Robin")
 
-    assert result["pattern"] == "THAT IS *"
-    assert result["source"] == "pattern"
-    assert result["active_topic"] == "Kyoto"
+    assert result.get("pattern", "") == "THAT IS *"
+    assert result.get("source", "") == "pattern"
+    assert result.get("active_topic", "") == "Kyoto"
 
 
 def test_conversation_integration_exact_pattern_repetition_repeats_the_category() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     first = pipeline.chat(engram, "Exactly.", user_id="Robin")
     second = pipeline.chat(engram, "Exactly.", user_id="Robin")
 
-    assert second["pattern"] == "EXACTLY"
-    assert second["response"] == first["response"]
+    assert second.get("pattern", "") == "EXACTLY"
+    assert "response" in first
+    assert "response" in second
+    assert second.get("response", "") == first.get("response", "")
 
 
 def test_conversation_integration_repeated_category_survives_later_turns() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     first = pipeline.chat(engram, "Exactly.", user_id="Robin")
     for text in ("Hello.", "Thank you.", "What should I call you?", "How are you?"):
         pipeline.chat(engram, text, user_id="Robin")
 
     repeated = pipeline.chat(engram, "Exactly.", user_id="Robin")
 
-    assert repeated["pattern"] == "EXACTLY"
-    assert repeated["response"] == first["response"]
+    assert repeated.get("pattern", "") == "EXACTLY"
+    assert "response" in first
+    assert "response" in repeated
+    assert repeated.get("response", "") == first.get("response", "")
 
 
 def test_conversation_integration_repeated_ordinary_input_keeps_the_category() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     text = "I like quiet libraries."
     first = pipeline.chat(engram, text, user_id="Robin")
 
     repeated = pipeline.chat(engram, text, user_id="Robin")
 
-    assert first["pattern"] == "I LIKE *"
-    assert "libraries" in first["response"].lower()
-    assert repeated["pattern"] == "I LIKE *"
-    assert repeated["response"] != first["response"]
-    assert "what do you like about" not in repeated["response"].lower()
+    assert first.get("pattern", "") == "I LIKE *"
+    assert "libraries" in first.get("response", "").lower()
+    assert repeated.get("pattern", "") == "I LIKE *"
+    assert "response" in repeated
+    assert repeated.get("response", "") != first.get("response", "")
+    assert "what do you like about" not in repeated.get("response", "").lower()
 
 
 def test_sentence_initial_word_is_not_a_name() -> None:
@@ -461,7 +489,7 @@ def test_sentence_initial_word_is_not_a_name() -> None:
     alice = extract_dialogue_entities("Alice left.")
     assert alice == [{"text": "Alice", "label": "PROPER_NOUN"}]
     assert infer_active_topic("Alice left.", entities=alice) == "Alice"
-    assert any(entity["text"] == "Pacific" for entity in extract_dialogue_entities("The Pacific is the largest ocean."))
+    assert any(entity.get("text", "") == "Pacific" for entity in extract_dialogue_entities("The Pacific is the largest ocean."))
     assert extract_dialogue_entities("New York is a city.") == [{"text": "New York", "label": "PROPER_NOUN"}]
     assert explicit_topic("Let us talk about If.") == "If"
 
@@ -507,41 +535,53 @@ def test_plain_world_facts_still_store_and_name_the_topic() -> None:
     for text, topic in cases.items():
         fact = extract_fact(text)
         assert fact, text
-        assert conversational_fact_admission(fact, text)["admitted"]
+        assert conversational_fact_admission(fact, text).get("admitted", False)
         assert infer_active_topic(text, fact=fact) == topic
 
     fact = extract_fact("Maybe Mars is easy to imagine.")
-    assert not conversational_fact_admission(fact, "Maybe Mars is easy to imagine.")["admitted"]
+    hedged_admission = conversational_fact_admission(fact, "Maybe Mars is easy to imagine.")
+    assert "admitted" in hedged_admission
+    assert not hedged_admission.get("admitted", False)
     assert infer_active_topic("Maybe Mars is easy to imagine.", fact=fact) == "Mars"
 
 
 def test_discourse_sentence_is_not_learned_and_a_world_fact_is() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     before = len(engram.statements)
     refused = pipeline.chat(engram, "The hard part of whenever is knowing when to stop.", user_id="Robin")
 
+    refused_admissions = refused.get("fact_admissions", [])
     assert len(engram.statements) == before
-    assert refused["fact_admissions"]
-    assert refused["fact_admissions"][0]["admitted"] is False
-    assert refused["active_topic"] != "whenever"
+    assert refused_admissions
+    assert "admitted" in refused_admissions[0]
+    assert refused_admissions[0].get("admitted", False) is False
+    assert "active_topic" in refused
+    assert refused.get("active_topic", "") != "whenever"
 
     admitted = pipeline.chat(engram, "The sky is blue.", user_id="Robin")
 
-    assert any(item["admitted"] for item in admitted["fact_admissions"])
+    assert any(item.get("admitted", False) for item in admitted.get("fact_admissions", []))
     assert len(engram.statements) > before
-    assert admitted["active_topic"] == "sky"
+    assert admitted.get("active_topic", "") == "sky"
 
 
 def test_unreferenced_statement_clears_the_topic() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Let us talk about Python.", user_id="Robin")
 
     echoed = pipeline.chat(engram, "The first small example of Continue.", user_id="Robin")
     later = pipeline.chat(engram, "Staying with the interpreter for a minute.", user_id="Robin")
 
-    assert echoed["active_topic"] != "Continue"
-    assert later["active_topic"] == ""
-    names = {entity["text"] for entity in later["entities"]}
+    assert "active_topic" in echoed
+    assert echoed.get("active_topic", "") != "Continue"
+    assert "active_topic" in later
+    assert later.get("active_topic", "") == ""
+    assert "entities" in later
+    later_entities = later.get("entities", [])
+    assert all("text" in entity for entity in later_entities)
+    names = {entity.get("text", "") for entity in later_entities}
     assert "Continue" not in names
     assert "Staying" not in names
 
@@ -561,17 +601,20 @@ def test_wildcard_question_follow_up_matches_that() -> None:
     )
 
     for opening, answer, question, follow_up in cases:
-        engram = seeded_engram()
+        engram = Engram()
+        engram.load_static_data(SEED_PAIRS)
         first = pipeline.chat(engram, opening, user_id="Robin")
         second = pipeline.chat(engram, answer, user_id="Robin")
         pipeline.chat(engram, "Hello.", user_id="Robin")
         third = pipeline.chat(engram, opening, user_id="Robin")
 
-        assert first["pattern"] == second["pattern"]
-        assert question in first["response"].lower()
-        assert second["response"] == follow_up
-        assert question not in second["response"].lower()
-        assert third["response"] == first["response"]
+        assert "pattern" in first
+        assert "pattern" in second
+        assert first.get("pattern", "") == second.get("pattern", "")
+        assert question in first.get("response", "").lower()
+        assert second.get("response", "") == follow_up
+        assert question not in second.get("response", "").lower()
+        assert third.get("response", "") == first.get("response", "")
 
 
 def test_exact_question_keeps_its_sentence_when_the_previous_reply_matches() -> None:
@@ -586,8 +629,10 @@ def test_exact_question_keeps_its_sentence_when_the_previous_reply_matches() -> 
     first = pipeline.chat(engram, "How should I start?", user_id="Robin")
     second = pipeline.chat(engram, "What is the plan?", user_id="Robin")
 
-    assert second["pattern"] == "WHAT IS THE PLAN"
-    assert second["response"] == first["response"]
+    assert second.get("pattern", "") == "WHAT IS THE PLAN"
+    assert "response" in first
+    assert "response" in second
+    assert second.get("response", "") == first.get("response", "")
 
 
 def test_distinct_wildcard_fills_are_not_replaced_by_a_topic_line() -> None:
@@ -605,71 +650,81 @@ def test_distinct_wildcard_fills_are_not_replaced_by_a_topic_line() -> None:
     first = pipeline.chat(engram, "How do I design the pieces?", user_id="Robin")
     second = pipeline.chat(engram, "How do I test the pieces?", user_id="Robin")
 
-    assert first["pattern"] == "HOW DO I *"
-    assert second["pattern"] == "HOW DO I *"
-    assert "already tried" in first["response"].lower()
-    assert "already tried" in second["response"].lower()
-    assert "repeat myself" not in second["response"].lower()
-    assert first["response"] != second["response"]
+    assert first.get("pattern", "") == "HOW DO I *"
+    assert second.get("pattern", "") == "HOW DO I *"
+    assert "already tried" in first.get("response", "").lower()
+    assert "already tried" in second.get("response", "").lower()
+    assert "repeat myself" not in second.get("response", "").lower()
+    assert first.get("response", "") != second.get("response", "")
 
 
 def test_unmatched_statement_keeps_the_catchall_when_the_topic_has_no_fact() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "Hello.", user_id="Robin")
-    engram.sessions["Robin"]["active_topic"] = "Python"
+    robin_session = engram.sessions.get("Robin", {})
+    assert robin_session
+    robin_session["active_topic"] = "Python"
 
     result = pipeline.chat(engram, "It stayed quiet after lunch.", user_id="Robin")
 
-    assert result["pattern"] == "*"
-    assert "another angle" not in result["response"].lower()
+    assert result.get("pattern", "") == "*"
+    assert "response" in result
+    assert "another angle" not in result.get("response", "").lower()
 
 
 def test_trailing_courtesy_does_not_replace_an_earlier_question() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "What is your name? That helps.", user_id="Robin")
 
-    assert result["pattern"] == "THAT HELPS"
-    assert result["dialogue_act"] == DIALOGUE_QUESTION
-    assert "ENGRAM" in result["response"]
+    assert result.get("pattern", "") == "THAT HELPS"
+    assert result.get("dialogue_act", "") == DIALOGUE_QUESTION
+    assert "ENGRAM" in result.get("response", "")
 
 
 def test_thanks_that_helps_matches_the_courtesy_pattern() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "Thanks. That helps.", user_id="Robin")
 
-    assert result["pattern"] == "THAT HELPS"
-    assert result["dialogue_act"] == DIALOGUE_ACKNOWLEDGMENT
+    assert result.get("pattern", "") == "THAT HELPS"
+    assert result.get("dialogue_act", "") == DIALOGUE_ACKNOWLEDGMENT
 
 
 def test_conversation_integration_different_topic_shifts_are_not_treated_as_repetition() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     first = pipeline.chat(engram, "Let's talk about oceans.", user_id="Robin")
     second = pipeline.chat(engram, "Let's talk about moons.", user_id="Robin")
 
-    assert "oceans" in first["response"].lower()
-    assert "moons" in second["response"].lower()
-    assert first["response"] != second["response"]
+    assert "oceans" in first.get("response", "").lower()
+    assert "moons" in second.get("response", "").lower()
+    assert first.get("response", "") != second.get("response", "")
 
 
 def test_conversation_integration_repeated_name_recall_remains_repeatable() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
     pipeline.chat(engram, "My name is Mira.", user_id="Robin")
     first = pipeline.chat(engram, "What is my name?", user_id="Robin")
     second = pipeline.chat(engram, "What is my name?", user_id="Robin")
 
-    assert "Mira" in first["response"]
-    assert second["response"] == first["response"]
+    assert "Mira" in first.get("response", "")
+    assert second.get("response", "") == first.get("response", "")
 
 
 def test_conversation_integration_meta_thought_is_not_learned_and_reason_is_visible() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "The thought is that taste can become a map of memory.", user_id="Robin")
 
-    assert not [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]
-    assert result["fact_admissions"] == [
+    assert all("tier" in statement for statement in engram.statements)
+    assert not [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
+    assert result.get("fact_admissions", []) == [
         {
             "text": "The thought is that taste can become a map of memory.",
             "subject": "thought",
@@ -680,12 +735,14 @@ def test_conversation_integration_meta_thought_is_not_learned_and_reason_is_visi
 
 
 def test_conversation_integration_transient_chat_assertion_is_not_learned() -> None:
-    engram = seeded_engram()
+    engram = Engram()
+    engram.load_static_data(SEED_PAIRS)
 
     result = pipeline.chat(engram, "Lunch is good today.", user_id="Robin")
 
-    assert not [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]
-    assert result["fact_admissions"][0]["reason"] == "transient"
+    assert all("tier" in statement for statement in engram.statements)
+    assert not [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
+    assert result.get("fact_admissions", [])[0].get("reason", "") == "transient"
 
 
 def test_conversation_integration_discourse_and_qualified_assertions_are_not_learned() -> None:
@@ -695,11 +752,13 @@ def test_conversation_integration_discourse_and_qualified_assertions_are_not_lea
     }
 
     for text, expected_reason in cases.items():
-        engram = seeded_engram()
+        engram = Engram()
+        engram.load_static_data(SEED_PAIRS)
         result = pipeline.chat(engram, text, user_id="Robin")
 
-        assert not [statement for statement in engram.statements if statement["tier"] == Tier.DYNAMIC]
-        assert result["fact_admissions"][0]["reason"] == expected_reason
+        assert all("tier" in statement for statement in engram.statements)
+        assert not [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
+        assert result.get("fact_admissions", [])[0].get("reason", "") == expected_reason
 
 
 def test_conversation_integration_unattributed_fact_api_is_intentionally_not_filtered() -> None:
@@ -708,4 +767,4 @@ def test_conversation_integration_unattributed_fact_api_is_intentionally_not_fil
     statement_id = engram.add_fact("Lunch is good today.", source_label="research")
 
     assert statement_id
-    assert engram.get_statement(statement_id)["source_label"] == "research"
+    assert engram.get_statement(statement_id).get("source_label", "") == "research"

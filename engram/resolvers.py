@@ -45,6 +45,11 @@ from engram.constants import (
     CompositionReason,
     ExactLookupOutcome,
     ExpectedObjectType,
+    PredicateCardinality,
+    PropositionEligibilityReason,
+    RelationPlanTemplate,
+    RelationSelectionReason,
+    TemporalAxis,
     TemporalQueryOperator,
 )
 from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError, ResourceNotFoundError
@@ -207,14 +212,14 @@ def validate_resolver_budget(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLVER_BUDGET_FIELDS:
         raise InvalidRequestError("ResolverBudget has invalid fields")
     result = resolver_budget(
-        max_candidates=value["max_candidates"],
-        max_graph_rows=value["max_graph_rows"],
-        max_vector_results=value["max_vector_results"],
-        max_evidence=value["max_evidence"],
-        max_evidence_bytes=value["max_evidence_bytes"],
-        max_output_bytes=value["max_output_bytes"],
-        max_diagnostic_bytes=value["max_diagnostic_bytes"],
-        max_working_memory_bytes=value["max_working_memory_bytes"],
+        max_candidates=value.get("max_candidates", 0),
+        max_graph_rows=value.get("max_graph_rows", 0),
+        max_vector_results=value.get("max_vector_results", 0),
+        max_evidence=value.get("max_evidence", 0),
+        max_evidence_bytes=value.get("max_evidence_bytes", 0),
+        max_output_bytes=value.get("max_output_bytes", 0),
+        max_diagnostic_bytes=value.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=value.get("max_working_memory_bytes", 0),
     )
     return result
 
@@ -271,10 +276,10 @@ def validate_resolver_reservation(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
     result = resolver_reservation(
-        value["resolver"],
-        value["order"],
-        value["lease"],
-        value["consumption"],
+        value.get("resolver", ""),
+        value.get("order", 0),
+        value.get("lease", {}),
+        value.get("consumption", {}),
     )
     return result
 
@@ -282,10 +287,10 @@ def validate_resolver_reservation(value: object) -> dict:
 def resolver_reservation_to_dict(value: object) -> dict[str, object]:
     current = validate_resolver_reservation(value)
     result = {
-        "resolver": current["resolver"],
-        "order": current["order"],
-        "lease": resolver_budget_to_dict(current["lease"]),
-        "consumption": budget_consumption_to_dict(current["consumption"]),
+        "resolver": current.get("resolver", ""),
+        "order": current.get("order", 0),
+        "lease": resolver_budget_to_dict(current.get("lease", {})),
+        "consumption": budget_consumption_to_dict(current.get("consumption", {})),
     }
     return result
 
@@ -293,13 +298,13 @@ def resolver_reservation_to_dict(value: object) -> dict[str, object]:
 def resolver_reservation_from_dict(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLVER_RESERVATION_FIELDS:
         raise InvalidRequestError("ResolverReservation has invalid fields")
-    lease = value["lease"]
-    consumption = value["consumption"]
+    lease = value.get("lease", False)
+    consumption = value.get("consumption", False)
     if not isinstance(lease, dict) or not isinstance(consumption, dict):
         raise InvalidRequestError("ResolverReservation nested records must be objects")
     result = resolver_reservation(
-        value["resolver"],
-        value["order"],
+        value.get("resolver", ""),
+        value.get("order", 0),
         resolver_budget_from_dict(lease),
         budget_consumption_from_dict(consumption),
     )
@@ -335,11 +340,11 @@ def validate_resolution_plan_entry(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLUTION_PLAN_ENTRY_FIELDS:
         raise InvalidRequestError("ResolutionPlanEntry has invalid fields")
     result = resolution_plan_entry(
-        value["resolver"],
-        value["order"],
-        value["configured"],
-        value["available"],
-        value["reason_code"],
+        value.get("resolver", ()),
+        value.get("order", 0),
+        value.get("configured", False),
+        value.get("available", False),
+        value.get("reason_code", ""),
     )
     return result
 
@@ -353,7 +358,7 @@ def trusted_resolution_plan_entry_to_dict(current: dict) -> dict[str, object]:
         "cost_class": cost_class.value,
         "order": current.get("order", 0),
         "configured": current.get("configured", False),
-        "available": current.get("available", ()),
+        "available": current.get("available", False),
         "reason_code": current.get("reason_code", ""),
     }
     return result
@@ -366,11 +371,11 @@ def resolution_plan(entries: object) -> dict:
     if len(entries) > MAX_PLAN_RESOLVERS:
         raise InvalidRequestError(f"plan entries exceed the limit of {MAX_PLAN_RESOLVERS}")
     validated_entries = tuple(validate_resolution_plan_entry(value) for value in entries)
-    if tuple(value["order"] for value in validated_entries) != tuple(range(len(validated_entries))):
+    if tuple(value.get("order", 0) for value in validated_entries) != tuple(range(len(validated_entries))):
         raise InvalidRequestError("plan entry order must be contiguous")
     names = []
     for entry in validated_entries:
-        name, _, _, _ = resolver_contract(entry["resolver"])
+        name, _, _, _ = resolver_contract(entry.get("resolver", ()))
         names.append(name)
     if len(set(names)) != len(names):
         raise InvalidRequestError("plan resolver names must be unique")
@@ -381,7 +386,7 @@ def resolution_plan(entries: object) -> dict:
 def validate_resolution_plan(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != RESOLUTION_PLAN_FIELDS:
         raise InvalidRequestError("ResolutionPlan has invalid fields")
-    result = resolution_plan(value["entries"])
+    result = resolution_plan(value.get("entries", ()))
     return result
 
 
@@ -438,7 +443,7 @@ def working_size(value: object, seen=()) -> int:
     if isinstance(value, bytes):
         result = len(value) + 33
         return result
-    if isinstance(value, bool | int | float):
+    if isinstance(value, (bool, int, float)):
         result = 32
         return result
     identity = id(value)
@@ -449,7 +454,7 @@ def working_size(value: object, seen=()) -> int:
     if isinstance(value, dict):
         result = 64 + sum(working_size(key, visited) + working_size(item, visited) for key, item in value.items())
         return result
-    if isinstance(value, list | tuple | set):
+    if isinstance(value, (list, tuple, set)):
         result = 64 + sum(working_size(item, visited) for item in value)
         return result
     result = len(str(value).encode("utf-8")) + 64
@@ -480,15 +485,12 @@ def artifact_matches_frame(artifact: dict, frame: dict) -> bool:
     ):
         result = False
         return result
-    if frame.get("required_source_label", "") and artifact.get("provenance", {})["source_label"] != frame.get(
-        "required_source_label", ""
-    ):
+    required_source_label = frame.get("required_source_label", "")
+    if required_source_label and artifact.get("provenance", {}).get("source_label", "") != required_source_label:
         result = False
         return result
-    result = all(
-        key in artifact.get("metadata", {}) and artifact.get("metadata", {})[key] == value
-        for key, value in frame.get("required_metadata", {}).items()
-    )
+    metadata = artifact.get("metadata", {})
+    result = all(key in metadata and metadata.get(key, ()) == value for key, value in frame.get("required_metadata", {}).items())
     return result
 
 
@@ -502,18 +504,11 @@ def exhausted_result(name: str, dimensions: tuple[str, ...]) -> dict:
     return result
 
 
-def memory_exhausted_result(name: str) -> dict:
-    result = exhausted_result(name, ("working_memory_bytes",))
-    return result
-
-
-COMPOSITION_NOT_APPLICABLE_REASONS = frozenset(
-    {
-        CompositionReason.IDENTITY_MISS.value,
-        CompositionReason.UNSUPPORTED_QUERY.value,
-        CompositionReason.UNDERCONSTRAINED.value,
-    }
-)
+COMPOSITION_NOT_APPLICABLE_REASONS = {
+    CompositionReason.IDENTITY_MISS.value,
+    CompositionReason.UNSUPPORTED_QUERY.value,
+    CompositionReason.UNDERCONSTRAINED.value,
+}
 
 
 def composition_not_applicable(result: dict) -> bool:
@@ -532,9 +527,10 @@ def with_prior_graph_rows(result: dict, prior_rows: int) -> dict:
     """Add graph rows spent by an earlier path of the same resolver call."""
     if not prior_rows:
         return result
+    current_consumption = result.get("consumption", {})
     consumption = trusted_budget_consumption_with_changes(
-        result["consumption"],
-        {"graph_rows": result["consumption"]["graph_rows"] + prior_rows},
+        current_consumption,
+        {"graph_rows": current_consumption.get("graph_rows", 0) + prior_rows},
     )
     updated = trusted_resolver_result_with_changes(result, {"consumption": consumption})
     return updated
@@ -550,7 +546,7 @@ class ExactResolver:
         self.internal_clock_ns = clock_ns
 
     def available(self, frame: dict) -> bool:
-        result = frame.get("eligibility_context", {})["artifact_repository_available"]
+        result = frame.get("eligibility_context", {}).get("artifact_repository_available", False)
         return result
 
     def resolve(
@@ -570,20 +566,21 @@ class ExactResolver:
             key,
             frame.get("eligibility_context", {}),
         )
-        lookup = contextual["lookup"]
-        if lookup["outcome"] != ExactLookupOutcome.FOUND:
+        lookup = contextual.get("lookup", {})
+        outcome = lookup.get("outcome", ExactLookupOutcome.MISS)
+        if outcome != ExactLookupOutcome.FOUND:
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
-                reason_code=f"exact_{lookup['outcome'].value}",
+                reason_code=f"exact_{outcome.value}",
                 diagnostics={
-                    "owner_count": len(lookup["owner_statement_ids"]),
-                    "truncated": lookup["truncated"],
+                    "owner_count": len(lookup.get("owner_statement_ids", ())),
+                    "truncated": lookup.get("truncated", False),
                 },
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        artifact = self.internal_engram.response_repository.get_artifact(lookup["statement_id"])
+        artifact = self.internal_engram.response_repository.get_artifact(lookup.get("statement_id", ""))
         if not artifact_matches_frame(artifact, frame):
             result = resolver_result(
                 resolver=self.name,
@@ -592,10 +589,12 @@ class ExactResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
+        statement_id = artifact.get("statement_id", "")
+        scope = artifact.get("scope", {})
         candidate = resolution_candidate(
-            candidate_id=internal_candidate_id(CandidateSource.EXACT, artifact["statement_id"], frame.get("diagnostic_id", "")),
-            statement_id=artifact["statement_id"],
-            response=artifact["response"],
+            candidate_id=internal_candidate_id(CandidateSource.EXACT, statement_id, frame.get("diagnostic_id", "")),
+            statement_id=statement_id,
+            response=artifact.get("response", ""),
             source=CandidateSource.EXACT,
             features=feature_set(values={"exact_match": 1.0}, unavailable=()),
             evidence=tuple(
@@ -603,20 +602,20 @@ class ExactResolver:
                     evidence_id=reference.get("id", ""),
                     resolver=self.name,
                     kind=EvidenceKind.SUPPORT,
-                    scope=artifact["scope"],
+                    scope=scope,
                     provenance={"support_linked": True},
                 )
-                for reference in artifact["support_references"][: budget.get("max_evidence", 0)]
+                for reference in artifact.get("support_references", ())[: budget.get("max_evidence", 0)]
             ),
-            scope=artifact["scope"],
-            lifecycle=artifact["lifecycle"],
+            scope=scope,
+            lifecycle=artifact.get("lifecycle", LifecycleState.RETIRED),
             provenance={
-                "retrieval_origin": lookup["provenance"],
-                "representation": lookup["representation"],
-                "generation": artifact["generation"],
-                "source_label": artifact["provenance"]["source_label"],
+                "retrieval_origin": lookup.get("provenance", ""),
+                "representation": lookup.get("representation", ""),
+                "generation": artifact.get("generation", 0),
+                "source_label": artifact.get("provenance", {}).get("source_label", ""),
             },
-            diagnostics={"context_signature": contextual["context_signature"]},
+            diagnostics={"context_signature": contextual.get("context_signature", "")},
         )
         if json_size(candidate_to_dict(candidate)) > budget.get("max_working_memory_bytes", 0):
             result = exhausted_result(self.name, ("working_memory_bytes",))
@@ -626,12 +625,12 @@ class ExactResolver:
             state=ResolverState.COMPLETED,
             reason_code="exact_found",
             candidates=(candidate,),
-            accounting=(accounting_observation(artifact["statement_id"]),),
+            accounting=(accounting_observation(statement_id),),
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=1,
-                evidence=len(candidate["evidence"]),
+                evidence=len(candidate.get("evidence", ())),
             ),
         )
         return result
@@ -676,12 +675,16 @@ class UtilityResolver:
             )
             return result
         evaluation = self.internal_registry.evaluate(frame.get("original_text", ""))
+        status = evaluation.get("status", "failed")
+        plugin_name = evaluation.get("plugin_name", "")
+        canonical_input = evaluation.get("canonical_input", "")
+        operations = evaluation.get("operations", 0)
         diagnostics = {
-            "plugin_name": evaluation["plugin_name"],
-            "error_code": evaluation["error_code"],
-            "operations": evaluation["operations"],
+            "plugin_name": plugin_name,
+            "error_code": evaluation.get("error_code", ""),
+            "operations": operations,
         }
-        if evaluation["status"] == "miss":
+        if status == "miss":
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
@@ -690,7 +693,7 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        if evaluation["status"] == "rejected":
+        if status == "rejected":
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
@@ -699,7 +702,7 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        if evaluation["status"] == "failed":
+        if status == "failed":
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.FAILED,
@@ -708,12 +711,12 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        digest = hashlib_sha256(f"{evaluation['plugin_name']}:{evaluation['canonical_input']}".encode()).hexdigest()
-        statement_id = f"utility:{evaluation['plugin_name']}:sha256:{digest}"
+        digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
+        statement_id = f"utility:{plugin_name}:sha256:{digest}"
         current = resolution_candidate(
             candidate_id=internal_candidate_id(CandidateSource.UTILITY, statement_id, frame.get("diagnostic_id", "")),
             statement_id=statement_id,
-            response=evaluation["response"],
+            response=evaluation.get("response", ""),
             source=CandidateSource.UTILITY,
             features=feature_set(values={"utility_match": 1.0}, unavailable=()),
             evidence=(),
@@ -721,15 +724,15 @@ class UtilityResolver:
             lifecycle=LifecycleState.ACTIVE,
             provenance={
                 "producer": UTILITY_RESOLVER_PRODUCER,
-                "plugin_name": evaluation["plugin_name"],
-                "canonical_input": evaluation["canonical_input"],
+                "plugin_name": plugin_name,
+                "canonical_input": canonical_input,
                 "learnable": False,
             },
-            diagnostics={"operations": evaluation["operations"]},
+            diagnostics={"operations": operations},
         )
         working_memory_bytes = json_size(candidate_to_dict(current))
         if working_memory_bytes > budget.get("max_working_memory_bytes", 0):
-            result = memory_exhausted_result(self.name)
+            result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         result = resolver_result(
             resolver=self.name,
@@ -757,8 +760,8 @@ class StandaloneSemanticResolver:
         self.internal_clock_ns = clock_ns
 
     def available(self, frame: dict) -> bool:
-        settings = self.internal_engram.config.get("semantic") or {}
-        result = bool(settings.get("enabled") and self.internal_engram.semantic_retriever.available)
+        settings = self.internal_engram.config.get("semantic", {})
+        result = bool(settings.get("enabled", False) and self.internal_engram.semantic_retriever.available)
         return result
 
     def resolve(
@@ -793,8 +796,9 @@ class StandaloneSemanticResolver:
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
             cooperative_check=cooperative_check,
         )
-        if not discovery["complete"]:
-            reason = discovery["reason"]
+        scanned_records = discovery.get("scanned_records", 0)
+        if not discovery.get("complete", False):
+            reason = discovery.get("reason", "")
             if reason == "semantic_unavailable":
                 result = resolver_result(resolver=self.name, state=ResolverState.UNAVAILABLE, reason_code=reason)
                 return result
@@ -808,52 +812,56 @@ class StandaloneSemanticResolver:
                 resolver=self.name,
                 state=ResolverState.EXHAUSTED,
                 reason_code=reason,
-                diagnostics={"scanned_records": discovery["scanned_records"]},
+                diagnostics={"scanned_records": scanned_records},
                 consumption=budget_consumption(
                     elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
-                    working_memory_bytes=discovery["working_memory_bytes"],
+                    working_memory_bytes=discovery.get("working_memory_bytes", 0),
                     exhausted_dimensions=(dimension,),
                 ),
             )
             return result
+        matches = discovery.get("matches", ())
+        artifact_identity = self.internal_engram.semantic_retriever.health().get("artifact_identity", {})
+        lexical_terms = frame.get("identity", {}).get("lexical_terms", ())
         candidates = []
         accounting = []
-        retained_bytes = discovery["working_memory_bytes"]
-        for match in discovery["matches"]:
+        retained_bytes = discovery.get("working_memory_bytes", 0)
+        for match in matches:
             try:
-                artifact = self.internal_engram.response_repository.get_artifact(match["statement_id"])
+                artifact = self.internal_engram.response_repository.get_artifact(match.get("statement_id", ""))
             except ResourceNotFoundError:
                 continue
-            if artifact["generation"] != match["generation"] or not artifact_matches_frame(artifact, frame):
+            generation = artifact.get("generation", 0)
+            if generation != match.get("generation", 0) or not artifact_matches_frame(artifact, frame):
                 continue
+            statement_id = artifact.get("statement_id", "")
+            origin = match.get("origin", "")
             candidate = resolution_candidate(
                 candidate_id=internal_candidate_id(
-                    CandidateSource.STANDALONE_SEMANTIC, artifact["statement_id"], frame.get("diagnostic_id", "")
+                    CandidateSource.STANDALONE_SEMANTIC, statement_id, frame.get("diagnostic_id", "")
                 ),
-                statement_id=artifact["statement_id"],
-                response=artifact["response"],
+                statement_id=statement_id,
+                response=artifact.get("response", ""),
                 source=CandidateSource.STANDALONE_SEMANTIC,
                 features=feature_set(
                     values={
-                        "semantic_score": match["similarity"],
-                        "semantic_alias_match": float(match["origin"] == "alias"),
+                        "semantic_score": match.get("similarity", 0.0),
+                        "semantic_alias_match": float(origin == "alias"),
                     },
                     unavailable=(),
                 ),
                 evidence=(),
-                scope=artifact["scope"],
-                lifecycle=artifact["lifecycle"],
+                scope=artifact.get("scope", {}),
+                lifecycle=artifact.get("lifecycle", LifecycleState.RETIRED),
                 provenance={
-                    "generation": artifact["generation"],
-                    "source_label": artifact["provenance"]["source_label"],
-                    "semantic_model_id": self.internal_engram.semantic_retriever.health()["artifact_identity"].get("model_id", ""),
-                    "semantic_model_version": self.internal_engram.semantic_retriever.health()["artifact_identity"].get(
-                        "model_version", ""
-                    ),
-                    "matched_representation_id": match["representation_id"],
-                    "matched_representation_origin": match["origin"],
-                    "matched_alias_ordinal": match["ordinal"] if match["origin"] == "alias" else -1,
+                    "generation": generation,
+                    "source_label": artifact.get("provenance", {}).get("source_label", ""),
+                    "semantic_model_id": artifact_identity.get("model_id", ""),
+                    "semantic_model_version": artifact_identity.get("model_version", ""),
+                    "matched_representation_id": match.get("representation_id", ""),
+                    "matched_representation_origin": origin,
+                    "matched_alias_ordinal": match.get("ordinal", -1) if origin == "alias" else -1,
                 },
                 diagnostics={},
             )
@@ -863,11 +871,11 @@ class StandaloneSemanticResolver:
                     resolver=self.name,
                     state=ResolverState.EXHAUSTED,
                     reason_code="semantic_candidate_memory_budget",
-                    diagnostics={"scanned_records": discovery["scanned_records"]},
+                    diagnostics={"scanned_records": scanned_records},
                     consumption=budget_consumption(
                         elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                         resolvers=1,
-                        vector_results=len(discovery["matches"]),
+                        vector_results=len(matches),
                         working_memory_bytes=min(retained_bytes, budget.get("max_working_memory_bytes", 0)),
                         exhausted_dimensions=("working_memory_bytes",),
                     ),
@@ -875,7 +883,7 @@ class StandaloneSemanticResolver:
                 return result
             retained_bytes += candidate_bytes
             candidates.append(candidate)
-            accounting.append(accounting_observation(artifact["statement_id"], frame.get("identity", {})["lexical_terms"]))
+            accounting.append(accounting_observation(statement_id, lexical_terms))
         result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
@@ -883,15 +891,15 @@ class StandaloneSemanticResolver:
             candidates=tuple(candidates),
             accounting=tuple(accounting),
             diagnostics={
-                "scanned_records": discovery["scanned_records"],
-                "model_version": self.internal_engram.semantic_retriever.health()["artifact_identity"].get("model_version", ""),
-                "backend": self.internal_engram.semantic_retriever.health()["artifact_identity"].get("backend", ""),
+                "scanned_records": scanned_records,
+                "model_version": artifact_identity.get("model_version", ""),
+                "backend": artifact_identity.get("backend", ""),
             },
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                 resolvers=1,
                 candidates=len(candidates),
-                vector_results=len(discovery["matches"]),
+                vector_results=len(matches),
                 working_memory_bytes=retained_bytes,
             ),
         )
@@ -908,8 +916,8 @@ class SparseResolver:
         self.internal_clock_ns = clock_ns
 
     def available(self, frame: dict) -> bool:
-        settings = self.internal_engram.config.get("sparse") or {}
-        result = bool(settings.get("enabled"))
+        settings = self.internal_engram.config.get("sparse", {})
+        result = bool(settings.get("enabled", False))
         return result
 
     def resolve(
@@ -930,8 +938,9 @@ class SparseResolver:
             limit=budget.get("max_candidates", 0),
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
         )
-        if not discovery["complete"]:
-            reason = discovery["reason"]
+        posting_visits = discovery.get("posting_visits", 0)
+        if not discovery.get("complete", False):
+            reason = discovery.get("reason", "")
             if reason == "sparse_unavailable":
                 result = resolver_result(
                     resolver=self.name,
@@ -948,58 +957,63 @@ class SparseResolver:
                 resolver=self.name,
                 state=ResolverState.EXHAUSTED,
                 reason_code=reason,
-                diagnostics={"posting_visits": discovery["posting_visits"]},
+                diagnostics={"posting_visits": posting_visits},
                 consumption=budget_consumption(
                     elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
-                    working_memory_bytes=discovery["working_memory_bytes"],
+                    working_memory_bytes=discovery.get("working_memory_bytes", 0),
                     exhausted_dimensions=(exhausted_dimension,),
                 ),
             )
             return result
 
+        query_term_count = discovery.get("query_term_count", 0)
+        lexical_terms = frame.get("identity", {}).get("lexical_terms", ())
         candidates = []
         accounting = []
-        retained_bytes = discovery["working_memory_bytes"]
-        for match in discovery["matches"]:
+        retained_bytes = discovery.get("working_memory_bytes", 0)
+        for match in discovery.get("matches", ()):
             try:
-                artifact = self.internal_engram.response_repository.get_artifact(match["statement_id"])
+                artifact = self.internal_engram.response_repository.get_artifact(match.get("statement_id", ""))
             except ResourceNotFoundError:
                 continue
             if not artifact_matches_frame(artifact, frame):
                 continue
+            statement_id = artifact.get("statement_id", "")
+            field_contributions = match.get("field_contributions", {})
+            phrase_fields = match.get("phrase_fields", ())
+            proximity_fields = match.get("proximity_fields", ())
+            prefix_match_count = match.get("prefix_match_count", 0)
             features = {
-                "sparse_score": match["score"],
-                "sparse_phrase_match": float(bool(match["phrase_fields"])),
-                "sparse_proximity_match": float(bool(match["proximity_fields"])),
-                "sparse_prefix_match": float(bool(match["prefix_match_count"])),
-                "sparse_character_ngram_similarity": match["character_ngram_similarity"],
-                "sparse_technical_exact_match": float(match["technical_exact_match"]),
-                "sparse_technical_exact_ratio": match["technical_exact_ratio"],
+                "sparse_score": match.get("score", 0.0),
+                "sparse_phrase_match": float(bool(phrase_fields)),
+                "sparse_proximity_match": float(bool(proximity_fields)),
+                "sparse_prefix_match": float(bool(prefix_match_count)),
+                "sparse_character_ngram_similarity": match.get("character_ngram_similarity", 0.0),
+                "sparse_technical_exact_match": float(match.get("technical_exact_match", False)),
+                "sparse_technical_exact_ratio": match.get("technical_exact_ratio", 0.0),
             }
-            features.update({f"sparse_field_{name}": contribution for name, contribution in match["field_contributions"].items()})
+            features.update({f"sparse_field_{name}": contribution for name, contribution in field_contributions.items()})
             candidate = resolution_candidate(
-                candidate_id=internal_candidate_id(
-                    CandidateSource.SPARSE, artifact["statement_id"], frame.get("diagnostic_id", "")
-                ),
-                statement_id=artifact["statement_id"],
-                response=artifact["response"],
+                candidate_id=internal_candidate_id(CandidateSource.SPARSE, statement_id, frame.get("diagnostic_id", "")),
+                statement_id=statement_id,
+                response=artifact.get("response", ""),
                 source=CandidateSource.SPARSE,
                 features=feature_set(values=features, unavailable=()),
                 evidence=(),
-                scope=artifact["scope"],
-                lifecycle=artifact["lifecycle"],
+                scope=artifact.get("scope", {}),
+                lifecycle=artifact.get("lifecycle", LifecycleState.RETIRED),
                 provenance={
-                    "generation": artifact["generation"],
-                    "source_label": artifact["provenance"]["source_label"],
+                    "generation": artifact.get("generation", 0),
+                    "source_label": artifact.get("provenance", {}).get("source_label", ""),
                 },
                 diagnostics={
-                    "field_contributions": dict(match["field_contributions"]),
-                    "phrase_fields": list(match["phrase_fields"]),
-                    "proximity_fields": list(match["proximity_fields"]),
-                    "minimum_proximity": match["minimum_proximity"],
-                    "prefix_match_count": match["prefix_match_count"],
-                    "matched_term_count": match["matched_term_count"],
+                    "field_contributions": dict(field_contributions),
+                    "phrase_fields": list(phrase_fields),
+                    "proximity_fields": list(proximity_fields),
+                    "minimum_proximity": match.get("minimum_proximity", 0),
+                    "prefix_match_count": prefix_match_count,
+                    "matched_term_count": match.get("matched_term_count", 0),
                 },
             )
             candidate_bytes = json_size(candidate_to_dict(candidate))
@@ -1009,8 +1023,8 @@ class SparseResolver:
                     state=ResolverState.EXHAUSTED,
                     reason_code="sparse_candidate_memory_budget",
                     diagnostics={
-                        "query_term_count": discovery["query_term_count"],
-                        "posting_visits": discovery["posting_visits"],
+                        "query_term_count": query_term_count,
+                        "posting_visits": posting_visits,
                     },
                     consumption=budget_consumption(
                         elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -1022,7 +1036,7 @@ class SparseResolver:
                 return result
             retained_bytes += candidate_bytes
             candidates.append(candidate)
-            accounting.append(accounting_observation(artifact["statement_id"], frame.get("identity", {})["lexical_terms"]))
+            accounting.append(accounting_observation(statement_id, lexical_terms))
         result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
@@ -1030,8 +1044,8 @@ class SparseResolver:
             candidates=tuple(candidates),
             accounting=tuple(accounting),
             diagnostics={
-                "query_term_count": discovery["query_term_count"],
-                "posting_visits": discovery["posting_visits"],
+                "query_term_count": query_term_count,
+                "posting_visits": posting_visits,
             },
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -1109,17 +1123,18 @@ class StructuredGraphResolver:
             return rows
 
         subject = resolve_canonical_subject(frame, entity_lookup, question=question, cooperative_check=check)
-        if subject["status"] != CanonicalResolutionStatus.SELECTED:
+        subject_status = subject.get("status", CanonicalResolutionStatus.MISS)
+        if subject_status != CanonicalResolutionStatus.SELECTED:
             reason = (
                 CompositionReason.IDENTITY_AMBIGUOUS
-                if subject["status"] == CanonicalResolutionStatus.AMBIGUOUS
+                if subject_status == CanonicalResolutionStatus.AMBIGUOUS
                 else CompositionReason.IDENTITY_MISS
             )
             result = resolver_result(
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
                 reason_code=reason.value,
-                diagnostics={"composition": True, "entity_status": subject["status"].value},
+                diagnostics={"composition": True, "entity_status": subject_status.value},
                 consumption=budget_consumption(
                     elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
@@ -1136,7 +1151,7 @@ class StructuredGraphResolver:
                     resolver=self.name,
                     state=ResolverState.COMPLETED,
                     reason_code=CompositionReason.ROW_LIMIT.value,
-                    diagnostics={"composition": True, "entity_status": subject["status"].value},
+                    diagnostics={"composition": True, "entity_status": subject_status.value},
                     consumption=budget_consumption(
                         elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                         resolvers=1,
@@ -1160,7 +1175,7 @@ class StructuredGraphResolver:
                 resolver=self.name,
                 state=ResolverState.COMPLETED,
                 reason_code=reason,
-                diagnostics={"composition": True, "entity_status": subject["status"].value},
+                diagnostics={"composition": True, "entity_status": subject_status.value},
                 consumption=budget_consumption(
                     elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
                     resolvers=1,
@@ -1169,17 +1184,20 @@ class StructuredGraphResolver:
             )
             return (result,)
 
+        temporal = frame.get("temporal_query", {})
+        temporal_axis = temporal.get("axis", TemporalAxis.VALID_TIME)
+        include_historical = temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) not in {
+            TemporalQueryOperator.UNSPECIFIED,
+            TemporalQueryOperator.CURRENT,
+            TemporalQueryOperator.NOW,
+        }
+
         def query(subject_id: str, predicate_id: str, limit: int) -> list[dict]:
             result = self.internal_engram.relation_one_hop_proposition_projections(
                 subject_id,
                 predicate_id,
                 row_limit=limit,
-                include_historical=frame.get("temporal_query", {})["operator"]
-                not in {
-                    TemporalQueryOperator.UNSPECIFIED,
-                    TemporalQueryOperator.CURRENT,
-                    TemporalQueryOperator.NOW,
-                },
+                include_historical=include_historical,
                 cooperative_check=check,
                 max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
                 basis_window=assertion_basis_window(frame),
@@ -1199,95 +1217,103 @@ class StructuredGraphResolver:
             ),
             check,
         )
-        graph_rows += execution["graph_rows"]
-        composition_direct = execution["direct_result"]
+        complete_paths = execution.get("complete_paths", ())
+        execution_reasons = execution.get("reasons", ())
+        plan_operator = plan.get("operator", operator)
+        graph_rows += execution.get("graph_rows", 0)
+        composition_direct = execution.get("direct_result", False)
         direct_suppression_reasons: set[str] = set()
-        for path in execution["complete_paths"]:
+        for path in complete_paths:
             for entry in path:
-                projection = entry["proposition"]["projection"]
-                if not projection["supplied_trust_available"]:
+                proposition = entry.get("proposition", {})
+                projection = proposition.get("projection", {})
+                if not projection.get("supplied_trust_available", False):
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.TRUST_UNAVAILABLE.value)
-                if entry["proposition"]["predicate_cardinality"].value == "UNKNOWN":
+                if proposition.get("predicate_cardinality", PredicateCardinality.UNKNOWN) == PredicateCardinality.UNKNOWN:
                     composition_direct = False
                     direct_suppression_reasons.add(CompositionReason.CARDINALITY_UNKNOWN.value)
-                temporal = frame.get("temporal_query", {})
-                if temporal["operator"] not in {
-                    TemporalQueryOperator.UNSPECIFIED,
-                    TemporalQueryOperator.CURRENT,
-                    TemporalQueryOperator.NOW,
-                }:
-                    bounds_available = (
-                        projection["valid_from_available"] and projection["valid_to_available"]
-                        if temporal["axis"].value == "valid_time"
-                        else projection["system_from_available"] and projection["system_to_available"]
-                    )
-                    if not bounds_available:
+                if include_historical:
+                    if temporal_axis == TemporalAxis.VALID_TIME:
+                        lower_available = projection.get("valid_from_available", False)
+                        upper_available = projection.get("valid_to_available", False)
+                    else:
+                        lower_available = projection.get("system_from_available", False)
+                        upper_available = projection.get("system_to_available", False)
+                    if not (lower_available and upper_available):
                         composition_direct = False
                         direct_suppression_reasons.add(CompositionReason.TEMPORAL_BOUNDS_OPEN.value)
-        selected_paths = execution["complete_paths"] or execution["partial_paths"]
+        selected_paths = complete_paths or execution.get("partial_paths", ())
+        aggregation_inputs = plan.get("aggregation_inputs", ())
         records = []
         for path in selected_paths:
             if not path:
                 continue
             terminal = path[-1]
             base = proposition_evidence_record(
-                terminal["proposition"]["projection"], terminal["decision"], frame, self.name, trusted=True
+                terminal.get("proposition", {}).get("projection", {}),
+                terminal.get("decision", {}),
+                frame,
+                self.name,
+                trusted=True,
             )
-            aggregation_inputs = plan["aggregation_inputs"]
-            path_steps = tuple(
-                proposition_evidence_path_step(
-                    position,
-                    entry["proposition"]["projection"]["proposition_id"],
-                    entry["proposition"]["projection"]["subject_entity_id"],
-                    entry["proposition"]["projection"]["predicate_id"],
-                    entry["proposition"]["projection"]["object_entity_id"],
-                    plan["operator"],
-                    entry["step"]["subject_binding"],
-                    entry["step"]["object_binding"],
-                    (
-                        "canonical_identity",
-                        "object_type",
-                        "publication_revalidation",
-                        "temporal_eligibility",
-                        "visibility",
-                    ),
-                    aggregation_inputs if position == len(path) - 1 else (),
+            path_steps = []
+            for position, entry in enumerate(path):
+                step_projection = entry.get("proposition", {}).get("projection", {})
+                step = entry.get("step", {})
+                path_steps.append(
+                    proposition_evidence_path_step(
+                        position,
+                        step_projection.get("proposition_id", ""),
+                        step_projection.get("subject_entity_id", ""),
+                        step_projection.get("predicate_id", ""),
+                        step_projection.get("object_entity_id", ""),
+                        plan_operator,
+                        step.get("subject_binding", ""),
+                        step.get("object_binding", ""),
+                        (
+                            "canonical_identity",
+                            "object_type",
+                            "publication_revalidation",
+                            "temporal_eligibility",
+                            "visibility",
+                        ),
+                        aggregation_inputs if position == len(path) - 1 else (),
+                    )
                 )
-                for position, entry in enumerate(path)
-            )
             reasons = {
-                *base["selection_reasons"],
+                *base.get("selection_reasons", ()),
                 "composition_plan_match",
-                *[reason.value for reason in execution["reasons"]],
+                *[reason.value for reason in execution_reasons],
                 *direct_suppression_reasons,
             }
             records.append(
                 proposition_evidence_record_with_changes(
                     base,
                     {
-                        "path": path_steps,
+                        "path": tuple(path_steps),
                         "selection_reasons": tuple(sorted(reasons)),
                     },
                 )
             )
-        records.sort(key=lambda record: record["proposition_id"])
+        records.sort(key=lambda record: record.get("proposition_id", ""))
         if len(records) > budget.get("max_evidence", 0):
             records = records[: budget.get("max_evidence", 0)]
         candidates = []
-        if composition_direct and execution["complete_paths"] and budget.get("max_candidates", 0):
+        if composition_direct and complete_paths and budget.get("max_candidates", 0):
             response = phrase_composition_result(plan, execution)
-            selected_path = execution["complete_paths"][0]
-            proposition_ids = tuple(entry["proposition"]["projection"]["proposition_id"] for entry in selected_path)
+            selected_path = complete_paths[0]
+            selected_projections = tuple(entry.get("proposition", {}).get("projection", {}) for entry in selected_path)
+            proposition_ids = tuple(projection.get("proposition_id", "") for projection in selected_projections)
             identity_chain = tuple(
                 (
-                    entry["proposition"]["projection"]["subject_entity_id"],
-                    entry["proposition"]["projection"]["predicate_id"],
-                    entry["proposition"]["projection"]["object_entity_id"],
+                    projection.get("subject_entity_id", ""),
+                    projection.get("predicate_id", ""),
+                    projection.get("object_entity_id", ""),
                 )
-                for entry in selected_path
+                for projection in selected_projections
             )
-            trust_chain = tuple(entry["proposition"]["projection"]["supplied_trust"] for entry in selected_path)
+            trust_chain = tuple(projection.get("supplied_trust", 0.0) for projection in selected_projections)
             references = tuple(
                 evidence_reference(
                     evidence_id=proposition_id,
@@ -1299,9 +1325,7 @@ class StructuredGraphResolver:
                 )
                 for proposition_id in proposition_ids
             )
-            composition_id = composition_candidate_id(
-                plan.get("operator", operator).value, proposition_ids, frame.get("diagnostic_id", "")
-            )
+            composition_id = composition_candidate_id(plan_operator.value, proposition_ids, frame.get("diagnostic_id", ""))
             candidates.append(
                 resolution_candidate(
                     candidate_id=composition_id,
@@ -1309,30 +1333,30 @@ class StructuredGraphResolver:
                     response=response,
                     source=CandidateSource.UTILITY,
                     features=feature_set(
-                        values={"entity_match": subject["score"], "relation_match": 1.0, "object_type_match": 1.0},
+                        values={"entity_match": subject.get("score", 0.0), "relation_match": 1.0, "object_type_match": 1.0},
                     ),
                     evidence=references,
                     scope=frame.get("scope", {}),
                     lifecycle=LifecycleState.ACTIVE,
                     provenance={
                         "producer": "graph_composition",
-                        "operator": plan["operator"].value,
-                        "root_entity_id": plan["root_entity_id"],
-                        "root_label": plan["root_label"],
-                        "predicate_labels": tuple(entry["step"]["predicate_label"] for entry in selected_path),
+                        "operator": plan_operator.value,
+                        "root_entity_id": plan.get("root_entity_id", ""),
+                        "root_label": plan.get("root_label", ""),
+                        "predicate_labels": tuple(entry.get("step", {}).get("predicate_label", "") for entry in selected_path),
                         "proposition_ids": proposition_ids,
                         "identity_chain": identity_chain,
                         "trust_chain": trust_chain,
-                        "terminal_labels": execution["terminal_labels"],
-                        "terminal_types": tuple(value.value for value in execution["terminal_types"]),
-                        "truth_value": execution["truth_value"],
-                        "truth_available": execution["truth_available"],
-                        "aggregate_value": execution["aggregate_value"],
-                        "aggregate_value_available": execution["aggregate_value_available"],
+                        "terminal_labels": execution.get("terminal_labels", ()),
+                        "terminal_types": tuple(value.value for value in execution.get("terminal_types", ())),
+                        "truth_value": execution.get("truth_value", False),
+                        "truth_available": execution.get("truth_available", False),
+                        "aggregate_value": execution.get("aggregate_value", ""),
+                        "aggregate_value_available": execution.get("aggregate_value_available", False),
                     },
                     diagnostics={
                         "plan": composition_plan_to_dict(plan),
-                        "reasons": tuple(reason.value for reason in execution["reasons"]),
+                        "reasons": tuple(reason.value for reason in execution_reasons),
                     },
                 )
             )
@@ -1372,11 +1396,11 @@ class StructuredGraphResolver:
             proposition_evidence=tuple(records),
             diagnostics={
                 "composition": True,
-                "operator": plan["operator"].value,
-                "complete_paths": len(execution["complete_paths"]),
-                "partial_paths": len(execution["partial_paths"]),
-                "truncated": execution["truncated"],
-                "reasons": tuple(reason.value for reason in execution["reasons"]),
+                "operator": plan_operator.value,
+                "complete_paths": len(complete_paths),
+                "partial_paths": len(execution.get("partial_paths", ())),
+                "truncated": execution.get("truncated", False),
+                "reasons": tuple(reason.value for reason in execution_reasons),
                 "plan": composition_plan_to_dict(plan),
             },
             consumption=budget_consumption(
@@ -1438,7 +1462,9 @@ class StructuredGraphResolver:
 
         subject = resolve_canonical_subject(frame, entity_lookup, question=question, cooperative_check=check)
         predicate = resolve_canonical_predicate(frame, predicate_lookup, question=question, cooperative_check=check)
-        statuses = (subject["status"], predicate["status"])
+        subject_status = subject.get("status", CanonicalResolutionStatus.MISS)
+        predicate_status = predicate.get("status", CanonicalResolutionStatus.MISS)
+        statuses = (subject_status, predicate_status)
         if statuses == (CanonicalResolutionStatus.MISS, CanonicalResolutionStatus.MISS):
             result = ()
             return result
@@ -1449,10 +1475,10 @@ class StructuredGraphResolver:
                 state=ResolverState.COMPLETED,
                 reason_code=reason,
                 diagnostics={
-                    "entity_status": subject["status"].value,
-                    "entity_candidates": len(subject["candidate_ids"]),
-                    "predicate_status": predicate["status"].value,
-                    "predicate_candidates": len(predicate["candidate_ids"]),
+                    "entity_status": subject_status.value,
+                    "entity_candidates": len(subject.get("candidate_ids", ())),
+                    "predicate_status": predicate_status.value,
+                    "predicate_candidates": len(predicate.get("candidate_ids", ())),
                 },
                 consumption=budget_consumption(
                     elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -1471,17 +1497,19 @@ class StructuredGraphResolver:
             frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
             max_rows=min(MAX_RELATION_PLAN_ROWS, budget.get("max_evidence", 0), max(1, remaining_rows // 2)),
         )
+        template_id = plan.get("template_id", RelationPlanTemplate.ONE_HOP_PROPOSITION)
+        expected_object_type = plan.get("expected_object_type", ExpectedObjectType.UNKNOWN)
+        include_historical = frame.get("temporal_query", {}).get("operator", TemporalQueryOperator.UNSPECIFIED) not in {
+            TemporalQueryOperator.UNSPECIFIED,
+            TemporalQueryOperator.CURRENT,
+            TemporalQueryOperator.NOW,
+        }
 
         results = self.internal_engram.relation_one_hop_proposition_projections(
-            plan["subject_entity_id"],
-            plan["predicate_id"],
-            row_limit=plan["max_rows"],
-            include_historical=frame.get("temporal_query", {})["operator"]
-            not in {
-                TemporalQueryOperator.UNSPECIFIED,
-                TemporalQueryOperator.CURRENT,
-                TemporalQueryOperator.NOW,
-            },
+            plan.get("subject_entity_id", ""),
+            plan.get("predicate_id", ""),
+            row_limit=plan.get("max_rows", 0),
+            include_historical=include_historical,
             cooperative_check=check,
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
             basis_window=assertion_basis_window(frame),
@@ -1493,10 +1521,10 @@ class StructuredGraphResolver:
         checked_frame = validate_query_frame(frame)
         for item in results:
             check()
-            projection = item["projection"]
+            projection = item.get("projection", {})
             initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
-            if not initial["eligible"]:
-                reason = initial["reason"].value
+            if not initial.get("eligible", False):
+                reason = initial.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             if graph_rows >= budget.get("max_graph_rows", 0):
@@ -1505,30 +1533,40 @@ class StructuredGraphResolver:
                 projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
             graph_rows += 1
-            if decision["revalidated"]:
+            if decision.get("revalidated", False):
                 revalidation_rows += 1
-            if not decision["eligible"]:
-                reason = decision["reason"].value
+            if not decision.get("eligible", False):
+                reason = decision.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
-            type_match, type_match_available = object_type_match(plan["expected_object_type"], item["object_type"])
+            object_type = item.get("object_type", ExpectedObjectType.UNKNOWN)
+            type_match, type_match_available = object_type_match(expected_object_type, object_type)
             retained.append((item, decision, type_match, type_match_available))
 
         selection = select_relation_propositions(
             tuple(item for item, internal_decision, internal_type_match, internal_type_match_available in retained),
             frame.get("temporal_query", {}),
         )
+        direct_answer = selection.get("direct_answer", False)
+        selection_reason = selection.get("reason", RelationSelectionReason.NO_ELIGIBLE_PROPOSITION)
+        selection_cardinality = selection.get("cardinality", PredicateCardinality.UNKNOWN)
+        conflict_proposition_ids = selection.get("conflict_proposition_ids", ())
+        ranking_proposition_ids = selection.get("ranking_proposition_ids", ())
+        subject_score = subject.get("score", 0.0)
+        predicate_score = predicate.get("score", 0.0)
         records = []
-        ambiguous_result = not selection["direct_answer"]
+        ambiguous_result = not direct_answer
         for item, decision, type_match, type_match_available in retained:
-            base = proposition_evidence_record(item["projection"], decision, frame, self.name, trusted=True)
-            values = dict(base["features"]["values"])
-            values.update({"entity_match": subject["score"], "relation_match": predicate["score"]})
-            unavailable = set(base["features"]["unavailable"])
-            reasons = set(base["selection_reasons"])
+            item_projection = item.get("projection", {})
+            base = proposition_evidence_record(item_projection, decision, frame, self.name, trusted=True)
+            base_features = base.get("features", {})
+            values = dict(base_features.get("values", {}))
+            values.update({"entity_match": subject_score, "relation_match": predicate_score})
+            unavailable = set(base_features.get("unavailable", ()))
+            reasons = set(base.get("selection_reasons", ()))
             reasons.update({"entity_resolved", "predicate_resolved", "relation_plan_match"})
-            reasons.add(selection["reason"].value)
-            if item["projection"]["proposition_id"] in selection["conflict_proposition_ids"]:
+            reasons.add(selection_reason.value)
+            if item_projection.get("proposition_id", "") in conflict_proposition_ids:
                 reasons.add("relation_conflicting_proposition")
             if not type_match_available:
                 unavailable.add("object_type_match")
@@ -1546,15 +1584,18 @@ class StructuredGraphResolver:
                     },
                 )
             )
-        records.sort(key=lambda record: record["proposition_id"])
+        records.sort(key=lambda record: record.get("proposition_id", ""))
         candidates = []
-        if selection["direct_answer"] and budget.get("max_candidates", 0):
+        if direct_answer and budget.get("max_candidates", 0):
+            selected_proposition_id = selection.get("selected_proposition_id", "")
             item, _, type_match, type_match_available = next(
-                value for value in retained if value[0]["projection"]["proposition_id"] == selection["selected_proposition_id"]
+                value for value in retained if value[0].get("projection", {}).get("proposition_id", "") == selected_proposition_id
             )
             if not type_match_available or type_match != 0.0:
+                item_projection = item.get("projection", {})
+                proposition_id = item_projection.get("proposition_id", "")
                 reference = evidence_reference(
-                    evidence_id=item["projection"]["proposition_id"],
+                    evidence_id=proposition_id,
                     resolver=self.name,
                     kind=EvidenceKind.PROPOSITION,
                     scope=frame.get("scope", {}),
@@ -1562,20 +1603,17 @@ class StructuredGraphResolver:
                     diagnostics={},
                 )
                 unavailable = () if type_match_available else ("object_type_match",)
-                values = {"entity_match": subject["score"], "relation_match": predicate["score"]}
+                values = {"entity_match": subject_score, "relation_match": predicate_score}
                 if type_match_available:
                     values["object_type_match"] = type_match
-                response = phrase_relation_result(
-                    subject["primary_label"],
-                    predicate["primary_label"],
-                    item["object_label"],
-                )
+                subject_label = subject.get("primary_label", "")
+                predicate_label = predicate.get("primary_label", "")
+                object_label = item.get("object_label", "")
+                response = phrase_relation_result(subject_label, predicate_label, object_label)
                 candidates.append(
                     resolution_candidate(
-                        candidate_id=internal_candidate_id(
-                            CandidateSource.UTILITY, item["projection"]["proposition_id"], frame.get("diagnostic_id", "")
-                        ),
-                        statement_id=item["projection"]["proposition_id"],
+                        candidate_id=internal_candidate_id(CandidateSource.UTILITY, proposition_id, frame.get("diagnostic_id", "")),
+                        statement_id=proposition_id,
                         response=response,
                         source=CandidateSource.UTILITY,
                         features=feature_set(values, unavailable),
@@ -1584,20 +1622,20 @@ class StructuredGraphResolver:
                         lifecycle=LifecycleState.ACTIVE,
                         provenance={
                             "producer": "relation_one_hop",
-                            "subject_entity_id": plan["subject_entity_id"],
-                            "subject_label": subject["primary_label"],
-                            "predicate_id": plan["predicate_id"],
-                            "predicate_label": predicate["primary_label"],
-                            "object_entity_id": item["projection"]["object_entity_id"],
-                            "object_label": item["object_label"],
-                            "object_type": item["object_type"].value,
-                            "predicate_cardinality": selection["cardinality"].value,
-                            "selection_reason": selection["reason"].value,
-                            "supplied_trust": item["projection"]["supplied_trust"],
+                            "subject_entity_id": plan.get("subject_entity_id", ""),
+                            "subject_label": subject_label,
+                            "predicate_id": plan.get("predicate_id", ""),
+                            "predicate_label": predicate_label,
+                            "object_entity_id": item_projection.get("object_entity_id", ""),
+                            "object_label": object_label,
+                            "object_type": item.get("object_type", ExpectedObjectType.UNKNOWN).value,
+                            "predicate_cardinality": selection_cardinality.value,
+                            "selection_reason": selection_reason.value,
+                            "supplied_trust": item_projection.get("supplied_trust", 0.0),
                         },
                         diagnostics={
-                            "template_id": plan["template_id"].value,
-                            "ranking_proposition_ids": selection["ranking_proposition_ids"],
+                            "template_id": template_id.value,
+                            "ranking_proposition_ids": ranking_proposition_ids,
                         },
                     )
                 )
@@ -1632,24 +1670,24 @@ class StructuredGraphResolver:
                 if candidates
                 else (
                     "relation_proposition_conflict"
-                    if selection["conflict_proposition_ids"]
+                    if conflict_proposition_ids
                     else "relation_proposition_evidence" if records else "relation_graph_miss"
                 )
             ),
             candidates=tuple(candidates),
             proposition_evidence=tuple(records),
             diagnostics={
-                "entity_status": subject["status"].value,
-                "predicate_status": predicate["status"].value,
-                "template_id": plan["template_id"].value,
+                "entity_status": subject_status.value,
+                "predicate_status": predicate_status.value,
+                "template_id": template_id.value,
                 "discovery_rows": len(results),
                 "revalidation_rows": revalidation_rows,
                 "exclusion_counts": exclusion_counts,
                 "ambiguous_result": ambiguous_result,
-                "selection_reason": selection["reason"].value,
-                "predicate_cardinality": selection["cardinality"].value,
-                "conflict_proposition_ids": selection["conflict_proposition_ids"],
-                "ranking_proposition_ids": selection["ranking_proposition_ids"],
+                "selection_reason": selection_reason.value,
+                "predicate_cardinality": selection_cardinality.value,
+                "conflict_proposition_ids": conflict_proposition_ids,
+                "ranking_proposition_ids": ranking_proposition_ids,
             },
             consumption=budget_consumption(
                 elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started),
@@ -1706,7 +1744,7 @@ class StructuredGraphResolver:
                 # "of" and "'s" also appear in one-hop questions. When the
                 # subject resolved but no two-hop path compiled, the one-hop
                 # and structured paths answer from the rows still unspent.
-                composition_rows = composition_result[0]["consumption"]["graph_rows"]
+                composition_rows = composition_result[0].get("consumption", {}).get("graph_rows", 0)
                 budget = resolver_budget_with_changes(
                     budget,
                     {"max_graph_rows": max(0, budget.get("max_graph_rows", 0) - composition_rows)},
@@ -1723,7 +1761,7 @@ class StructuredGraphResolver:
                 basis_window=assertion_basis_window(frame),
             )
         except MemoryError:
-            result = memory_exhausted_result(self.name)
+            result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         records = []
         exclusion_counts: dict[str, int] = {}
@@ -1732,21 +1770,21 @@ class StructuredGraphResolver:
         for projection in projections:
             run_cooperative_check(cooperative_check)
             initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
-            if not initial["eligible"]:
-                reason = initial["reason"].value
+            if not initial.get("eligible", False):
+                reason = initial.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             decision = self.internal_eligibility_evaluator.revalidate(
                 projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
             )
-            if decision["revalidated"]:
+            if decision.get("revalidated", False):
                 revalidation_rows += 1
-            if not decision["eligible"]:
-                reason = decision["reason"].value
+            if not decision.get("eligible", False):
+                reason = decision.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
-        records.sort(key=lambda record: record["proposition_id"])
+        records.sort(key=lambda record: record.get("proposition_id", ""))
         exhausted = set()
         record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
         record_total = sum(record_sizes)
@@ -1765,7 +1803,7 @@ class StructuredGraphResolver:
             exhausted.add("output_bytes")
         working_memory = json_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
         if working_memory > budget.get("max_working_memory_bytes", 0):
-            result = memory_exhausted_result(self.name)
+            result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         evidence_bytes = record_bytes()
         result = resolver_result(
@@ -1810,11 +1848,11 @@ class SupportSemanticResolver:
         self.internal_eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
     def available(self, frame: dict) -> bool:
-        graph = self.internal_engram.config.get("graph") or {}
+        graph = self.internal_engram.config.get("graph", {})
         client = self.internal_engram.graph_client
         result = bool(
-            graph.get("enabled")
-            and graph.get("vector_enabled")
+            graph.get("enabled", False)
+            and graph.get("vector_enabled", False)
             and client
             and getattr(client, "available", True)
             and self.internal_engram.graph_embedding_model
@@ -1868,7 +1906,7 @@ class SupportSemanticResolver:
                 self.internal_engram.graph_vector_propositions(
                     frame.get("resolved_text", ""),
                     limit=candidate_limit,
-                    evaluation_time=frame.get("eligibility_context", {})["evaluation_time"],
+                    evaluation_time=frame.get("eligibility_context", {}).get("evaluation_time", ""),
                 )[:candidate_limit]
                 if candidate_limit
                 else []
@@ -1898,14 +1936,16 @@ class SupportSemanticResolver:
                 else []
             )
         except MemoryError:
-            result = memory_exhausted_result(self.name)
+            result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         candidates = []
         accounting = []
         evidence_count = 0
         for match in matches:
             run_cooperative_check(cooperative_check)
-            artifact = match["artifact"]
+            artifact = match.get("artifact", {})
+            statement_id = artifact.get("statement_id", "")
+            support_references = artifact.get("support_references", ())
             references = tuple(
                 evidence_reference(
                     evidence_id=reference.get("id", ""),
@@ -1915,37 +1955,35 @@ class SupportSemanticResolver:
                     provenance={"support_linked": True},
                     diagnostics={"semantic_match": True},
                 )
-                for reference in artifact["support_references"][: max(0, budget.get("max_evidence", 0) - evidence_count)]
+                for reference in support_references[: max(0, budget.get("max_evidence", 0) - evidence_count)]
             )
             evidence_count += len(references)
             candidate = resolution_candidate(
-                candidate_id=internal_candidate_id(
-                    CandidateSource.SUPPORT_SEMANTIC, artifact["statement_id"], frame.get("diagnostic_id", "")
-                ),
-                statement_id=artifact["statement_id"],
-                response=artifact["response"],
+                candidate_id=internal_candidate_id(CandidateSource.SUPPORT_SEMANTIC, statement_id, frame.get("diagnostic_id", "")),
+                statement_id=statement_id,
+                response=artifact.get("response", ""),
                 source=CandidateSource.SUPPORT_SEMANTIC,
                 features=feature_set(
                     values={
-                        "retrieval_score": float(match["retrieval_score"]),
-                        "priority": float(match["priority"]),
-                        "semantic_score": float(match["semantic_similarity"]),
+                        "retrieval_score": float(match.get("retrieval_score", 0.0)),
+                        "priority": float(match.get("priority", 0.0)),
+                        "semantic_score": float(match.get("semantic_similarity", 0.0)),
                         "support_coverage": float(bool(references)),
-                        "vector_weight": float(match["vector_weight"]),
+                        "vector_weight": float(match.get("vector_weight", 0.0)),
                     },
                     unavailable=("lexical_score",),
                 ),
                 evidence=references,
-                scope=artifact["scope"],
-                lifecycle=artifact["lifecycle"],
+                scope=artifact.get("scope", {}),
+                lifecycle=artifact.get("lifecycle", LifecycleState.RETIRED),
                 provenance={
-                    "generation": artifact["generation"],
-                    "source_label": artifact["provenance"]["source_label"],
+                    "generation": artifact.get("generation", 0),
+                    "source_label": artifact.get("provenance", {}).get("source_label", ""),
                 },
-                diagnostics={"support_count": len(artifact["support_references"])},
+                diagnostics={"support_count": len(support_references)},
             )
             candidates.append(candidate)
-            accounting.append(accounting_observation(candidate["statement_id"]))
+            accounting.append(accounting_observation(candidate.get("statement_id", "")))
         records = []
         exclusion_counts: dict[str, int] = {}
         revalidation_attempts = 0
@@ -1957,8 +1995,8 @@ class SupportSemanticResolver:
             for projection in projections:
                 run_cooperative_check(cooperative_check)
                 initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
-                if not initial["eligible"]:
-                    reason = initial["reason"].value
+                if not initial.get("eligible", False):
+                    reason = initial.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
                 if revalidation_attempts >= budget.get("max_graph_rows", 0):
@@ -1968,21 +2006,23 @@ class SupportSemanticResolver:
                 decision = self.internal_eligibility_evaluator.revalidate(
                     projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
                 )
-                if decision["revalidated"]:
+                if decision.get("revalidated", False):
                     revalidation_rows += 1
-                if not decision["eligible"]:
-                    reason = decision["reason"].value
+                if not decision.get("eligible", False):
+                    reason = decision.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
                     exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
                 records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
                 if len(records) >= remaining_evidence:
                     break
-        records.sort(key=lambda record: record["proposition_id"])
+        records.sort(key=lambda record: record.get("proposition_id", ""))
 
         # Candidates are fixed while records are trimmed, so their sizes are
         # computed once and each record's size is subtracted as it goes.
         reference_sizes = [
-            json_size(evidence_reference_to_dict(reference)) for candidate in candidates for reference in candidate["evidence"]
+            json_size(evidence_reference_to_dict(reference))
+            for candidate in candidates
+            for reference in candidate.get("evidence", ())
         ]
         candidate_sizes = [json_size(candidate_to_dict(candidate)) for candidate in candidates]
         record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
@@ -2020,7 +2060,7 @@ class SupportSemanticResolver:
             exhausted.add("working_memory_bytes")
             working_memory = fixed_working_memory + record_working
         if working_memory > budget.get("max_working_memory_bytes", 0):
-            result = memory_exhausted_result(self.name)
+            result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         selected_reason = "support_semantic_candidates" if candidates else "semantic_proposition_evidence"
         if not candidates and not records:
@@ -2088,7 +2128,7 @@ class ResolverRegistry:
         for order, resolver in enumerate(self.internal_resolvers):
             name, cost_class, available_operation, _ = resolver_contract(resolver)
             selected = name in configured
-            cost_allowed = cost_class in frame.get("budget", {})["allowed_cost_classes"]
+            cost_allowed = cost_class in frame.get("budget", {}).get("allowed_cost_classes", ())
             availability_failed = False
             try:
                 available = bool(selected and cost_allowed and resolver_available(available_operation, frame))
@@ -2112,22 +2152,6 @@ class ResolverRegistry:
         return result
 
 
-def trusted_execution_report(
-    results: tuple[dict, ...],
-    consumption: dict,
-    exact_short_circuited: bool,
-    reservations: tuple[dict, ...],
-) -> dict:
-    """Build a report from executor-owned records without revalidating them."""
-    result: dict = {
-        "results": results,
-        "consumption": consumption,
-        "exact_short_circuited": exact_short_circuited,
-        "reservations": reservations,
-    }
-    return result
-
-
 def json_array_size(item_sizes: list[int]) -> int:
     """Return exact compact-JSON bytes for an array of pre-sized values."""
     result = 2 + sum(item_sizes) + max(0, len(item_sizes) - 1)
@@ -2136,18 +2160,20 @@ def json_array_size(item_sizes: list[int]) -> int:
 
 def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
     """Bound one executor-validated result without revalidating its nested records."""
+    current_consumption = result.get("consumption", {})
     candidates = list(result.get("candidates", ())[: lease.get("max_candidates", 0)])
     evidence = list(result.get("evidence", ()))
     proposition_evidence = list(result.get("proposition_evidence", ()))
-    exhausted = set(result.get("consumption", {})["exhausted_dimensions"])
+    exhausted = set(current_consumption.get("exhausted_dimensions", ()))
     if len(candidates) < len(result.get("candidates", ())):
         exhausted.add("candidates")
     remaining_evidence = lease.get("max_evidence", 0)
     for index, candidate in enumerate(candidates):
-        retained = candidate["evidence"][:remaining_evidence]
-        if len(retained) < len(candidate["evidence"]):
+        candidate_evidence = candidate.get("evidence", ())
+        retained = candidate_evidence[:remaining_evidence]
+        if len(retained) < len(candidate_evidence):
             exhausted.add("evidence")
-        if retained != candidate["evidence"]:
+        if retained != candidate_evidence:
             candidates[index] = trusted_candidate_with_changes(candidate, {"evidence": retained})
         remaining_evidence -= len(retained)
     retained_evidence = evidence[:remaining_evidence]
@@ -2161,7 +2187,7 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
     proposition_evidence = retained_proposition_evidence
 
     candidate_evidence_sizes = [
-        [json_size(trusted_evidence_reference_to_dict(reference)) for reference in candidate["evidence"]]
+        [json_size(trusted_evidence_reference_to_dict(reference)) for reference in candidate.get("evidence", ())]
         for candidate in candidates
     ]
     evidence_sizes = [json_size(trusted_evidence_reference_to_dict(reference)) for reference in evidence]
@@ -2193,8 +2219,9 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         exhausted.add("evidence_bytes")
     for index, sizes in enumerate(candidate_evidence_sizes):
         candidate = candidates[index]
-        if len(sizes) != len(candidate["evidence"]):
-            candidates[index] = trusted_candidate_with_changes(candidate, {"evidence": candidate["evidence"][: len(sizes)]})
+        candidate_evidence = candidate.get("evidence", ())
+        if len(sizes) != len(candidate_evidence):
+            candidates[index] = trusted_candidate_with_changes(candidate, {"evidence": candidate_evidence[: len(sizes)]})
 
     candidate_sizes = [json_size(trusted_candidate_to_dict(candidate)) for candidate in candidates]
     output_item_sizes = [*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes]
@@ -2219,8 +2246,8 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         marker = {"truncated": True}
         diagnostics = marker if json_size(dict(marker)) <= lease.get("max_diagnostic_bytes", 0) else {}
         exhausted.add("diagnostic_bytes")
-    accounting_ids = {candidate["statement_id"] for candidate in candidates}
-    accounting = tuple(value for value in result.get("accounting", {}) if value["statement_id"] in accounting_ids)
+    accounting_ids = {candidate.get("statement_id", "") for candidate in candidates}
+    accounting = tuple(value for value in result.get("accounting", ()) if value.get("statement_id", "") in accounting_ids)
     candidate_bytes = json_array_size(candidate_sizes) if candidate_sizes else 0
     retained_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
@@ -2229,18 +2256,20 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
     ]
     evidence_bytes = json_array_size(retained_evidence_sizes) if retained_evidence_sizes else 0
     diagnostic_bytes = json_size(dict(diagnostics)) if diagnostics else 0
-    graph_rows = min(result.get("consumption", {})["graph_rows"], lease.get("max_graph_rows", 0))
-    vector_results = min(result.get("consumption", {})["vector_results"], lease.get("max_vector_results", 0))
-    if graph_rows < result.get("consumption", {})["graph_rows"]:
+    reported_graph_rows = current_consumption.get("graph_rows", 0)
+    reported_vector_results = current_consumption.get("vector_results", 0)
+    graph_rows = min(reported_graph_rows, lease.get("max_graph_rows", 0))
+    vector_results = min(reported_vector_results, lease.get("max_vector_results", 0))
+    if graph_rows < reported_graph_rows:
         exhausted.add("graph_rows")
-    if vector_results < result.get("consumption", {})["vector_results"]:
+    if vector_results < reported_vector_results:
         exhausted.add("vector_results")
     estimated_memory = max(
         candidate_bytes
         + (json_array_size(evidence_sizes) if evidence_sizes else 0)
         + (json_array_size(proposition_evidence_sizes) if proposition_evidence_sizes else 0)
         + diagnostic_bytes,
-        result.get("consumption", {})["working_memory_bytes"],
+        current_consumption.get("working_memory_bytes", 0),
     )
     if estimated_memory > lease.get("max_working_memory_bytes", 0):
         exhausted.add("working_memory_bytes")
@@ -2258,12 +2287,12 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         diagnostic_bytes = 0
     working_memory = min(estimated_memory, lease.get("max_working_memory_bytes", 0))
     consumption = budget_consumption(
-        elapsed_ns=result.get("consumption", {})["elapsed_ns"],
+        elapsed_ns=current_consumption.get("elapsed_ns", 0),
         resolvers=1,
         candidates=len(candidates),
         graph_rows=graph_rows,
         vector_results=vector_results,
-        evidence=len(evidence) + len(proposition_evidence) + sum(len(candidate["evidence"]) for candidate in candidates),
+        evidence=len(evidence) + len(proposition_evidence) + sum(len(candidate.get("evidence", ())) for candidate in candidates),
         evidence_bytes=evidence_bytes,
         output_bytes=(
             json_array_size([*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes])
@@ -2273,7 +2302,7 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         diagnostic_bytes=diagnostic_bytes,
         working_memory_bytes=working_memory,
         exhausted_dimensions=tuple(sorted(exhausted)),
-        measurement_available=result.get("consumption", {})["measurement_available"],
+        measurement_available=current_consumption.get("measurement_available", False),
     )
     result = trusted_resolver_result_with_changes(
         result,
@@ -2305,15 +2334,16 @@ class ResolverExecutor:
 
     def internal_lease(self, frame: dict, ledger: BudgetLedger) -> dict:
         consumed = ledger.snapshot()
+        budget = frame.get("budget", {})
         result = resolver_budget(
             max_candidates=ledger.remaining_candidates(),
-            max_graph_rows=max(0, frame.get("budget", {})["max_graph_rows"] - consumed["graph_rows"]),
-            max_vector_results=max(0, frame.get("budget", {})["max_vector_results"] - consumed["vector_results"]),
+            max_graph_rows=max(0, budget.get("max_graph_rows", 0) - consumed.get("graph_rows", 0)),
+            max_vector_results=max(0, budget.get("max_vector_results", 0) - consumed.get("vector_results", 0)),
             max_evidence=ledger.remaining_evidence(),
-            max_evidence_bytes=max(0, frame.get("budget", {})["max_evidence_bytes"] - consumed["evidence_bytes"]),
-            max_output_bytes=max(0, frame.get("budget", {})["max_output_bytes"] - consumed["output_bytes"]),
-            max_diagnostic_bytes=max(0, frame.get("budget", {})["max_diagnostic_bytes"] - consumed["diagnostic_bytes"]),
-            max_working_memory_bytes=max(0, frame.get("budget", {})["max_working_memory_bytes"] - consumed["working_memory_bytes"]),
+            max_evidence_bytes=max(0, budget.get("max_evidence_bytes", 0) - consumed.get("evidence_bytes", 0)),
+            max_output_bytes=max(0, budget.get("max_output_bytes", 0) - consumed.get("output_bytes", 0)),
+            max_diagnostic_bytes=max(0, budget.get("max_diagnostic_bytes", 0) - consumed.get("diagnostic_bytes", 0)),
+            max_working_memory_bytes=max(0, budget.get("max_working_memory_bytes", 0) - consumed.get("working_memory_bytes", 0)),
         )
         return result
 
@@ -2322,13 +2352,14 @@ class ResolverExecutor:
         current_plan = validate_resolution_plan(plan)
         run_cooperative_check(cooperative_check)
         ledger = BudgetLedger(frame.get("budget", {}))
+        max_resolvers = frame.get("budget", {}).get("max_resolvers", 0)
         results = []
         reservations = []
         exact_short_circuited = False
-        for entry in current_plan["entries"]:
+        for entry in current_plan.get("entries", ()):
             run_cooperative_check(cooperative_check)
-            resolver_name, _, _, resolve_operation = resolver_contract(entry["resolver"])
-            if ledger.snapshot()["resolvers"] >= frame.get("budget", {})["max_resolvers"]:
+            resolver_name, _, _, resolve_operation = resolver_contract(entry.get("resolver", ()))
+            if ledger.snapshot().get("resolvers", 0) >= max_resolvers:
                 exhausted = resolver_result(
                     resolver=resolver_name,
                     state=ResolverState.EXHAUSTED,
@@ -2336,21 +2367,21 @@ class ResolverExecutor:
                     consumption=budget_consumption(exhausted_dimensions=("resolvers",)),
                 )
                 results.append(exhausted)
-                ledger.add(exhausted["consumption"])
+                ledger.add(exhausted.get("consumption", {}))
                 break
-            if not entry["configured"]:
+            if not entry.get("configured", False):
                 continue
-            if not entry["available"]:
+            if not entry.get("available", False):
                 results.append(
                     resolver_result(
                         resolver=resolver_name,
                         state=ResolverState.UNAVAILABLE,
-                        reason_code=entry["reason_code"],
+                        reason_code=entry.get("reason_code", ""),
                     )
                 )
                 continue
             lease = self.internal_lease(frame, ledger)
-            if not lease["max_candidates"] and resolver_name not in {"structured_graph", "support_semantic"}:
+            if not lease.get("max_candidates", 0) and resolver_name not in {"structured_graph", "support_semantic"}:
                 results.append(
                     resolver_result(
                         resolver=resolver_name,
@@ -2392,7 +2423,7 @@ class ResolverExecutor:
                     )
                 else:
                     updated_consumption = trusted_budget_consumption_with_changes(
-                        current_raw["consumption"],
+                        current_raw.get("consumption", {}),
                         {"elapsed_ns": elapsed},
                     )
                     raw = trusted_resolver_result_with_changes(
@@ -2400,19 +2431,27 @@ class ResolverExecutor:
                         {"consumption": updated_consumption},
                     )
                     result = bound_validated_resolver_result(raw, lease)
+            result_consumption = result.get("consumption", {})
+            result_candidates = result.get("candidates", ())
             results.append(result)
-            ledger.add(result["consumption"])
-            reservations.append(resolver_reservation(resolver_name, entry["order"], lease, result["consumption"]))
+            ledger.add(result_consumption)
+            reservations.append(resolver_reservation(resolver_name, entry.get("order", 0), lease, result_consumption))
             if (
                 resolver_name == "exact"
-                and result["state"] == ResolverState.COMPLETED
-                and len(result["candidates"]) == 1
-                and result["candidates"][0]["source"] == CandidateSource.EXACT
+                and result.get("state", ResolverState.FAILED) == ResolverState.COMPLETED
+                and len(result_candidates) == 1
+                and result_candidates[0].get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
                 and not frame.get("rewrite_chain", ())
             ):
                 exact_short_circuited = True
                 break
-        report = trusted_execution_report(tuple(results), ledger.snapshot(), exact_short_circuited, tuple(reservations))
+        # The executor owns every record in this report, so none is revalidated here.
+        report = {
+            "results": tuple(results),
+            "consumption": ledger.snapshot(),
+            "exact_short_circuited": exact_short_circuited,
+            "reservations": tuple(reservations),
+        }
         return report
 
 
@@ -2455,25 +2494,26 @@ def validate_accounting_finalization(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != ACCOUNTING_FINALIZATION_FIELDS:
         raise InvalidRequestError("AccountingFinalization has invalid fields")
     result = accounting_finalization(
-        value["candidate_statement_ids"],
-        value["accepted_statement_id"],
-        value["candidacy_applied"],
-        value["success_applied"],
-        value["idempotent"],
+        value.get("candidate_statement_ids", ()),
+        value.get("accepted_statement_id", ""),
+        value.get("candidacy_applied", False),
+        value.get("success_applied", False),
+        value.get("idempotent", False),
     )
     return result
 
 
 def accounting_finalization_to_dict(value: object) -> dict[str, object]:
     current = validate_accounting_finalization(value)
-    visible_ids = current["candidate_statement_ids"][:MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS]
+    candidate_statement_ids = current.get("candidate_statement_ids", ())
+    visible_ids = candidate_statement_ids[:MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS]
     result = {
         "candidate_statement_ids": list(visible_ids),
-        "omitted_candidate_statement_id_count": len(current["candidate_statement_ids"]) - len(visible_ids),
-        "accepted_statement_id": current["accepted_statement_id"],
-        "candidacy_applied": current["candidacy_applied"],
-        "success_applied": current["success_applied"],
-        "idempotent": current["idempotent"],
+        "omitted_candidate_statement_id_count": len(candidate_statement_ids) - len(visible_ids),
+        "accepted_statement_id": current.get("accepted_statement_id", ""),
+        "candidacy_applied": current.get("candidacy_applied", False),
+        "success_applied": current.get("success_applied", False),
+        "idempotent": current.get("idempotent", False),
     }
     return result
 
@@ -2482,11 +2522,11 @@ def accounting_diagnostics(finalization: dict, compact: bool) -> dict[str, objec
     """Report accounting in resolution diagnostics; the compact form omits statement ids."""
     if compact:
         result = {
-            "candidate_count": len(finalization["candidate_statement_ids"]),
-            "accepted_present": bool(finalization["accepted_statement_id"]),
-            "candidacy_applied": finalization["candidacy_applied"],
-            "success_applied": finalization["success_applied"],
-            "idempotent": finalization["idempotent"],
+            "candidate_count": len(finalization.get("candidate_statement_ids", ())),
+            "accepted_present": bool(finalization.get("accepted_statement_id", "")),
+            "candidacy_applied": finalization.get("candidacy_applied", False),
+            "success_applied": finalization.get("success_applied", False),
+            "idempotent": finalization.get("idempotent", False),
         }
     else:
         result = accounting_finalization_to_dict(finalization)
@@ -2572,14 +2612,14 @@ class ResolutionAccountingFinalizer:
         signature = accounting_signature(results, accepted_statement_id)
         with self.internal_lock:
             if request_id in self.internal_requests:
-                previous_signature, previous = self.internal_requests[request_id]
+                previous_signature, previous = self.internal_requests.get(request_id, ("", {}))
                 if previous_signature != signature:
                     raise ConflictError("accounting request_id is associated with different observations")
                 result = accounting_finalization(
-                    previous["candidate_statement_ids"],
-                    previous["accepted_statement_id"],
-                    previous["candidacy_applied"],
-                    previous["success_applied"],
+                    previous.get("candidate_statement_ids", ()),
+                    previous.get("accepted_statement_id", ""),
+                    previous.get("candidacy_applied", False),
+                    previous.get("success_applied", False),
                     True,
                 )
                 return result
@@ -2674,14 +2714,17 @@ class ResolutionOrchestrator:
             raise InvalidRequestError("accept_exact must be a boolean")
         execution = self.internal_executor.execute(frame, plan, cooperative_check)
         run_cooperative_check(cooperative_check)
+        execution_results = execution.get("results", ())
+        execution_consumption = execution.get("consumption", {})
+        budget_limits = frame.get("budget", {})
         candidates = []
         evidence = []
-        for result in execution["results"]:
-            candidates.extend(result["candidates"])
-            evidence.extend(result["evidence"])
+        for resolver_value in execution_results:
+            candidates.extend(resolver_value.get("candidates", ()))
+            evidence.extend(resolver_value.get("evidence", ()))
         fusion_memory_limit = max(
             0,
-            frame.get("budget", {})["max_working_memory_bytes"] - execution["consumption"]["working_memory_bytes"],
+            budget_limits.get("max_working_memory_bytes", 0) - execution_consumption.get("working_memory_bytes", 0),
         )
         decision = self.internal_fusion.decide(
             frame,
@@ -2692,14 +2735,17 @@ class ResolutionOrchestrator:
             cooperative_check=cooperative_check,
         )
         run_cooperative_check(cooperative_check)
-        outcome = decision["outcome"]
-        selected = decision["selected_candidate"]
-        selected_available = decision["selected_candidate_available"]
-        response_candidates = decision["response_candidates"]
-        reason_codes = [*decision["reason_codes"], "accounting_finalized"]
-        confidence = decision["confidence"]
-        confidence_available = decision["confidence_available"]
-        if outcome == ResolutionOutcome.ANSWER and selected["source"] == CandidateSource.EXACT and not accept_exact:
+        decision_report = decision.get("report", {})
+        decision_working_memory = decision.get("working_memory_bytes", 0)
+        outcome = decision.get("outcome", ResolutionOutcome.MISS)
+        selected = decision.get("selected_candidate", {})
+        selected_available = decision.get("selected_candidate_available", False)
+        response_candidates = decision.get("response_candidates", ())
+        reason_codes = [*decision.get("reason_codes", ()), "accounting_finalized"]
+        confidence = decision.get("confidence", 0.0)
+        confidence_available = decision.get("confidence_available", False)
+        selected_exact = selected.get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
+        if outcome == ResolutionOutcome.ANSWER and selected_exact and not accept_exact:
             # Fusion decides that an exact result is eligible; releasing it as a direct
             # ANSWER needs the caller's explicit permission. Without it the candidate is
             # kept as evidence and earns no success credit.
@@ -2716,9 +2762,9 @@ class ResolutionOrchestrator:
         package_byte_limit = 256
         minimal_evidence_values = tuple(
             reference
-            for result in execution["results"]
-            for reference in result["evidence"]
-            + tuple(nested for candidate in result["candidates"] for nested in candidate["evidence"])
+            for result in execution_results
+            for reference in result.get("evidence", ())
+            + tuple(nested for candidate in result.get("candidates", ()) for nested in candidate.get("evidence", ()))
         )
         minimal_evidence_count = len(minimal_evidence_values)
         minimal_evidence_bytes = (
@@ -2745,30 +2791,30 @@ class ResolutionOrchestrator:
             run_cooperative_check(cooperative_check)
 
         unexpected_proposition_records = any(
-            result["proposition_evidence"] and result["resolver"] not in PROPOSITION_EVIDENCE_PRODUCERS
-            for result in execution["results"]
+            result.get("proposition_evidence", ()) and result.get("resolver", "") not in PROPOSITION_EVIDENCE_PRODUCERS
+            for result in execution_results
         )
         if unexpected_proposition_records:
             append_reason("proposition_evidence_untrusted_producer")
         raw_proposition_records = tuple(
             record
-            for result in execution["results"]
-            if result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
-            for record in result["proposition_evidence"]
+            for result in execution_results
+            if result.get("resolver", "") in PROPOSITION_EVIDENCE_PRODUCERS
+            for record in result.get("proposition_evidence", ())
         )
         full_producer_available = any(
-            result["resolver"] in PROPOSITION_EVIDENCE_PRODUCERS
-            and result["state"] == ResolverState.COMPLETED
-            and result["proposition_evidence"]
-            for result in execution["results"]
+            result.get("resolver", "") in PROPOSITION_EVIDENCE_PRODUCERS
+            and result.get("state", ResolverState.FAILED) == ResolverState.COMPLETED
+            and result.get("proposition_evidence", ())
+            for result in execution_results
         )
         if outcome != ResolutionOutcome.ANSWER and full_producer_available:
             evidence_diagnostics["input_count"] = len(raw_proposition_records)
             remaining_working_memory = max(
                 0,
-                frame.get("budget", {})["max_working_memory_bytes"]
-                - execution["consumption"]["working_memory_bytes"]
-                - decision["working_memory_bytes"],
+                budget_limits.get("max_working_memory_bytes", 0)
+                - execution_consumption.get("working_memory_bytes", 0)
+                - decision_working_memory,
             )
             if working_size(raw_proposition_records) * 2 > remaining_working_memory:
                 orchestration_exhausted.add("working_memory_bytes")
@@ -2776,9 +2822,10 @@ class ResolutionOrchestrator:
             else:
                 try:
                     normalized_records = canonicalize_proposition_evidence(raw_proposition_records, evidence_check)
+                    evaluation_time = frame.get("eligibility_context", {}).get("evaluation_time", "")
                     if any(
-                        record["disclosure"]["scope"] != frame.get("scope", {})
-                        or record["validity"]["evaluation_time"] != frame.get("eligibility_context", {})["evaluation_time"]
+                        record.get("disclosure", {}).get("scope", {}) != frame.get("scope", {})
+                        or record.get("validity", {}).get("evaluation_time", "") != evaluation_time
                         for record in normalized_records
                     ):
                         raise InvalidRequestError("Proposition evidence is not bound to the current frame")
@@ -2789,9 +2836,9 @@ class ResolutionOrchestrator:
                         evidence_check()
                         usefulness = evaluate_evidence_usefulness(self.internal_evidence_policy, record)
                         usefulness_decisions.append(usefulness)
-                        for reason in usefulness["reasons"]:
+                        for reason in usefulness.get("reasons", ()):
                             reason_counts[reason.value] = reason_counts.get(reason.value, 0) + 1
-                        if usefulness["included"]:
+                        if usefulness.get("included", False):
                             included_records.append(record)
                     evidence_check()
                 except InvalidRequestError:
@@ -2811,12 +2858,12 @@ class ResolutionOrchestrator:
                     )
                     remaining_evidence_bytes = max(
                         0,
-                        frame.get("budget", {})["max_evidence_bytes"] - minimal_evidence_bytes,
+                        budget_limits.get("max_evidence_bytes", 0) - minimal_evidence_bytes,
                     )
                     package_byte_limit = min(65_536, max(256, remaining_evidence_bytes))
                     candidate_package = build_evidence_package(
                         package_source_records,
-                        max_records=min(10, max(0, frame.get("budget", {})["max_evidence"] - minimal_evidence_count)),
+                        max_records=min(10, max(0, budget_limits.get("max_evidence", 0) - minimal_evidence_count)),
                         max_bytes=package_byte_limit,
                     )
                     candidate_package_bytes = len(trusted_evidence_package_to_json(candidate_package).encode("utf-8"))
@@ -2834,39 +2881,46 @@ class ResolutionOrchestrator:
                         orchestration_exhausted.add("working_memory_bytes")
                         append_reason("proposition_evidence_memory_exhausted")
                         evidence_diagnostics["available"] = False
-                    elif evidence_package["records"]:
+                    elif evidence_package.get("records", ()):
                         append_reason("proposition_evidence_included")
                         if outcome == ResolutionOutcome.MISS:
                             outcome = ResolutionOutcome.EVIDENCE
                     elif normalized_records:
                         append_reason("proposition_evidence_excluded")
         accepted_statement_id = (
-            selected["statement_id"]
-            if outcome == ResolutionOutcome.ANSWER and selected["source"] == CandidateSource.EXACT and accept_exact
+            selected.get("statement_id", "")
+            if outcome == ResolutionOutcome.ANSWER
+            and selected.get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
+            and accept_exact
             else ""
         )
         preview_ids = tuple(
-            sorted({observation["statement_id"] for result in execution["results"] for observation in result["accounting"]})
+            sorted(
+                {
+                    observation.get("statement_id", "")
+                    for result in execution_results
+                    for observation in result.get("accounting", ())
+                }
+            )
         )
-        budget_limits = frame.get("budget", {})
         output_limit = budget_limits.get("max_output_bytes", 0)
         working_memory_bytes = (
-            execution["consumption"]["working_memory_bytes"] + decision["working_memory_bytes"] + evidence_working_memory
+            execution_consumption.get("working_memory_bytes", 0) + decision_working_memory + evidence_working_memory
         )
         output_truncated = False
         evidence_diagnostics.update(
             {
                 "available": evidence_package_available,
-                "retained_count": evidence_package["retained_count"],
-                "omitted_count": evidence_package["omitted_count"],
-                "truncated": evidence_package["truncated"],
+                "retained_count": evidence_package.get("retained_count", 0),
+                "omitted_count": evidence_package.get("omitted_count", 0),
+                "truncated": evidence_package.get("truncated", False),
             }
         )
 
         def bound_frame_diagnostics(values: dict[str, object]) -> dict[str, object]:
             remaining = max(
                 0,
-                frame.get("budget", {})["max_diagnostic_bytes"] - execution["consumption"]["diagnostic_bytes"],
+                budget_limits.get("max_diagnostic_bytes", 0) - execution_consumption.get("diagnostic_bytes", 0),
             )
             if not values or json_size(values) <= remaining:
                 return values
@@ -2878,8 +2932,8 @@ class ResolutionOrchestrator:
                     "available": evidence_package_available,
                     "input_count": evidence_diagnostics.get("input_count", 0),
                     "included_count": evidence_diagnostics.get("included_count", 0),
-                    "retained_count": evidence_package["retained_count"],
-                    "omitted_count": evidence_package["omitted_count"],
+                    "retained_count": evidence_package.get("retained_count", 0),
+                    "omitted_count": evidence_package.get("omitted_count", 0),
                 },
                 "truncated": True,
             }
@@ -2910,9 +2964,9 @@ class ResolutionOrchestrator:
             evidence_diagnostics.update(
                 {
                     "available": evidence_package_available,
-                    "retained_count": evidence_package["retained_count"],
-                    "omitted_count": evidence_package["omitted_count"],
-                    "truncated": evidence_package["truncated"],
+                    "retained_count": evidence_package.get("retained_count", 0),
+                    "omitted_count": evidence_package.get("omitted_count", 0),
+                    "truncated": evidence_package.get("truncated", False),
                 }
             )
             visible_evidence_diagnostics = frame_diagnostics.get("proposition_evidence", {})
@@ -2927,42 +2981,45 @@ class ResolutionOrchestrator:
             With ``reserve``, the values settled only after the accounting write are sized at
             their widest: output bytes at the output limit and working memory at its limit.
             """
-            exhausted = set(execution["consumption"]["exhausted_dimensions"]).union(orchestration_exhausted)
+            max_evidence_bytes = budget_limits.get("max_evidence_bytes", 0)
+            max_diagnostic_bytes = budget_limits.get("max_diagnostic_bytes", 0)
+            max_working_memory_bytes = budget_limits.get("max_working_memory_bytes", 0)
+            exhausted = set(execution_consumption.get("exhausted_dimensions", ())).union(orchestration_exhausted)
             if output_truncated:
                 exhausted.add("output_bytes")
-            if decision["report"].get("budget_exhausted", "") == "fusion_memory_exhausted":
+            if decision_report.get("budget_exhausted", "") == "fusion_memory_exhausted":
                 exhausted.add("working_memory_bytes")
             package_evidence_bytes = (
                 len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
             )
-            evidence_count = minimal_evidence_count + evidence_package["retained_count"]
+            evidence_count = minimal_evidence_count + evidence_package.get("retained_count", 0)
             evidence_bytes = minimal_evidence_bytes + package_evidence_bytes
-            if evidence_count > budget_limits["max_evidence"]:
+            if evidence_count > budget_limits.get("max_evidence", 0):
                 exhausted.add("evidence")
-            if evidence_bytes > budget_limits["max_evidence_bytes"]:
+            if evidence_bytes > max_evidence_bytes:
                 exhausted.add("evidence_bytes")
             frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
-            diagnostic_bytes = execution["consumption"]["diagnostic_bytes"] + frame_diagnostic_bytes
-            if diagnostic_bytes > budget_limits["max_diagnostic_bytes"]:
+            diagnostic_bytes = execution_consumption.get("diagnostic_bytes", 0) + frame_diagnostic_bytes
+            if diagnostic_bytes > max_diagnostic_bytes:
                 exhausted.add("diagnostic_bytes")
-            if working_memory_bytes > budget_limits["max_working_memory_bytes"]:
+            if working_memory_bytes > max_working_memory_bytes:
                 exhausted.add("working_memory_bytes")
             if reserve:
                 output_bytes = output_limit
-                reported_working_memory = budget_limits["max_working_memory_bytes"]
-                if output_limit > budget_limits["max_working_memory_bytes"]:
+                reported_working_memory = max_working_memory_bytes
+                if output_limit > max_working_memory_bytes:
                     exhausted.add("working_memory_bytes")
             else:
                 output_bytes = 0
-                reported_working_memory = min(working_memory_bytes, budget_limits["max_working_memory_bytes"])
+                reported_working_memory = min(working_memory_bytes, max_working_memory_bytes)
             result = budget_consumption_with_changes(
-                execution["consumption"],
+                execution_consumption,
                 {
                     "elapsed_ns": elapsed_ns,
                     "evidence": evidence_count,
-                    "evidence_bytes": min(evidence_bytes, budget_limits["max_evidence_bytes"]),
+                    "evidence_bytes": min(evidence_bytes, max_evidence_bytes),
                     "output_bytes": output_bytes,
-                    "diagnostic_bytes": min(diagnostic_bytes, budget_limits["max_diagnostic_bytes"]),
+                    "diagnostic_bytes": min(diagnostic_bytes, max_diagnostic_bytes),
                     "working_memory_bytes": reported_working_memory,
                     "exhausted_dimensions": tuple(sorted(exhausted)),
                 },
@@ -2994,17 +3051,21 @@ class ResolutionOrchestrator:
             {
                 "diagnostic_id": frame.get("diagnostic_id", ""),
                 "plan": trusted_resolution_plan_to_dict(plan),
-                "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution["reservations"]],
-                "fusion": decision["report"],
+                "reservations": [resolver_reservation_to_dict(reservation) for reservation in execution.get("reservations", ())],
+                "fusion": decision_report,
                 "proposition_evidence": evidence_diagnostics,
                 "accounting": sized_accounting(False),
             }
         )
         resolver_results = tuple(
-            trusted_resolver_result_with_changes(result, {"proposition_evidence": ()}) if result["proposition_evidence"] else result
-            for result in execution["results"]
+            (
+                trusted_resolver_result_with_changes(result, {"proposition_evidence": ()})
+                if result.get("proposition_evidence", ())
+                else result
+            )
+            for result in execution_results
         )
-        response_evidence = decision["evidence"]
+        response_evidence = decision.get("evidence", ())
 
         result_fields = {
             "outcome": outcome,
@@ -3030,15 +3091,15 @@ class ResolutionOrchestrator:
                 {
                     "diagnostic_id": frame.get("diagnostic_id", ""),
                     "fusion": {
-                        "candidate_count": decision["report"]["candidate_count"],
+                        "candidate_count": decision_report.get("candidate_count", 0),
                         "output_truncated": True,
                     },
                     "proposition_evidence": {
                         "available": evidence_package_available,
                         "input_count": evidence_diagnostics.get("input_count", 0),
                         "included_count": evidence_diagnostics.get("included_count", 0),
-                        "retained_count": evidence_package["retained_count"],
-                        "omitted_count": evidence_package["omitted_count"],
+                        "retained_count": evidence_package.get("retained_count", 0),
+                        "omitted_count": evidence_package.get("omitted_count", 0),
                         "output_truncated": True,
                     },
                     "accounting": sized_accounting(True),
@@ -3090,7 +3151,7 @@ class ResolutionOrchestrator:
                 accepted_statement_id = ""
                 append_reason("answer_exceeds_output_budget")
             if outcome == ResolutionOutcome.EVIDENCE and not (
-                response_candidates or response_evidence or evidence_package["records"]
+                response_candidates or response_evidence or evidence_package.get("records", ())
             ):
                 outcome = ResolutionOutcome.MISS
                 append_reason("no_usable_output_after_truncation")
@@ -3106,17 +3167,18 @@ class ResolutionOrchestrator:
                 "reason_codes": tuple(reason_codes),
             }
         )
-        elapsed_ns = execution["consumption"]["elapsed_ns"]
-        if frame.get("budget", {})["started_ns"]:
+        elapsed_ns = execution_consumption.get("elapsed_ns", 0)
+        started_ns = budget_limits.get("started_ns", 0)
+        if started_ns:
             current_ns = resolver_clock_ns(self.internal_clock_ns)
             if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
                 raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
-            elapsed_ns = max(elapsed_ns, max(0, current_ns - frame.get("budget", {})["started_ns"]))
+            elapsed_ns = max(elapsed_ns, max(0, current_ns - started_ns))
         if sized_output_bytes(elapsed_ns) > output_limit:
             raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
 
         run_cooperative_check(cooperative_check)
-        finalization = self.internal_accounting.finalize(request_id, execution["results"], accepted_statement_id)
+        finalization = self.internal_accounting.finalize(request_id, execution_results, accepted_statement_id)
         # The write settles only the accounting flags, each sized at its widest above, so the
         # result below is no larger than the one just checked.
         if "accounting" in frame_diagnostics:
@@ -3126,16 +3188,17 @@ class ResolutionOrchestrator:
         for _ in range(8):
             result = trusted_resolution_result(**result_fields, budget=consumption)
             encoded_size = len(trusted_resolution_result_to_json(result).encode("utf-8"))
-            fixed_exhausted = set(consumption["exhausted_dimensions"])
-            if encoded_size > frame.get("budget", {})["max_working_memory_bytes"]:
+            fixed_exhausted = set(consumption.get("exhausted_dimensions", ()))
+            max_working_memory_bytes = budget_limits.get("max_working_memory_bytes", 0)
+            if encoded_size > max_working_memory_bytes:
                 fixed_exhausted.add("working_memory_bytes")
             updated_consumption = budget_consumption_with_changes(
                 consumption,
                 {
                     "output_bytes": encoded_size,
                     "working_memory_bytes": min(
-                        frame.get("budget", {})["max_working_memory_bytes"],
-                        max(consumption["working_memory_bytes"], encoded_size),
+                        max_working_memory_bytes,
+                        max(consumption.get("working_memory_bytes", 0), encoded_size),
                     ),
                     "exhausted_dimensions": tuple(sorted(fixed_exhausted)),
                 },

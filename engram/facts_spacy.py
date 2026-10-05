@@ -19,8 +19,7 @@ preposition; action verbs use the verb lemma so relations are normalized.
 from spacy.tokens import Token
 
 from engram.constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
-from engram.nlp import extracted_fact
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 
 
 def clean_span(tokens) -> str:
@@ -118,15 +117,15 @@ def extract_from_sentence(sent) -> dict:
         result = {}
         return result
 
-    fact = extracted_fact(
-        subject=subject,
-        predicate=predicate,
-        obj=obj,
-        original=sent.text.strip(),
-    )
     # Entity types from NER (PERSON/GPE/ORG/DATE/...), "" when not an entity.
-    fact["subject_type"] = subject_token.ent_type_
-    fact["obj_type"] = obj_token.ent_type_
+    fact = {
+        "subject": subject,
+        "predicate": predicate,
+        "obj": obj,
+        "original": sent.text.strip(),
+        "subject_type": subject_token.ent_type_,
+        "obj_type": obj_token.ent_type_,
+    }
     return fact
 
 
@@ -143,7 +142,7 @@ def extract_facts(text: str) -> list:
     if not text or not text.strip():
         result = []
         return result
-    nlp = get_nlp()
+    nlp = SPACY_PIPELINES.pipeline()
     if not nlp:
         result = []
         return result

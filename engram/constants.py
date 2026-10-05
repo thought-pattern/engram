@@ -1222,7 +1222,6 @@ MAX_REPOSITORY_ARTIFACTS = 100_000
 MAX_REQUEST_ID_BYTES = 256
 MAX_RECEIPT_STATEMENT_ID_BYTES = 256
 MAX_RESULT_BYTES = 65_536
-MAX_RECEIPT_JSON_BYTES = 1_048_576
 MAX_SIGNATURE_INPUT_BYTES = 1_048_576
 MAX_RESULT_DEPTH = 8
 MAX_RESULT_ITEMS = 1_024
@@ -1264,7 +1263,7 @@ RECEIPT_LOOKUP_FIELDS = set(
     {
         "outcome",
         "request_id",
-        "receipt_json",
+        "receipt",
         "receipt_available",
     }
 )

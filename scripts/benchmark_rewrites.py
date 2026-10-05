@@ -13,11 +13,15 @@ if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants import QueryOperator
-from engram.identity import build_scoped_retrieval_key, scope_key, scoped_retrieval_key_to_json
+from engram.identity import scope_key, scoped_retrieval_key_from_text, trusted_scoped_retrieval_key_signature
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/rewrite/benchmark.json")
+# Every case, gate and corpus field the report reads; a corpus lacking one is refused.
+CASE_FIELDS = {"case_id", "category", "input", "expected_final", "operator", "subject", "inherited_subject", "should_rewrite"}
+GATE_FIELDS = {"minimum_recall_gain", "maximum_semantic_collision_rate", "maximum_false_direct_answer_rate"}
+CORPUS_METADATA_FIELDS = {"corpus_id", "frozen_at", "provenance"}
 
 
 def internal_percentile(values: list[float], fraction: float) -> float:
@@ -26,21 +30,26 @@ def internal_percentile(values: list[float], fraction: float) -> float:
     return result
 
 
-def internal_load(path: Path) -> dict[str, object]:
+def internal_load(path: Path) -> dict:
     decoded = json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(decoded, dict):
         raise ValueError("rewrite benchmark corpus must be an object")
-    if not isinstance(decoded.get("cases"), list) or not isinstance(decoded.get("gates"), dict):
+    if (
+        "cases" not in decoded
+        or "gates" not in decoded
+        or not isinstance(decoded.get("cases", []), list)
+        or not isinstance(decoded.get("gates", {}), dict)
+    ):
         raise ValueError("rewrite benchmark corpus must contain cases and gates")
     return decoded
 
 
-def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
+def benchmark(corpus_path: Path, repeats: int = 100) -> dict:
     if repeats < 30:
         raise ValueError("rewrite benchmark requires at least 30 repeats")
     corpus = internal_load(corpus_path)
-    cases = corpus["cases"]
-    gates = corpus["gates"]
+    cases = corpus.get("cases", [])
+    gates = corpus.get("gates", {})
     if not isinstance(cases, list) or not isinstance(gates, dict):
         raise ValueError("rewrite benchmark corpus fields have invalid types")
     engine = RewriteEngine(load_default_rewrite_corpus())
@@ -53,30 +62,35 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
     false_direct_answers = 0
     final_owners: dict[str, str] = {}
     semantic_collisions = 0
-    category_counts: Counter[str] = Counter()
+    category_counts = Counter()
     for raw_case in cases:
         if not isinstance(raw_case, dict):
             raise ValueError("rewrite benchmark cases must be objects")
         case = raw_case
-        case_id = str(case["case_id"])
-        operator = QueryOperator(str(case["operator"]))
+        missing_fields = sorted(CASE_FIELDS - set(case))
+        if missing_fields:
+            raise ValueError(f"rewrite benchmark case is missing fields: {', '.join(missing_fields)}")
+        case_id = str(case.get("case_id", ""))
+        operator = QueryOperator(str(case.get("operator", "")))
         execution = engine.rewrite(
-            str(case["input"]),
+            str(case.get("input", "")),
             operator=operator,
-            subject=str(case["subject"]),
-            inherited_subject=case["inherited_subject"] is True,
+            subject=str(case.get("subject", "")),
+            inherited_subject=case.get("inherited_subject", False) is True,
         )
-        expected = str(case["expected_final"])
-        expected_key = build_scoped_retrieval_key(selected_scope, expected)
-        baseline_key = build_scoped_retrieval_key(selected_scope, str(case["input"]))
-        rewritten_key = build_scoped_retrieval_key(selected_scope, execution["final_text"])
-        should_rewrite = case["should_rewrite"] is True
+        final_text = execution.get("final_text", "")
+        chain = execution.get("chain", ())
+        expected = str(case.get("expected_final", ""))
+        expected_key = scoped_retrieval_key_from_text(selected_scope, expected)
+        baseline_key = scoped_retrieval_key_from_text(selected_scope, str(case.get("input", "")))
+        rewritten_key = scoped_retrieval_key_from_text(selected_scope, final_text)
+        should_rewrite = case.get("should_rewrite", False) is True
         if should_rewrite:
             positive += 1
-            category_counts[str(case["category"])] += 1
+            category_counts[str(case.get("category", ""))] += 1
             baseline_hits += baseline_key == expected_key
             rewritten_hits += rewritten_key == expected_key
-            signature = scoped_retrieval_key_to_json(expected_key)
+            signature = trusted_scoped_retrieval_key_signature(expected_key)
             prior = final_owners.get(signature, "")
             if prior and prior != case_id:
                 semantic_collisions += 1
@@ -86,12 +100,13 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
         results.append(
             {
                 "case_id": case_id,
-                "category": case["category"],
-                "passed": execution["final_text"] == expected and bool(execution["chain"]) == should_rewrite,
+                "category": case.get("category", ""),
+                "passed": final_text == expected and bool(chain) == should_rewrite,
                 "baseline_exact_hit": baseline_key == expected_key if should_rewrite else False,
                 "rewritten_exact_hit": rewritten_key == expected_key if should_rewrite else False,
-                "rules": [step[0] for step in execution["chain"]],
-                "stop_reason": execution["stop_reason"].value,
+                "rules": [step[0] for step in chain],
+                # The stop reason is a StrEnum, so its string form is its value.
+                "stop_reason": str(execution.get("stop_reason", "")),
             }
         )
     for _ in range(repeats):
@@ -100,10 +115,10 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
                 continue
             started = time_perf_counter_ns()
             engine.rewrite(
-                str(raw_case["input"]),
-                operator=QueryOperator(str(raw_case["operator"])),
-                subject=str(raw_case["subject"]),
-                inherited_subject=raw_case["inherited_subject"] is True,
+                str(raw_case.get("input", "")),
+                operator=QueryOperator(str(raw_case.get("operator", ""))),
+                subject=str(raw_case.get("subject", "")),
+                inherited_subject=raw_case.get("inherited_subject", False) is True,
             )
             latencies_ms.append((time_perf_counter_ns() - started) / 1_000_000)
     negatives = len(cases) - positive
@@ -112,20 +127,24 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict[str, object]:
     recall_gain = rewritten_recall - baseline_recall
     collision_rate = semantic_collisions / positive
     false_rate = false_direct_answers / negatives
+    missing_gates = sorted(GATE_FIELDS - set(gates))
+    missing_metadata = sorted(CORPUS_METADATA_FIELDS - set(corpus))
+    if missing_gates or missing_metadata:
+        raise ValueError(f"rewrite benchmark corpus is missing fields: {', '.join(missing_metadata + missing_gates)}")
     verdicts = {
         "all_cases_pass": all(bool(result.get("passed", False)) for result in results),
-        "recall_gain": recall_gain >= float(gates["minimum_recall_gain"]),
-        "semantic_collision_rate": collision_rate <= float(gates["maximum_semantic_collision_rate"]),
-        "false_direct_answer_rate": false_rate <= float(gates["maximum_false_direct_answer_rate"]),
+        "recall_gain": recall_gain >= float(gates.get("minimum_recall_gain", 0.0)),
+        "semantic_collision_rate": collision_rate <= float(gates.get("maximum_semantic_collision_rate", 0.0)),
+        "false_direct_answer_rate": false_rate <= float(gates.get("maximum_false_direct_answer_rate", 0.0)),
     }
     result = {
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
         "corpus": {
             "path": corpus_path.as_posix(),
-            "corpus_id": corpus["corpus_id"],
-            "frozen_at": corpus["frozen_at"],
-            "partition": corpus["provenance"],
+            "corpus_id": corpus.get("corpus_id", ""),
+            "frozen_at": corpus.get("frozen_at", ""),
+            "partition": corpus.get("provenance", {}),
             "positive_cases": positive,
             "negative_controls": negatives,
             "category_counts": dict(sorted(category_counts.items())),
@@ -169,8 +188,10 @@ def main() -> int:
     report = benchmark(args.corpus, args.repeats)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json_dumps({"passed": report["passed"], "accuracy": report["accuracy"], "latency": report["latency_observation"]}))
-    result = 0 if report["passed"] else 1
+    passed = report.get("passed", False)
+    accuracy = report.get("accuracy", {})
+    print(json_dumps({"passed": passed, "accuracy": accuracy, "latency": report.get("latency_observation", {})}))
+    result = 0 if passed else 1
     return result
 
 

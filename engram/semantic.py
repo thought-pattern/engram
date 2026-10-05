@@ -1,6 +1,6 @@
 """Request-local semantic retrieval over accepted-response artifacts."""
 
-from collections.abc import Container, Iterable
+from collections.abc import Iterable
 from hashlib import sha256 as hashlib_sha256
 from itertools import batched as itertools_batched
 from logging import getLogger as logging_getLogger
@@ -63,19 +63,6 @@ def model_artifact_sha256(path: Path) -> str:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
     result = digest.hexdigest()
-    return result
-
-
-def internal_artifact_identity(settings: dict, actual_sha256: str) -> dict:
-    result = {
-        "model_id": settings.get("model_id", ""),
-        "model_version": settings.get("model_version", ""),
-        "license_id": settings.get("license_id", ""),
-        "artifact_sha256": actual_sha256,
-        "backend": settings.get("backend", ""),
-        "dimension": settings.get("dimension", 0),
-        "normalization_version": settings.get("normalization_version", 0),
-    }
     return result
 
 
@@ -226,11 +213,12 @@ class StandaloneSemanticRetriever:
         except (TypeError, ValueError) as error:
             raise InvalidRequestError(str(error)) from error
         injected_model = model != ()
+        settings = self.internal_settings
         self.internal_model: object = ()
-        self.internal_healthy = not self.internal_settings["enabled"]
+        self.internal_healthy = not settings.get("enabled", False)
         self.internal_last_error = ""
         self.internal_identity: dict = {}
-        if self.internal_settings["enabled"]:
+        if settings.get("enabled", False):
             try:
                 if not injected_model:
                     approved_identity = {
@@ -241,30 +229,46 @@ class StandaloneSemanticRetriever:
                         "backend": APPROVED_SEMANTIC_BACKEND,
                         "dimension": APPROVED_SEMANTIC_DIMENSION,
                     }
-                    if any(self.internal_settings[name] != expected for name, expected in approved_identity.items()):
+                    configured_identity = {
+                        "model_id": settings.get("model_id", ""),
+                        "model_version": settings.get("model_version", ""),
+                        "license_id": settings.get("license_id", ""),
+                        "artifact_sha256": settings.get("artifact_sha256", ""),
+                        "backend": settings.get("backend", ""),
+                        "dimension": settings.get("dimension", 0),
+                    }
+                    if configured_identity != approved_identity:
                         raise InvalidRequestError("semantic model identity is not approved")
-                model_path = Path(self.internal_settings["model_path"])
+                model_path = Path(settings.get("model_path", ""))
                 if not model_path.is_dir():
                     raise InvalidRequestError("semantic model artifact must be a directory")
                 if not (model_path / "LICENSE").is_file():
                     raise InvalidRequestError("semantic model artifact is missing its license file")
                 actual_sha256 = model_artifact_sha256(model_path)
-                if actual_sha256 != self.internal_settings["artifact_sha256"]:
+                if actual_sha256 != settings.get("artifact_sha256", ""):
                     raise InvalidRequestError("semantic model artifact checksum mismatch")
                 selected_model = model
                 if not injected_model:
-                    if self.internal_settings.get("backend", "") != "native":
-                        raise RuntimeError(f"semantic backend is unavailable: {self.internal_settings.get('backend', "")}")
+                    if settings.get("backend", "") != "native":
+                        raise RuntimeError(f"semantic backend is unavailable: {settings.get('backend', '')}")
                     selected_model = SentenceTransformer(
-                        self.internal_settings.get("model_path", ""),
+                        settings.get("model_path", ""),
                         device="cpu",
                         local_files_only=True,
                         trust_remote_code=False,
                     )
-                if model_dimension(selected_model) != self.internal_settings["dimension"]:
+                if model_dimension(selected_model) != settings.get("dimension", 0):
                     raise InvalidRequestError("semantic model dimension mismatch")
                 self.internal_model = selected_model
-                self.internal_identity = internal_artifact_identity(self.internal_settings, actual_sha256)
+                self.internal_identity = {
+                    "model_id": settings.get("model_id", ""),
+                    "model_version": settings.get("model_version", ""),
+                    "license_id": settings.get("license_id", ""),
+                    "artifact_sha256": actual_sha256,
+                    "backend": settings.get("backend", ""),
+                    "dimension": settings.get("dimension", 0),
+                    "normalization_version": settings.get("normalization_version", 0),
+                }
                 self.internal_healthy = True
             except Exception as error:
                 logger.warning("Semantic retrieval model is unavailable", exc_info=error)
@@ -282,7 +286,7 @@ class StandaloneSemanticRetriever:
 
     @property
     def enabled(self) -> bool:
-        result = self.internal_settings["enabled"]
+        result = self.internal_settings.get("enabled", False)
         return result
 
     @property
@@ -361,8 +365,11 @@ class StandaloneSemanticRetriever:
         result = tuple(records)
         return result
 
-    def retain(self, statement_ids: Container[str]) -> None:
-        """Drop cached records for artifacts that are no longer stored."""
+    def retain(self, statement_ids: dict) -> None:
+        """Drop cached records for artifacts that are no longer stored.
+
+        ``statement_ids`` is the repository's live artifact map; only its keys are consulted.
+        """
         with self.internal_record_lock:
             for statement_id in [value for value in self.internal_records if value not in statement_ids]:
                 del self.internal_records[statement_id]

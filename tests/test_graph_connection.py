@@ -8,7 +8,7 @@ from unittest.mock import patch
 from pytest import fixture, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
-from engram.constants import GRAPH_TIMEOUT_SECONDS
+from engram.constants import EARLIEST_UTC, EMPTY_CONFIG, GRAPH_TIMEOUT_SECONDS
 from engram.core import Engram
 from engram.graph import MemGraphConnection
 from engram.service import EngramCore
@@ -49,8 +49,8 @@ def test_rows_are_dicts_and_carry_visibility_parameters(stub, client) -> None:
     assert rows == [{"subject": "Athens", "count": 2, "score": 0.5, "labels": ["City"]}]
     query, params = stub.queries[-1]
     assert query == "MATCH (n) RETURN n.subject AS subject"
-    assert params["limit"] == 3
-    assert params["visibility_kind"] == "global"
+    assert params.get("limit", 0) == 3
+    assert params.get("visibility_kind", "") == "global"
 
 
 def test_driver_datetimes_come_back_as_python_datetimes(stub, client) -> None:
@@ -58,7 +58,7 @@ def test_driver_datetimes_come_back_as_python_datetimes(stub, client) -> None:
     # Bolt 5 DateTime: UTC epoch seconds, nanoseconds, offset seconds.
     stub.rows = [{"recorded_at": Structure(0x49, int(expected.timestamp()), 0, 0)}]
 
-    value = client.execute("RETURN 1 AS recorded_at")[0]["recorded_at"]
+    value = client.execute("RETURN 1 AS recorded_at")[0].get("recorded_at", EARLIEST_UTC)
 
     assert isinstance(value, datetime)
     assert value == expected
@@ -165,9 +165,9 @@ class ReconnectCountingGraph:
 class TurnRecordingCore(EngramCore):
     """Core that records how many turns were still active when it asked for a reconnect."""
 
-    def __init__(self, engram: Engram) -> None:
+    def __init__(self, engram=(), *, config: dict = EMPTY_CONFIG, clock: object = ()) -> None:
         self.active_turns_at_reconnect: list[int] = []
-        super().__init__(engram)
+        super().__init__(engram, config=config, clock=clock)
 
     def reconnect_graph_after_turn(self) -> None:
         self.active_turns_at_reconnect.append(len(self.active_resolution_request_ids))

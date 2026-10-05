@@ -1,6 +1,6 @@
 """Evaluate and independently gate the Section 14 utility plugins."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
+from argparse import ArgumentParser as argparse_ArgumentParser
 from ast import Call as ast_Call, Name as ast_Name, parse as ast_parse, walk as ast_walk
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,7 +52,7 @@ FUZZ_PREFIXES = {
 }
 
 
-def parse_args() -> argparse_Namespace:
+def parse_args():
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     parser.add_argument("--output-directory", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
@@ -72,23 +72,23 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def check_case(plugin_name: str, case: dict) -> tuple[bool, dict]:
     started = time_perf_counter_ns()
-    result = evaluate_named_utility(case.get("input", ""), plugin_name)
+    outcome = evaluate_named_utility(case.get("input", ""), plugin_name)
     elapsed_ms = (time_perf_counter_ns() - started) / 1_000_000
-    passed = result["status"] == case.get("status", "")
+    passed = outcome.get("status", "") == case.get("status", "")
     if "response" in case:
-        passed = passed and result["response"] == case.get("response", "")
+        passed = passed and outcome.get("response", "") == case.get("response", "")
     if "error_code" in case:
-        passed = passed and result["error_code"] == case.get("error_code", "")
+        passed = passed and outcome.get("error_code", "") == case.get("error_code", "")
     repeated = evaluate_named_utility(case.get("input", ""), plugin_name)
     record = {
         "input_sha256": hashlib_sha256(case.get("input", "").encode("utf-8")).hexdigest(),
         "expected_status": case.get("status", ""),
-        "observed_status": result["status"],
-        "response": result["response"],
-        "error_code": result["error_code"],
+        "observed_status": outcome.get("status", ""),
+        "response": outcome.get("response", ""),
+        "error_code": outcome.get("error_code", ""),
         "latency_ms": elapsed_ms,
-        "deterministic": repeated == result,
-        "passed": passed and repeated == result,
+        "deterministic": repeated == outcome,
+        "passed": passed and repeated == outcome,
     }
     result = (record.get("passed", False), record)
     return result
@@ -96,37 +96,37 @@ def check_case(plugin_name: str, case: dict) -> tuple[bool, dict]:
 
 def property_checks(plugin_name: str) -> dict:
     if plugin_name == "arithmetic":
-        first = evaluate_named_utility("calculate 319 + 71", plugin_name)["response"]
-        second = evaluate_named_utility("calculate 71 + 319", plugin_name)["response"]
+        first = evaluate_named_utility("calculate 319 + 71", plugin_name).get("response", "")
+        second = evaluate_named_utility("calculate 71 + 319", plugin_name).get("response", "")
         result = {"commutative_addition": first == second == "390"}
         return result
     if plugin_name == "boolean":
-        value = evaluate_named_utility("boolean not not true", plugin_name)["response"]
+        value = evaluate_named_utility("boolean not not true", plugin_name).get("response", "")
         result = {"double_negation": value == "true"}
         return result
     if plugin_name == "set":
-        first = evaluate_named_utility("set union {cat,sushi} and {dog,cat}", plugin_name)["response"]
-        second = evaluate_named_utility("set union {dog,cat} and {cat,sushi}", plugin_name)["response"]
+        first = evaluate_named_utility("set union {cat,sushi} and {dog,cat}", plugin_name).get("response", "")
+        second = evaluate_named_utility("set union {dog,cat} and {cat,sushi}", plugin_name).get("response", "")
         result = {"commutative_union": first == second == "{cat, dog, sushi}"}
         return result
     if plugin_name == "date_time":
-        forward = evaluate_named_utility("date 2026-08-22 plus 10 days", plugin_name)["response"]
-        backward = evaluate_named_utility(f"date {forward} minus 10 days", plugin_name)["response"]
+        forward = evaluate_named_utility("date 2026-08-22 plus 10 days", plugin_name).get("response", "")
+        backward = evaluate_named_utility(f"date {forward} minus 10 days", plugin_name).get("response", "")
         result = {"date_addition_round_trip": backward == "2026-08-22"}
         return result
     if plugin_name == "unit_conversion":
-        forward = evaluate_named_utility("convert 123.5 km to mi", plugin_name)["response"].split()[0]
-        backward = evaluate_named_utility(f"convert {forward} mi to km", plugin_name)["response"].split()[0]
+        forward = evaluate_named_utility("convert 123.5 km to mi", plugin_name).get("response", "").split()[0]
+        backward = evaluate_named_utility(f"convert {forward} mi to km", plugin_name).get("response", "").split()[0]
         result = {"unit_round_trip": abs(Decimal(backward) - Decimal("123.5")) < Decimal("0.000000000001")}
         return result
     if plugin_name == "version":
-        first = evaluate_named_utility("compare version 1.2.3 and 2.0.0", plugin_name)["response"]
-        second = evaluate_named_utility("compare version 2.0.0 and 1.2.3", plugin_name)["response"]
+        first = evaluate_named_utility("compare version 1.2.3 and 2.0.0", plugin_name).get("response", "")
+        second = evaluate_named_utility("compare version 2.0.0 and 1.2.3", plugin_name).get("response", "")
         result = {"comparison_antisymmetry": first.endswith("< 2.0.0") and second.endswith("> 1.2.3")}
         return result
     first = evaluate_named_utility("validate uuid 550e8400-e29b-41d4-a716-446655440000", plugin_name)
     second = evaluate_named_utility("validate uuid 550e8400-e29b-41d4-a716-446655440000", plugin_name)
-    result = {"canonical_identifier_replay": first == second and first["response"].startswith("valid uuid:")}
+    result = {"canonical_identifier_replay": first == second and first.get("response", "").startswith("valid uuid:")}
     return result
 
 
@@ -153,7 +153,7 @@ def fuzz_plugin(plugin_name: str, count: int) -> dict:
             contract_violations += 1
         elif status == "resolved":
             canonical = evaluate_named_utility(result.get("canonical_input", ""), plugin_name)
-            if canonical["status"] != "resolved" or canonical["response"] != result.get("response", ""):
+            if canonical.get("status", "") != "resolved" or canonical.get("response", "") != result.get("response", ""):
                 canonical_replay_failures += 1
         elif result.get("response", "") or result.get("canonical_input", "") or not result.get("error_code", ""):
             contract_violations += 1
@@ -199,38 +199,41 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
         for case in specification.get(partition, []):
             _, record = check_case(plugin_name, case)
             records.append(record)
-            all_latencies.append(record["latency_ms"])
-            all_deterministic.append(record["deterministic"])
+            all_latencies.append(record.get("latency_ms", 0.0))
+            all_deterministic.append(record.get("deterministic", False))
+        passed_count = sum(record.get("passed", False) for record in records)
         partitions[partition] = {
             "case_count": len(records),
-            "passed_count": sum(record["passed"] for record in records),
-            "accuracy": sum(record["passed"] for record in records) / len(records),
+            "passed_count": passed_count,
+            "accuracy": passed_count / len(records),
             "records": records,
         }
     resource = evaluate_named_utility(specification.get("resource_input", ""), plugin_name)
-    resource_passed = resource["status"] == "rejected" and resource["error_code"] == specification.get("resource_error", "")
+    resource_error = specification.get("resource_error", "")
+    resource_passed = resource.get("status", "") == "rejected" and resource.get("error_code", "") == resource_error
     threat = evaluate_named_utility(THREAT_INPUTS.get(plugin_name, ""), plugin_name)
     threat_expected = THREAT_EXPECTATIONS.get(plugin_name, {})
-    threat_passed = all(threat[name] == value for name, value in threat_expected.items())
+    # Every expected threat field is a string; an absent observed field never matches a declared value.
+    threat_passed = all(name in threat and threat.get(name, "") == value for name, value in threat_expected.items())
     fuzz = fuzz_plugin(plugin_name, fuzz_cases)
     properties = property_checks(plugin_name)
+    fuzz_failure_fields = ("unexpected_failure_count", "contract_violation_count", "canonical_replay_failure_count")
+    fuzz_failures = sum(fuzz.get(name, 0) for name in fuzz_failure_fields)
+    fuzz_passed = fuzz.get("passed", False)
     values = {
-        "conformance_accuracy": partitions.get("conformance", {})["accuracy"],
-        "held_out_accuracy": partitions.get("held_out", {})["accuracy"],
+        "conformance_accuracy": partitions.get("conformance", {}).get("accuracy", 0.0),
+        "held_out_accuracy": partitions.get("held_out", {}).get("accuracy", 0.0),
         "determinism_rate": sum(all_deterministic) / len(all_deterministic),
         "resource_rejection_rate": float(resource_passed),
-        "fuzz_failure_rate": (
-            fuzz["unexpected_failure_count"] + fuzz["contract_violation_count"] + fuzz["canonical_replay_failure_count"]
-        )
-        / fuzz["case_count"],
-        "p95_latency_ms": max(percentile(all_latencies, 0.95), fuzz["p95_latency_ms"]),
+        "fuzz_failure_rate": fuzz_failures / fuzz.get("case_count", 0),
+        "p95_latency_ms": max(percentile(all_latencies, 0.95), fuzz.get("p95_latency_ms", 0.0)),
     }
     checks = {
         "conformance_accuracy": values.get("conformance_accuracy", 0.0) >= gates.get("accuracy_min", 0.0),
         "held_out_accuracy": values.get("held_out_accuracy", 0.0) >= gates.get("accuracy_min", 0.0),
         "determinism": values.get("determinism_rate", 0.0) >= gates.get("determinism_min", 0.0),
         "resource_rejection": values.get("resource_rejection_rate", 0.0) >= gates.get("resource_rejection_rate_min", 0.0),
-        "fuzz_safety": values.get("fuzz_failure_rate", 0.0) <= gates.get("fuzz_failure_rate_max", 0.0) and fuzz["passed"],
+        "fuzz_safety": values.get("fuzz_failure_rate", 0.0) <= gates.get("fuzz_failure_rate_max", 0.0) and fuzz_passed,
         "latency": values.get("p95_latency_ms", 0.0) <= gates.get("p95_latency_ms_max", 0.0),
         "property_checks": all(properties.values()),
         "threat_payload_safe_disposition": threat_passed,
@@ -239,21 +242,21 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
     result = {
         "generated_at": datetime.now(UTC).isoformat(),
         "plugin_name": plugin_name,
-        "contract": next(contract for contract in utility_plugin_contracts() if contract["name"] == plugin_name),
+        "contract": next(contract for contract in utility_plugin_contracts() if contract.get("name", "") == plugin_name),
         "source_state": source_state,
         "partitions": partitions,
         "properties": properties,
         "resource_limit": {
-            "expected_error": specification.get("resource_error", ""),
-            "observed_status": resource["status"],
-            "observed_error": resource["error_code"],
+            "expected_error": resource_error,
+            "observed_status": resource.get("status", ""),
+            "observed_error": resource.get("error_code", ""),
             "passed": resource_passed,
         },
         "threat_probe": {
             "expected": threat_expected,
-            "status": threat["status"],
-            "error_code": threat["error_code"],
-            "response_sha256": hashlib_sha256(threat["response"].encode("utf-8")).hexdigest(),
+            "status": threat.get("status", ""),
+            "error_code": threat.get("error_code", ""),
+            "response_sha256": hashlib_sha256(threat.get("response", "").encode("utf-8")).hexdigest(),
             "passed": threat_passed,
         },
         "fuzz": fuzz,
@@ -274,17 +277,25 @@ def main() -> int:
     if args.fuzz_cases < 1:
         raise ValueError("--fuzz-cases must be positive")
     corpus = json_loads(args.corpus.read_text(encoding="utf-8"))
-    if tuple(corpus["plugins"]) != UTILITY_PLUGIN_NAMES:
+    if not isinstance(corpus, dict) or not isinstance(corpus.get("plugins", {}), dict):
+        raise ValueError("utility corpus must be an object whose plugins are keyed by name")
+    plugins = corpus.get("plugins", {})
+    if tuple(plugins) != UTILITY_PLUGIN_NAMES:
         raise ValueError("utility corpus plugin order does not match the executable allowlist")
+    gates = corpus.get("gates", {})
+    if "gates" not in corpus or not isinstance(gates, dict):
+        raise ValueError("utility corpus must declare its gate thresholds")
     source_state = benchmark_source_state()
     results = {
-        name: evaluate_plugin(name, corpus["plugins"][name], corpus["gates"], args.fuzz_cases, source_state)
-        for name in UTILITY_PLUGIN_NAMES
+        name: evaluate_plugin(name, plugins.get(name, {}), gates, args.fuzz_cases, source_state) for name in UTILITY_PLUGIN_NAMES
     }
     forbidden = forbidden_execution_calls()
     registry = UtilityRegistry(utility_config(enabled=True))
-    default_off = utility_config()["enabled"] is False
-    overall_passed = all(result["gate"]["passed"] for result in results.values()) and not forbidden and default_off
+    # Only an explicit disabled default counts as default-off.
+    default_off = utility_config().get("enabled", True) is False
+    gate_results = {name: result.get("gate", {}) for name, result in results.items()}
+    all_plugins_passed = all(gate.get("passed", False) for gate in gate_results.values())
+    overall_passed = all_plugins_passed and not forbidden and default_off
     args.output_directory.mkdir(parents=True, exist_ok=True)
     for name, result in results.items():
         output = args.output_directory / f"{name.replace('_', '-')}-conformance.json"
@@ -301,15 +312,15 @@ def main() -> int:
         "fuzz_cases_per_plugin": args.fuzz_cases,
         "plugins": {
             name: {
-                "passed": result["gate"]["passed"],
-                "values": result["gate"]["values"],
-                "promoted_for_opt_in_component_use": result["gate"]["promoted_for_opt_in_component_use"],
-                "default_enabled": result["gate"]["default_enabled"],
+                "passed": gate.get("passed", False),
+                "values": gate.get("values", {}),
+                "promoted_for_opt_in_component_use": gate.get("promoted_for_opt_in_component_use", False),
+                "default_enabled": gate.get("default_enabled", False),
             }
-            for name, result in results.items()
+            for name, gate in gate_results.items()
         },
         "enablement_decision": {
-            "all_plugins_independently_passed": all(result["gate"]["passed"] for result in results.values()),
+            "all_plugins_independently_passed": all_plugins_passed,
             "default_enabled": not default_off,
             "decision": "promoted_for_opt_in_component_use_default_off" if overall_passed else "withheld",
             "reason": "Utility capability evidence does not change the protected default rollout.",

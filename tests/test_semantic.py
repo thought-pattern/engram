@@ -5,18 +5,36 @@ from pathlib import Path
 
 from pytest import raises as pytest_raises
 
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, semantic_config
-from engram.constants import CandidateSource, Tier
+from engram.constants import INITIAL_ARTIFACT_STATISTICS, CandidateSource, LifecycleState, Tier
 from engram.core import Engram
 from engram.errors import ResolutionCancelledError
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution import QueryFrameBuilder
 from engram.resolvers import StandaloneSemanticResolver, resolver_budget
 from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+TENANT_A_SCOPE = scope_key(namespace="tenant-a")
+# Accepted static tenant-a artifact fields; each test adds the statement id, response, identity and retrieval
+# representation. validate_cached_response_artifact copies its input, so this constant stays read-only.
+SEMANTIC_ARTIFACT_FIELDS = {
+    "generation": 1,
+    "tier": Tier.STATIC,
+    "lifecycle": LifecycleState.ACTIVE,
+    "scope": TENANT_A_SCOPE,
+    "support_references": (),
+    "valid_from": "",
+    "valid_from_available": False,
+    "valid_until": "",
+    "valid_until_available": False,
+    "superseded_by": "",
+    "provenance": {"source_label": "semantic-test", "caller_id": "regulator", "accepted_at": "2026-08-22T12:00:00Z"},
+    "statistics": INITIAL_ARTIFACT_STATISTICS,
+    "metadata": {},
+}
 
 
 class FakeSemanticModel:
@@ -44,38 +62,6 @@ class FakeSemanticModel:
         return values
 
 
-def artifact(
-    statement_id: str,
-    request: str,
-    response: str,
-    *,
-    aliases: tuple[str, ...] = (),
-    lifecycle: LifecycleState = LifecycleState.ACTIVE,
-    namespace: str = "tenant-a",
-) -> dict:
-    scope = scope_key(namespace=namespace)
-    result = cached_response_artifact(
-        statement_id=statement_id,
-        generation=1,
-        response=response,
-        query_identity=build_standalone_identity(request, scope),
-        retrieval=build_retrieval_representation(request, aliases),
-        tier=Tier.STATIC,
-        lifecycle=lifecycle,
-        scope=scope,
-        support_references=(),
-        valid_from="",
-        valid_from_available=False,
-        valid_until="",
-        valid_until_available=False,
-        superseded_by="replacement" if lifecycle == LifecycleState.SUPERSEDED else "",
-        provenance=artifact_provenance("semantic-test", "regulator", "2026-08-22T12:00:00Z"),
-        statistics=artifact_statistics(),
-        metadata={},
-    )
-    return result
-
-
 def settings(tmp_path: Path, **changes) -> dict:
     model_path = tmp_path / "model"
     model_path.mkdir(parents=True, exist_ok=True)
@@ -91,12 +77,6 @@ def settings(tmp_path: Path, **changes) -> dict:
     }
     values.update(changes)
     result = semantic_config(**values)
-    return result
-
-
-def retriever(tmp_path: Path, model: object = False, **changes) -> StandaloneSemanticRetriever:
-    selected = model or FakeSemanticModel()
-    result = StandaloneSemanticRetriever(settings(tmp_path, **changes), model=selected)
     return result
 
 
@@ -125,49 +105,110 @@ def test_semantic_model_is_checksum_license_and_dimension_gated(tmp_path: Path) 
 
 def test_semantic_search_derives_embeddings_from_current_artifacts_only(tmp_path: Path) -> None:
     model = FakeSemanticModel()
-    value = retriever(tmp_path, model)
-    sushi = artifact("sushi", "best sushi", "response prose must not be embedded", aliases=("japanese rolls",))
+    value = StandaloneSemanticRetriever(settings(tmp_path), model=model)
+    sushi = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "response prose must not be embedded",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi", ("japanese rolls",)),
+        }
+    )
 
     result = search(value, (sushi,))
+    first_match = result.get("matches", [])[0]
 
-    assert result["complete"] is True
-    assert result["matches"][0]["statement_id"] == "sushi"
-    assert result["matches"][0]["origin"] in {"canonical", "alias"}
+    assert result.get("complete", False) is True
+    assert first_match.get("statement_id", "") == "sushi"
+    assert first_match.get("origin", "") in {"canonical", "alias"}
     assert "response prose must not be embedded" not in model.encoded_texts
     assert not hasattr(value, "snapshot")
     assert not hasattr(value, "rebuild")
 
 
 def test_semantic_search_observes_replacement_snapshot_without_synchronization(tmp_path: Path) -> None:
-    value = retriever(tmp_path)
-    first = artifact("sushi", "best sushi", "Sushi", aliases=("japanese rolls",))
-    second = artifact("cats", "best cats", "Cats", aliases=("feline guide",))
+    value = StandaloneSemanticRetriever(settings(tmp_path), model=FakeSemanticModel())
+    first = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "Sushi",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi", ("japanese rolls",)),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "cats",
+            "response": "Cats",
+            "query_identity": extract_standalone_identity("best cats", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best cats", ("feline guide",)),
+        }
+    )
 
     before = search(value, (first,), text="japanese rolls")
     after = search(value, (second,), text="feline guide")
 
-    assert [match["statement_id"] for match in before["matches"]] == ["sushi"]
-    assert [match["statement_id"] for match in after["matches"]] == ["cats"]
+    assert [match.get("statement_id", "") for match in before.get("matches", [])] == ["sushi"]
+    assert [match.get("statement_id", "") for match in after.get("matches", [])] == ["cats"]
 
 
 def test_semantic_search_is_scope_and_lifecycle_isolated(tmp_path: Path) -> None:
-    value = retriever(tmp_path)
-    active = artifact("active", "best sushi", "A", namespace="tenant-a")
-    other = artifact("other", "best sushi", "B", namespace="tenant-b")
-    retired = artifact("retired", "best sushi", "C", lifecycle=LifecycleState.RETIRED)
+    value = StandaloneSemanticRetriever(settings(tmp_path), model=FakeSemanticModel())
+    tenant_b_scope = scope_key(namespace="tenant-b")
+    active = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "active",
+            "response": "A",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi"),
+        }
+    )
+    other = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "other",
+            "response": "B",
+            "query_identity": extract_standalone_identity("best sushi", tenant_b_scope),
+            "retrieval": retrieval_representation("best sushi"),
+            "scope": tenant_b_scope,
+        }
+    )
+    retired = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "retired",
+            "response": "C",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi"),
+            "lifecycle": LifecycleState.RETIRED,
+        }
+    )
 
     result = search(value, (active, other, retired), text="sushi", namespace="tenant-a")
 
-    assert [match["statement_id"] for match in result["matches"]] == ["active"]
+    assert [match.get("statement_id", "") for match in result.get("matches", [])] == ["active"]
 
 
 def test_semantic_search_honors_budgets_and_cancellation(tmp_path: Path) -> None:
-    value = retriever(tmp_path)
-    accepted = artifact("sushi", "best sushi", "Sushi")
+    value = StandaloneSemanticRetriever(settings(tmp_path), model=FakeSemanticModel())
+    accepted = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "Sushi",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi"),
+        }
+    )
 
     exhausted = search(value, (accepted,), max_vector_results=0)
-    assert exhausted["complete"] is False
-    assert exhausted["reason"] == "vector_result_budget"
+    assert "complete" in exhausted
+    assert exhausted.get("complete", False) is False
+    assert exhausted.get("reason", "") == "vector_result_budget"
 
     def cancelled() -> None:
         raise ResolutionCancelledError("cancelled")
@@ -178,9 +219,25 @@ def test_semantic_search_honors_budgets_and_cancellation(tmp_path: Path) -> None
 
 def test_semantic_search_checks_scan_budget_before_encoding_corpus(tmp_path: Path) -> None:
     model = FakeSemanticModel()
-    value = retriever(tmp_path, model, max_scan_records=1)
-    first = artifact("first", "first sushi request", "A")
-    second = artifact("second", "second sushi request", "B")
+    value = StandaloneSemanticRetriever(settings(tmp_path, max_scan_records=1), model=model)
+    first = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "first",
+            "response": "A",
+            "query_identity": extract_standalone_identity("first sushi request", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("first sushi request"),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "second",
+            "response": "B",
+            "query_identity": extract_standalone_identity("second sushi request", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("second sushi request"),
+        }
+    )
 
     result = search(value, (first, second), text="sushi")
 
@@ -192,11 +249,20 @@ def test_semantic_search_checks_scan_budget_before_encoding_corpus(tmp_path: Pat
 
 def test_semantic_search_checks_memory_budget_before_encoding_corpus(tmp_path: Path) -> None:
     model = FakeSemanticModel()
-    value = retriever(tmp_path, model)
-    accepted = artifact("sushi", "best sushi", "Sushi")
+    value = StandaloneSemanticRetriever(settings(tmp_path), model=model)
+    accepted = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "Sushi",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi"),
+        }
+    )
 
     result = search(value, (accepted,), max_working_memory_bytes=1_000)
 
+    assert "working_memory_bytes" in result
     assert result.get("complete", True) is False
     assert result.get("reason", "") == "working_memory_budget"
     assert result.get("working_memory_bytes", 0) <= 1_000
@@ -204,11 +270,19 @@ def test_semantic_search_checks_memory_budget_before_encoding_corpus(tmp_path: P
 
 
 def test_semantic_resolver_reads_artifacts_without_a_live_index(tmp_path: Path) -> None:
-    accepted = artifact("sushi", "best sushi", "Sushi", aliases=("japanese rolls",))
+    accepted = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "Sushi",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi", ("japanese rolls",)),
+        }
+    )
     configuration = engram_config(semantic=settings(tmp_path))
     engine = Engram(config=configuration)
     engine.semantic_retriever = StandaloneSemanticRetriever(
-        configuration["semantic"],
+        configuration.get("semantic", {}),
         model=FakeSemanticModel(),
     )
     engine.response_repository = ArtifactRepository((accepted,))
@@ -217,21 +291,22 @@ def test_semantic_resolver_reads_artifacts_without_a_live_index(tmp_path: Path) 
         scope_key(namespace="tenant-a"),
     )
 
-    budget = frame["budget"]
+    budget = frame.get("budget", {})
     lease = resolver_budget(
-        budget["max_candidates"],
-        budget["max_graph_rows"],
-        budget["max_vector_results"],
-        budget["max_evidence"],
-        budget["max_evidence_bytes"],
-        budget["max_output_bytes"],
-        budget["max_diagnostic_bytes"],
-        budget["max_working_memory_bytes"],
+        budget.get("max_candidates", 0),
+        budget.get("max_graph_rows", 0),
+        budget.get("max_vector_results", 0),
+        budget.get("max_evidence", 0),
+        budget.get("max_evidence_bytes", 0),
+        budget.get("max_output_bytes", 0),
+        budget.get("max_diagnostic_bytes", 0),
+        budget.get("max_working_memory_bytes", 0),
     )
     result = StandaloneSemanticResolver(engine, lambda: 1_000_000_100).resolve(frame, lease)
+    first_candidate = result.get("candidates", ())[0]
 
-    assert result["candidates"][0]["source"] == CandidateSource.STANDALONE_SEMANTIC
-    assert result["candidates"][0]["statement_id"] == "sushi"
+    assert first_candidate.get("source", CandidateSource.EXACT) == CandidateSource.STANDALONE_SEMANTIC
+    assert first_candidate.get("statement_id", "") == "sushi"
     assert engine.get_statement("sushi") == {}
 
 
@@ -239,8 +314,26 @@ def test_semantic_records_are_reused_only_while_an_artifact_is_unchanged(tmp_pat
     model = FakeSemanticModel()
     configuration = engram_config(semantic=settings(tmp_path))
     engine = Engram(config=configuration)
-    engine.semantic_retriever = StandaloneSemanticRetriever(configuration["semantic"], model=model)
-    engine.response_repository = ArtifactRepository((artifact("sushi", "best sushi", "Sushi", aliases=("japanese rolls",)),))
+    engine.semantic_retriever = StandaloneSemanticRetriever(configuration.get("semantic", {}), model=model)
+    sushi = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "sushi",
+            "response": "Sushi",
+            "query_identity": extract_standalone_identity("best sushi", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best sushi", ("japanese rolls",)),
+        }
+    )
+    cats = validate_cached_response_artifact(
+        {
+            **SEMANTIC_ARTIFACT_FIELDS,
+            "statement_id": "cats",
+            "response": "Cats",
+            "query_identity": extract_standalone_identity("best cats", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("best cats", ("feline guide",)),
+        }
+    )
+    engine.response_repository = ArtifactRepository((sushi,))
     options = {"limit": 5, "max_vector_results": 10, "max_working_memory_bytes": 10_000_000}
 
     first = engine.semantic_candidates("japanese rolls", scope_key(namespace="tenant-a"), **options)
@@ -250,7 +343,7 @@ def test_semantic_records_are_reused_only_while_an_artifact_is_unchanged(tmp_pat
     assert again == first
     # Only the query is encoded again; the artifact's records are reused.
     assert model.encoded_texts[encoded:] == ["japanese rolls"]
-    engine.response_repository = ArtifactRepository((artifact("cats", "best cats", "Cats", aliases=("feline guide",)),))
+    engine.response_repository = ArtifactRepository((cats,))
     replaced = engine.semantic_candidates("feline guide", scope_key(namespace="tenant-a"), **options)
-    assert [match["statement_id"] for match in replaced["matches"]] == ["cats"]
+    assert [match.get("statement_id", "") for match in replaced.get("matches", [])] == ["cats"]
     assert set(engine.semantic_retriever.internal_records) == {"cats"}

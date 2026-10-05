@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Resolve or apply an exact reset of Engram's schema catalog."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
@@ -18,19 +17,6 @@ from engram.schema_reset import apply_schema_reset, resolve_schema_reset
 SCHEMA_FILE = packaged_schema()
 
 
-def connection_settings(config_path: str, host: str, port: int) -> dict:
-    """Resolve administrative connection settings."""
-
-    configured = load_config(config_path).get("graph", {}) or {}
-    result = {
-        "host": host or configured.get("host", "localhost"),
-        "port": port or configured.get("port", 7687),
-        "username": configured.get("username", ""),
-        "password": configured.get("password", ""),
-    }
-    return result
-
-
 def main() -> None:
     """Dry-run by default; mutate only with explicit --apply."""
     parser = argparse_ArgumentParser(description="Reset the Engram schema on an empty graph")
@@ -45,7 +31,14 @@ def main() -> None:
     )
     arguments = parser.parse_args()
 
-    settings = connection_settings(arguments.config, arguments.host, arguments.port)
+    # Administrative connection: command-line overrides win over the configured graph endpoint.
+    configured = load_config(arguments.config).get("graph", {}) or {}
+    settings = {
+        "host": arguments.host or configured.get("host", "localhost"),
+        "port": arguments.port or configured.get("port", 7687),
+        "username": configured.get("username", ""),
+        "password": configured.get("password", ""),
+    }
     connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     try:
         if not connection.connect():

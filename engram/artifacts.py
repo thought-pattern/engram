@@ -12,7 +12,6 @@ from engram.constants import (
     ARTIFACT_PROVENANCE_FIELDS,
     ARTIFACT_STATISTICS_FIELDS,
     CACHED_RESPONSE_ARTIFACT_FIELDS,
-    EMPTY_MAPPING,
     LEGAL_LIFECYCLE_TRANSITIONS,
     LIFECYCLE_AUDIT_FIELDS,
     LIFECYCLE_AUDIT_KEY,
@@ -166,7 +165,7 @@ def freeze_metadata(value: object) -> dict:
         raise InvalidRequestError("artifact metadata must be an object")
     if "visibility_scope" in value:
         try:
-            validate_support_visibility(value.get("visibility_scope"))
+            validate_support_visibility(value.get("visibility_scope", {}))
         except ValueError as error:
             raise InvalidRequestError(str(error)) from error
     # Caller metadata carries the item and byte limits; the reserved lifecycle audit is
@@ -402,7 +401,9 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     provenance = require_mapping(data.get("provenance", {}), "artifact provenance")
     statistics = require_mapping(data.get("statistics", {}), "artifact statistics")
     raw_artifact = {
-        "statement_id": require_text(data.get("statement_id", ""), "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False),
+        "statement_id": require_text(
+            data.get("statement_id", ""), "artifact statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False
+        ),
         "generation": require_positive_int(data.get("generation", 0), "artifact generation"),
         "response": require_response(data.get("response", "")),
         "query_identity": query_identity_from_dict(query_identity),
@@ -448,11 +449,15 @@ def validate_lifecycle_base_decision(value: object) -> dict:
     """Validate and copy one lifecycle-only eligibility decision."""
 
     data = require_exact_mapping(value, "LifecycleBaseDecision", LIFECYCLE_BASE_DECISION_FIELDS)
-    lifecycle = require_lifecycle(data["lifecycle"], "lifecycle decision lifecycle")
-    direct_answer_eligible = require_bool(data["direct_answer_eligible"], "lifecycle decision direct_answer_eligible")
-    reason = require_lifecycle_decision_reason(data["reason"], "lifecycle decision reason")
+    lifecycle = require_lifecycle(data.get("lifecycle", LifecycleState.RETIRED), "lifecycle decision lifecycle")
+    direct_answer_eligible = require_bool(
+        data.get("direct_answer_eligible", False), "lifecycle decision direct_answer_eligible"
+    )
+    reason = require_lifecycle_decision_reason(data.get("reason", LifecycleDecisionReason.RETIRED), "lifecycle decision reason")
     expected_eligible = lifecycle == LifecycleState.ACTIVE
-    expected_reason = LifecycleDecisionReason.ELIGIBLE if expected_eligible else LIFECYCLE_INELIGIBLE_REASONS[lifecycle]
+    # Every non-ACTIVE state has a registered reason, so the default is unreachable.
+    ineligible_reason = LIFECYCLE_INELIGIBLE_REASONS.get(lifecycle, LifecycleDecisionReason.RETIRED)
+    expected_reason = LifecycleDecisionReason.ELIGIBLE if expected_eligible else ineligible_reason
     if direct_answer_eligible != expected_eligible or reason != expected_reason:
         raise InvalidRequestError("LifecycleBaseDecision fields do not match lifecycle policy")
     result: dict = {
@@ -471,10 +476,11 @@ def lifecycle_transition_outcome(
     if current == target:
         result = (False, LifecycleDecisionReason.SAME_STATE_NOT_A_TRANSITION)
     else:
-        transitions = LEGAL_LIFECYCLE_TRANSITIONS[current]
+        # Terminal states map to no operations; every state is registered.
+        transitions = LEGAL_LIFECYCLE_TRANSITIONS.get(current, {})
         if operation not in transitions:
             result = (False, LifecycleDecisionReason.TERMINAL_STATE)
-        elif transitions[operation] != target:
+        elif transitions.get(operation, current) != target:
             result = (False, LifecycleDecisionReason.OPERATION_TARGET_MISMATCH)
         else:
             result = (True, LifecycleDecisionReason.LEGAL_TRANSITION)
@@ -485,11 +491,13 @@ def validate_lifecycle_transition_decision(value: object) -> dict:
     """Validate and copy one lifecycle transition decision."""
 
     data = require_exact_mapping(value, "LifecycleTransitionDecision", LIFECYCLE_TRANSITION_DECISION_FIELDS)
-    current = require_lifecycle(data["current"], "current lifecycle")
-    target = require_lifecycle(data["target"], "target lifecycle")
-    operation = require_operation(data["operation"])
-    allowed = require_bool(data["allowed"], "lifecycle transition allowed")
-    reason = require_lifecycle_decision_reason(data["reason"], "lifecycle transition reason")
+    current = require_lifecycle(data.get("current", LifecycleState.RETIRED), "current lifecycle")
+    target = require_lifecycle(data.get("target", LifecycleState.RETIRED), "target lifecycle")
+    operation = require_operation(data.get("operation", LifecycleOperation.RETIRE))
+    allowed = require_bool(data.get("allowed", False), "lifecycle transition allowed")
+    reason = require_lifecycle_decision_reason(
+        data.get("reason", LifecycleDecisionReason.TERMINAL_STATE), "lifecycle transition reason"
+    )
     expected_allowed, expected_reason = lifecycle_transition_outcome(current, target, operation)
     if allowed != expected_allowed or reason != expected_reason:
         raise InvalidRequestError("LifecycleTransitionDecision fields do not match transition policy")
@@ -517,7 +525,7 @@ def lifecycle_base_eligibility(lifecycle: object) -> dict:
         raw_decision = {
             "lifecycle": state,
             "direct_answer_eligible": False,
-            "reason": LIFECYCLE_INELIGIBLE_REASONS[state],
+            "reason": LIFECYCLE_INELIGIBLE_REASONS.get(state, LifecycleDecisionReason.RETIRED),
         }
     decision = validate_lifecycle_base_decision(raw_decision)
     return decision
@@ -553,10 +561,14 @@ def require_lifecycle_transition(
     """Return a legal decision or raise a stable lifecycle error."""
 
     decision = lifecycle_transition_decision(current, target, operation)
-    if not decision["allowed"]:
+    if not decision.get("allowed", False):
+        current_state = decision.get("current", LifecycleState.RETIRED)
+        target_state = decision.get("target", LifecycleState.RETIRED)
+        named_operation = decision.get("operation", LifecycleOperation.RETIRE)
+        reason = decision.get("reason", LifecycleDecisionReason.TERMINAL_STATE)
         raise LifecycleError(
-            f"illegal lifecycle transition: {decision['current'].value} -> {decision['target'].value} "
-            f"via {decision['operation'].value} ({decision['reason'].value})"
+            f"illegal lifecycle transition: {current_state.value} -> {target_state.value} "
+            f"via {named_operation.value} ({reason.value})"
         )
     return decision
 

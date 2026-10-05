@@ -14,6 +14,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from engram.constants import (
+    EMPTY_MAPPING,
     UTILITY_MAX_ABSOLUTE_EXPONENT,
     UTILITY_MAX_COLLECTION_ITEM_BYTES,
     UTILITY_MAX_COLLECTION_ITEMS,
@@ -81,8 +82,8 @@ def utility_config(enabled: bool = False, plugins=UTILITY_PLUGIN_NAMES) -> dict:
     return {"enabled": enabled, "plugins": selected}
 
 
-def internal_contract(name: str, input_schema: str, result_schema: str, errors: tuple[str, ...]) -> dict:
-    return {
+UTILITY_PLUGIN_CONTRACTS = {
+    name: {
         "name": name,
         "accepted_frame_types": ("direct_request",),
         "input_schema": input_schema,
@@ -99,51 +100,50 @@ def internal_contract(name: str, input_schema: str, result_schema: str, errors: 
         "errors": errors,
         "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
     }
-
-
-UTILITY_PLUGIN_CONTRACTS = {
-    "arithmetic": internal_contract(
-        "arithmetic",
-        "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
-        "canonical decimal text",
-        ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
-    ),
-    "boolean": internal_contract(
-        "boolean",
-        "boolean followed by true|false, not, and, xor, or, and parentheses",
-        "lowercase true or false",
-        ("boolean_syntax", "operation_limit"),
-    ),
-    "set": internal_contract(
-        "set",
-        "set union|intersection|difference|symmetric difference {items} and {items}",
-        "unique items sorted by Unicode code point in braces",
-        ("set_syntax", "collection_limit", "collection_item_invalid"),
-    ),
-    "date_time": internal_contract(
-        "date_time",
-        "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
-        "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
-        ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
-    ),
-    "unit_conversion": internal_contract(
-        "unit_conversion",
-        "convert <decimal> <allow-listed unit> to <same-dimension unit>",
-        "canonical decimal and canonical target unit",
-        ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
-    ),
-    "version": internal_contract(
-        "version",
-        "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
-        "left version, one of < = >, and right version; build metadata does not affect precedence",
-        ("version_syntax", "version_limit"),
-    ),
-    "identifier": internal_contract(
-        "identifier",
-        "validate uuid|slug <bounded ASCII identifier>",
-        "valid/invalid label and canonical identifier when valid",
-        ("identifier_syntax", "identifier_limit"),
-    ),
+    for name, input_schema, result_schema, errors in (
+        (
+            "arithmetic",
+            "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
+            "canonical decimal text",
+            ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
+        ),
+        (
+            "boolean",
+            "boolean followed by true|false, not, and, xor, or, and parentheses",
+            "lowercase true or false",
+            ("boolean_syntax", "operation_limit"),
+        ),
+        (
+            "set",
+            "set union|intersection|difference|symmetric difference {items} and {items}",
+            "unique items sorted by Unicode code point in braces",
+            ("set_syntax", "collection_limit", "collection_item_invalid"),
+        ),
+        (
+            "date_time",
+            "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
+            "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
+            ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
+        ),
+        (
+            "unit_conversion",
+            "convert <decimal> <allow-listed unit> to <same-dimension unit>",
+            "canonical decimal and canonical target unit",
+            ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
+        ),
+        (
+            "version",
+            "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
+            "left version, one of < = >, and right version; build metadata does not affect precedence",
+            ("version_syntax", "version_limit"),
+        ),
+        (
+            "identifier",
+            "validate uuid|slug <bounded ASCII identifier>",
+            "valid/invalid label and canonical identifier when valid",
+            ("identifier_syntax", "identifier_limit"),
+        ),
+    )
 }
 
 
@@ -681,82 +681,81 @@ def internal_accepts(plugin_name: str, text: str) -> bool:
     return result
 
 
-def evaluation(
-    status: str,
-    plugin_name: str = "",
-    response: str = "",
-    canonical_input: str = "",
-    error_code: str = "",
-    operations: int = 0,
-) -> dict:
-    result = {
-        "status": status,
-        "plugin_name": plugin_name,
-        "response": response,
-        "canonical_input": canonical_input,
-        "error_code": error_code,
-        "operations": operations,
-    }
-    return result
+# The fields of every utility evaluation; each outcome copies this record and sets its own values.
+EMPTY_UTILITY_EVALUATION = {
+    "status": "",
+    "plugin_name": "",
+    "response": "",
+    "canonical_input": "",
+    "error_code": "",
+    "operations": 0,
+}
 
 
 def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     """Evaluate exactly one compiled-in plugin, used for authority rechecks."""
     if not isinstance(request, str) or not isinstance(plugin_name, str) or plugin_name not in UTILITY_EVALUATORS:
-        result = evaluation("rejected", error_code="invalid_boundary")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "invalid_boundary"}
         return result
     if len(request.encode("utf-8")) > UTILITY_MAX_INPUT_BYTES:
-        result = evaluation("rejected", plugin_name, error_code="input_limit")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": "input_limit"}
         return result
     if not internal_accepts(plugin_name, request):
-        result = evaluation("miss")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
         return result
     try:
         evaluator = UTILITY_EVALUATORS.get(plugin_name, evaluate_arithmetic)
         response, canonical_input, operations = evaluator(request)
     except UtilityInputError as error:
-        result = evaluation("rejected", plugin_name, error_code=error.code)
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": error.code}
         return result
     except Exception as error:
         logger.warning("Utility plugin %s failed", plugin_name, exc_info=error)
-        result = evaluation("failed", plugin_name, error_code="plugin_failure")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "failed", "plugin_name": plugin_name, "error_code": "plugin_failure"}
         return result
     if len(response.encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES:
-        result = evaluation("failed", plugin_name, error_code="output_limit")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "failed", "plugin_name": plugin_name, "error_code": "output_limit"}
         return result
-    result = evaluation("resolved", plugin_name, response, canonical_input, operations=operations)
+    result = {
+        "status": "resolved",
+        "plugin_name": plugin_name,
+        "response": response,
+        "canonical_input": canonical_input,
+        "error_code": "",
+        "operations": operations,
+    }
     return result
 
 
 class UtilityRegistry:
     """Configured view of the fixed built-in plugin table."""
 
-    def __init__(self, config: object = {}) -> None:
+    def __init__(self, config: object = EMPTY_MAPPING) -> None:
         if not isinstance(config, dict):
             raise ValueError("utility registry config must be an object")
         settings = utility_config() if config == {} else utility_config(**config)
-        self.enabled = settings["enabled"]
-        self.plugin_names = settings["plugins"]
+        self.enabled = settings.get("enabled", False)
+        self.plugin_names = settings.get("plugins", ())
 
     def evaluate(self, request: object) -> dict:
         if not self.enabled:
-            result = evaluation("miss")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
             return result
         if not isinstance(request, str):
-            result = evaluation("rejected", error_code="invalid_boundary")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "invalid_boundary"}
             return result
         if len(request.encode("utf-8")) > UTILITY_MAX_INPUT_BYTES:
-            result = evaluation("rejected", error_code="input_limit")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "input_limit"}
             return result
         matches = tuple(name for name in self.plugin_names if internal_accepts(name, request))
         # Prefix overlap is intentionally resolved by the more specific grammar.
         if "date_time" in matches and "unit_conversion" in matches:
             matches = tuple(name for name in matches if name != "unit_conversion")
         if not matches:
-            result = evaluation("miss")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
             return result
         if len(matches) != 1:
-            result = evaluation("rejected", error_code="ambiguous_plugin")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "ambiguous_plugin"}
             return result
         result = evaluate_named_utility(request, matches[0])
         return result

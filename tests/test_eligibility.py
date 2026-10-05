@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
+from engram.artifacts import validate_cached_response_artifact
 from engram.constants import EligibilityExclusionReason, ExactLookupOutcome, LifecycleState
 from engram.eligibility import (
     ContextualExactLookup,
@@ -16,21 +17,15 @@ from engram.eligibility import (
 )
 from engram.errors import InvalidRequestError
 from engram.identity import retrieval_representation_bindings, scope_key
-from tests.support_fixtures import accepted_artifact
+from tests.support_fixtures import ACCEPTED_ARTIFACT_FIELDS
 
 NOW = "2026-08-12T16:00:00Z"
-
-
-def context(**changes) -> dict:
-    values = {
-        "evaluation_time": NOW,
-        "evaluation_time_available": True,
-        "namespace": "tenant-a",
-        "artifact_repository_available": True,
-    }
-    values.update(changes)
-    result = eligibility_context(**values)
-    return result
+CONTEXT_VALUES = {
+    "evaluation_time": NOW,
+    "evaluation_time_available": True,
+    "namespace": "tenant-a",
+    "artifact_repository_available": True,
+}
 
 
 def test_factory_captures_one_utc_process_snapshot() -> None:
@@ -46,7 +41,7 @@ def test_factory_captures_one_utc_process_snapshot() -> None:
         True,
     )
 
-    assert captured == context()
+    assert captured == eligibility_context(**CONTEXT_VALUES)
     assert len(calls) == 1
 
 
@@ -62,10 +57,14 @@ def test_factory_captures_one_utc_process_snapshot() -> None:
     ],
 )
 def test_request_context_exclusions_are_explicit(changes, reason) -> None:
-    decision = evaluate_artifact_eligibility(accepted_artifact(), context(**changes))
+    decision = evaluate_artifact_eligibility(
+        validate_cached_response_artifact(ACCEPTED_ARTIFACT_FIELDS),
+        eligibility_context(**{**CONTEXT_VALUES, **changes}),
+    )
 
-    assert decision.get("direct_answer_eligible") is False
-    assert decision.get("exclusion_reason") == reason
+    assert "direct_answer_eligible" in decision
+    assert decision.get("direct_answer_eligible", False) is False
+    assert decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE) == reason
 
 
 @pytest_mark.parametrize(
@@ -79,12 +78,13 @@ def test_request_context_exclusions_are_explicit(changes, reason) -> None:
 def test_terminal_lifecycle_states_are_never_direct_answers(lifecycle, reason) -> None:
     replacement = "stmt-next" if lifecycle == LifecycleState.SUPERSEDED else ""
     decision = evaluate_artifact_eligibility(
-        accepted_artifact(lifecycle=lifecycle, superseded_by=replacement),
-        context(),
+        validate_cached_response_artifact({**ACCEPTED_ARTIFACT_FIELDS, "lifecycle": lifecycle, "superseded_by": replacement}),
+        eligibility_context(**CONTEXT_VALUES),
     )
 
-    assert decision.get("direct_answer_eligible") is False
-    assert decision.get("exclusion_reason") == reason
+    assert "direct_answer_eligible" in decision
+    assert decision.get("direct_answer_eligible", False) is False
+    assert decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE) == reason
 
 
 @pytest_mark.parametrize(
@@ -118,26 +118,31 @@ def test_validity_interval_is_half_open_and_evaluated_at_request_time(
     reason,
 ) -> None:
     decision = evaluate_artifact_eligibility(
-        accepted_artifact(**artifact_changes),
-        context(evaluation_time=evaluation_time),
+        validate_cached_response_artifact({**ACCEPTED_ARTIFACT_FIELDS, **artifact_changes}),
+        eligibility_context(**{**CONTEXT_VALUES, "evaluation_time": evaluation_time}),
     )
 
-    assert decision.get("direct_answer_eligible") is False
-    assert decision.get("exclusion_reason") == reason
+    assert "direct_answer_eligible" in decision
+    assert decision.get("direct_answer_eligible", False) is False
+    assert decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE) == reason
 
 
 def test_active_current_artifact_is_eligible() -> None:
-    decision = evaluate_artifact_eligibility(accepted_artifact(), context())
+    decision = evaluate_artifact_eligibility(
+        validate_cached_response_artifact(ACCEPTED_ARTIFACT_FIELDS),
+        eligibility_context(**CONTEXT_VALUES),
+    )
 
-    assert decision.get("direct_answer_eligible") is True
-    assert decision.get("exclusion_reason") == "eligible"
+    assert decision.get("direct_answer_eligible", False) is True
+    assert "exclusion_reason" in decision
+    assert decision.get("exclusion_reason", EligibilityExclusionReason.ELIGIBLE) == "eligible"
     assert eligibility_decision_context_signature(decision) == ("20:2026-08-12T16:00:00Z|4:True|8:tenant-a|4:True")
     assert validate_eligibility_decision(decision) == decision
 
 
 def test_contextual_exact_lookup_scans_current_artifacts_without_secondary_state() -> None:
-    artifact = accepted_artifact()
-    current_context = context()
+    artifact = validate_cached_response_artifact(ACCEPTED_ARTIFACT_FIELDS)
+    current_context = eligibility_context(**CONTEXT_VALUES)
     key = retrieval_representation_bindings(
         artifact.get("retrieval", {}),
         artifact.get("scope", {}),
@@ -151,13 +156,19 @@ def test_contextual_exact_lookup_scans_current_artifacts_without_secondary_state
     eligible = lookup.exact_lookup(key, current_context)
     unavailable = lookup.exact_lookup(
         key,
-        context(artifact_repository_available=False),
+        eligibility_context(**{**CONTEXT_VALUES, "artifact_repository_available": False}),
     )
 
-    assert eligible.get("lookup", {}).get("outcome") == ExactLookupOutcome.FOUND
-    assert eligible.get("lookup", {}).get("statement_id") == artifact.get("statement_id", "")
-    assert unavailable.get("lookup", {}).get("outcome") == ExactLookupOutcome.MISS
-    assert unavailable.get("lookup", {}).get("statement_id") == ""
+    eligible_lookup = eligible.get("lookup", {})
+    unavailable_lookup = unavailable.get("lookup", {})
+    statement_id = artifact.get("statement_id", "")
+    assert statement_id
+    assert eligible_lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.FOUND
+    assert eligible_lookup.get("statement_id", "") == statement_id
+    assert "outcome" in unavailable_lookup
+    assert unavailable_lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.MISS
+    assert "statement_id" in unavailable_lookup
+    assert unavailable_lookup.get("statement_id", "") == ""
     assert set(unavailable) == {"lookup", "decisions", "context_signature"}
 
 
@@ -183,6 +194,6 @@ def test_context_validation_rejects_malformed_external_values(value, message) ->
 
 def test_eligibility_rejects_non_contract_inputs() -> None:
     with pytest_raises(InvalidRequestError, match="CachedResponseArtifact"):
-        evaluate_artifact_eligibility({}, context())
+        evaluate_artifact_eligibility({}, eligibility_context(**CONTEXT_VALUES))
     with pytest_raises(InvalidRequestError, match="EligibilityContext"):
-        evaluate_artifact_eligibility(accepted_artifact(), {})
+        evaluate_artifact_eligibility(validate_cached_response_artifact(ACCEPTED_ARTIFACT_FIELDS), {})

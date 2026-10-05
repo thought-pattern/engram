@@ -1,7 +1,6 @@
 """Independent static and live catalog contracts for Engram Memgraph DDL."""
 
 from importlib.resources import files
-from importlib.resources.abc import Traversable
 from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
 
 ORDINARY_INDEX_PATTERN = re_compile(
@@ -111,7 +110,7 @@ REQUIRED_VECTOR_INDEXES = {
 }
 
 
-def packaged_schema() -> Traversable:
+def packaged_schema():
     """Return Engram's schema file as installed with the package."""
     result = files("engram").joinpath("schema.cypher")
     return result

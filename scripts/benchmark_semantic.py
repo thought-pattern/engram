@@ -1,6 +1,6 @@
 """Benchmark Section 13 semantic retrieval and transparent reranking."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
+from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from importlib import util as importlib_util
 from json import dumps as json_dumps, loads as json_loads
@@ -16,17 +16,40 @@ from psutil import Process as psutil_Process
 
 sys_path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import reranker_config, semantic_config, sparse_config
-from engram.constants import Tier
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.reranking import TransparentLogisticReranker
 from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
 from engram.sparse import search_sparse_artifacts
 from scripts.benchmark_metadata import benchmark_source_state
 
+# Model manifest fields the benchmark reads, with the type each carries; a manifest lacking one is refused.
+MODEL_MANIFEST_FIELD_DEFAULTS = {
+    "artifact_sha256": "",
+    "backend": "",
+    "dimension": 0,
+    "license_id": "",
+    "model_id": "",
+    "model_path": "",
+    "model_version": "",
+}
+# Every corpus, query and gate field the benchmark reads; a corpus lacking one is refused.
+CORPUS_FIELDS = {"documents", "queries", "gates", "evaluation_role"}
+QUERY_FIELDS = {"query_id", "partition", "text", "expected_statement_id"}
+SEMANTIC_GATE_FIELDS = {
+    "engineering_holdout_recall_at_1_min",
+    "engineering_holdout_recall_delta_vs_sparse_min",
+    "engineering_holdout_false_answer_rate_max",
+    "peak_memory_mib_max",
+}
+RERANKER_GATE_FIELDS = {"engineering_holdout_recall_delta_min", "engineering_holdout_false_answer_delta_max", "peak_memory_mib_max"}
+# Promotion is judged on the held-out partition only; a corpus without it is refused.
+HOLDOUT_PARTITION = "engineering_holdout"
 
-def parse_args() -> argparse_Namespace:
+
+def parse_args():
     parser = argparse_ArgumentParser(description=__doc__)
     # The tree carries no Section 13 corpus, so the input is always named explicitly.
     parser.add_argument("--corpus", required=True)
@@ -56,45 +79,24 @@ def percentile(values: list[float], quantile: float) -> float:
     return result
 
 
-def artifact(value: dict) -> dict:
-    request = str(value.get("canonical", ""))
-    selected_scope = scope_key(namespace="semantic-benchmark")
-    result = cached_response_artifact(
-        statement_id=str(value.get("statement_id", "")),
-        generation=1,
-        response=str(value.get("response", "")),
-        query_identity=build_standalone_identity(request, selected_scope),
-        retrieval=build_retrieval_representation(request, tuple(value.get("aliases", []))),
-        tier=Tier.STATIC,
-        lifecycle=LifecycleState.ACTIVE,
-        scope=selected_scope,
-        support_references=(),
-        valid_from="",
-        valid_from_available=False,
-        valid_until="",
-        valid_until_available=False,
-        superseded_by="",
-        provenance=artifact_provenance("section13-benchmark", "engineering", "2026-08-22T00:00:00Z"),
-        statistics=artifact_statistics(),
-        metadata={},
-    )
-    return result
-
-
 def rank(statement_ids: list[str], expected: str) -> int:
     result = statement_ids.index(expected) + 1 if expected in statement_ids else 0
     return result
 
 
 def partition_metrics(rows: list[dict]) -> dict:
-    positives = [row for row in rows if row["expected_statement_id"]]
-    reciprocal = [1.0 / row["rank"] if row["rank"] else 0.0 for row in positives]
-    false_answers = [row for row in rows if row["top_statement_id"] and row["top_statement_id"] != row["expected_statement_id"]]
+    positives = [row for row in rows if row.get("expected_statement_id", "")]
+    reciprocal = [1.0 / row.get("rank", 0) if row.get("rank", 0) else 0.0 for row in positives]
+    false_answers = [
+        row
+        for row in rows
+        if row.get("top_statement_id", "") and row.get("top_statement_id", "") != row.get("expected_statement_id", "")
+    ]
     result = {
         "query_count": len(rows),
         "positive_count": len(positives),
-        "recall_at_1": sum(row["rank"] == 1 for row in positives) / len(positives) if positives else 0.0,
-        "recall_at_3": sum(0 < row["rank"] <= 3 for row in positives) / len(positives) if positives else 0.0,
+        "recall_at_1": sum(row.get("rank", 0) == 1 for row in positives) / len(positives) if positives else 0.0,
+        "recall_at_3": sum(0 < row.get("rank", 0) <= 3 for row in positives) / len(positives) if positives else 0.0,
         "mrr": statistics_fmean(reciprocal) if reciprocal else 0.0,
         "false_answer_rate": len(false_answers) / len(rows) if rows else 0.0,
     }
@@ -102,8 +104,10 @@ def partition_metrics(rows: list[dict]) -> dict:
 
 
 def evaluate_rows(rows: list[dict]) -> dict:
-    partitions = sorted({str(row["partition"]) for row in rows})
-    result = {partition: partition_metrics([row for row in rows if row["partition"] == partition]) for partition in partitions}
+    partitions = sorted({str(row.get("partition", "")) for row in rows})
+    result = {
+        partition: partition_metrics([row for row in rows if row.get("partition", "") == partition]) for partition in partitions
+    }
     return result
 
 
@@ -113,23 +117,72 @@ def main() -> int:
     manifest_path = Path(args.manifest)
     output_path = Path(args.output)
     corpus = json_loads(corpus_path.read_text(encoding="utf-8"))
+    if not isinstance(corpus, dict) or not CORPUS_FIELDS.issubset(corpus):
+        raise SystemExit(f"semantic benchmark corpus must be an object with {', '.join(sorted(CORPUS_FIELDS))}")
+    queries = corpus.get("queries", [])
+    gates = corpus.get("gates", {})
+    if any(not isinstance(query, dict) or not QUERY_FIELDS.issubset(query) for query in queries):
+        raise SystemExit(f"semantic benchmark queries must be objects with {', '.join(sorted(QUERY_FIELDS))}")
+    if HOLDOUT_PARTITION not in {str(query.get("partition", "")) for query in queries}:
+        raise SystemExit(f"semantic benchmark corpus has no {HOLDOUT_PARTITION} queries")
+    if not isinstance(gates, dict) or any(not isinstance(gates.get(name, {}), dict) for name in ("semantic", "reranker")):
+        raise SystemExit("semantic benchmark gates must hold semantic and reranker threshold objects")
+    semantic_gates = gates.get("semantic", {})
+    reranker_gates = gates.get("reranker", {})
+    if not SEMANTIC_GATE_FIELDS.issubset(semantic_gates) or not RERANKER_GATE_FIELDS.issubset(reranker_gates):
+        raise SystemExit("semantic benchmark corpus is missing semantic or reranker gate thresholds")
     manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
-    model_path = Path(manifest["model_path"])
+    if not isinstance(manifest, dict) or not MODEL_MANIFEST_FIELD_DEFAULTS.keys() <= manifest.keys():
+        raise SystemExit(f"model manifest must be an object with {', '.join(sorted(MODEL_MANIFEST_FIELD_DEFAULTS))}")
+    model_path = Path(manifest.get("model_path", ""))
+    expected_checksum = manifest.get("artifact_sha256", "")
     actual_checksum = model_artifact_sha256(model_path)
-    if actual_checksum != manifest["artifact_sha256"]:
+    if actual_checksum != expected_checksum:
         raise SystemExit("model artifact checksum does not match manifest")
     semantic_settings = semantic_config(
         enabled=True,
         model_path=model_path.as_posix(),
-        model_id=manifest["model_id"],
-        model_version=manifest["model_version"],
-        license_id=manifest["license_id"],
-        artifact_sha256=manifest["artifact_sha256"],
-        dimension=manifest["dimension"],
-        backend=manifest["backend"],
+        model_id=manifest.get("model_id", ""),
+        model_version=manifest.get("model_version", ""),
+        license_id=manifest.get("license_id", ""),
+        artifact_sha256=expected_checksum,
+        dimension=manifest.get("dimension", 0),
+        backend=manifest.get("backend", ""),
         min_similarity=0.45,
     )
-    artifacts = tuple(artifact(value) for value in corpus["documents"])
+    selected_scope = scope_key(namespace="semantic-benchmark")
+    # Each corpus document becomes one accepted response in the benchmark scope.
+    accepted = []
+    for document in corpus.get("documents", []):
+        request = str(document.get("canonical", ""))
+        accepted.append(
+            validate_cached_response_artifact(
+                {
+                    "statement_id": str(document.get("statement_id", "")),
+                    "generation": 1,
+                    "response": str(document.get("response", "")),
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request, tuple(document.get("aliases", []))),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": {
+                        "source_label": "section13-benchmark",
+                        "caller_id": "engineering",
+                        "accepted_at": "2026-08-22T00:00:00Z",
+                    },
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
+            )
+        )
+    artifacts = tuple(accepted)
     process = psutil_Process()
     rss_before = process.memory_info().rss
     cold_started = time_perf_counter_ns()
@@ -140,7 +193,6 @@ def main() -> int:
     rss_after_model = process.memory_info().rss
     sparse_settings = sparse_config(enabled=True)
     reranker = TransparentLogisticReranker(reranker_config(enabled=True, shortlist_size=8))
-    selected_scope = scope_key(namespace="semantic-benchmark")
     request_local_started = time_perf_counter_ns()
     semantic.search(
         "semantic benchmark warmup",
@@ -162,10 +214,10 @@ def main() -> int:
     # Every semantic search runs first; the process high-water mark read after
     # that phase bounds the model load, warmup and query work.
     semantic_results = []
-    for query in corpus["queries"]:
+    for query in queries:
         started = time_perf_counter_ns()
         semantic_result = semantic.search(
-            query["text"],
+            query.get("text", ""),
             selected_scope,
             artifacts,
             limit=8,
@@ -175,28 +227,28 @@ def main() -> int:
         semantic_ms = (time_perf_counter_ns() - started) / 1_000_000
         semantic_latencies.append(semantic_ms)
         repeated = semantic.search(
-            query["text"],
+            query.get("text", ""),
             selected_scope,
             artifacts,
             limit=8,
             max_vector_results=8,
             max_working_memory_bytes=16_777_216,
         )
-        first_scores = {value["statement_id"]: value["similarity"] for value in semantic_result["matches"]}
-        second_scores = {value["statement_id"]: value["similarity"] for value in repeated["matches"]}
+        first_scores = {value.get("statement_id", ""): value.get("similarity", 0.0) for value in semantic_result.get("matches", ())}
+        second_scores = {value.get("statement_id", ""): value.get("similarity", 0.0) for value in repeated.get("matches", ())}
         drift_max = max(
             drift_max,
-            max((abs(first_scores[key] - second_scores.get(key, 0.0)) for key in first_scores), default=0.0),
+            max((abs(score - second_scores.get(key, 0.0)) for key, score in first_scores.items()), default=0.0),
         )
-        semantic_ids = [value["statement_id"] for value in semantic_result["matches"]]
+        semantic_ids = [value.get("statement_id", "") for value in semantic_result.get("matches", ())]
         semantic_results.append(semantic_result)
         semantic_rows.append(
             {
-                "query_id": query["query_id"],
-                "partition": query["partition"],
-                "expected_statement_id": query["expected_statement_id"],
+                "query_id": query.get("query_id", ""),
+                "partition": query.get("partition", ""),
+                "expected_statement_id": query.get("expected_statement_id", ""),
                 "top_statement_id": semantic_ids[0] if semantic_ids else "",
-                "rank": rank(semantic_ids, query["expected_statement_id"]),
+                "rank": rank(semantic_ids, query.get("expected_statement_id", "")),
                 "latency_ms": semantic_ms,
                 "candidate_ids": semantic_ids,
             }
@@ -204,55 +256,57 @@ def main() -> int:
     semantic_peak_rss = peak_rss_bytes()
     rss_after_queries = process.memory_info().rss
     shortlists = []
-    for query, semantic_result in zip(corpus["queries"], semantic_results, strict=True):
+    for query, semantic_result in zip(queries, semantic_results, strict=True):
         sparse_result = search_sparse_artifacts(
             artifacts,
-            query["text"],
+            query.get("text", ""),
             selected_scope,
             sparse_settings,
             limit=8,
             max_working_memory_bytes=16_777_216,
         )
-        sparse_scores = {value["statement_id"]: value["score"] for value in sparse_result["matches"]}
-        sparse_ids = [value["statement_id"] for value in sparse_result["matches"]]
+        sparse_scores = {value.get("statement_id", ""): value.get("score", 0.0) for value in sparse_result.get("matches", ())}
+        sparse_ids = [value.get("statement_id", "") for value in sparse_result.get("matches", ())]
         sparse_rows.append(
             {
-                "query_id": query["query_id"],
-                "partition": query["partition"],
-                "expected_statement_id": query["expected_statement_id"],
+                "query_id": query.get("query_id", ""),
+                "partition": query.get("partition", ""),
+                "expected_statement_id": query.get("expected_statement_id", ""),
                 "top_statement_id": sparse_ids[0] if sparse_ids else "",
-                "rank": rank(sparse_ids, query["expected_statement_id"]),
+                "rank": rank(sparse_ids, query.get("expected_statement_id", "")),
                 "candidate_ids": sparse_ids,
             }
         )
-        shortlists.append(
-            tuple(
+        # The reranker shortlist is the semantic candidate list with each candidate's lexical score attached.
+        candidates = []
+        for value in semantic_result.get("matches", ()):
+            similarity = value.get("similarity", 0.0)
+            statement_id = value.get("statement_id", "")
+            candidates.append(
                 {
-                    "statement_id": value["statement_id"],
-                    "base_score": value["similarity"],
-                    "features": {
-                        "base_score": value["similarity"],
-                        "semantic": value["similarity"],
-                        "lexical": sparse_scores.get(value["statement_id"], 0.0),
-                    },
+                    "statement_id": statement_id,
+                    "base_score": similarity,
+                    "features": {"base_score": similarity, "semantic": similarity, "lexical": sparse_scores.get(statement_id, 0.0)},
                 }
-                for value in semantic_result["matches"]
             )
-        )
-    for query, semantic_result, shortlist in zip(corpus["queries"], semantic_results, shortlists, strict=True):
-        semantic_ids = [value["statement_id"] for value in semantic_result["matches"]]
+        shortlists.append(tuple(candidates))
+    for query, semantic_result, shortlist in zip(queries, semantic_results, shortlists, strict=True):
+        semantic_ids = [value.get("statement_id", "") for value in semantic_result.get("matches", ())]
         rerank_started = time_perf_counter_ns()
         reranked = reranker.rerank(shortlist)
         rerank_ms = (time_perf_counter_ns() - rerank_started) / 1_000_000
         reranker_latencies.append(rerank_ms)
-        reranked_ids = [value["statement_id"] for value in reranked["scores"]] if reranked["applied"] else semantic_ids
+        if reranked.get("applied", False):
+            reranked_ids = [value.get("statement_id", "") for value in reranked.get("scores", ())]
+        else:
+            reranked_ids = semantic_ids
         reranker_rows.append(
             {
-                "query_id": query["query_id"],
-                "partition": query["partition"],
-                "expected_statement_id": query["expected_statement_id"],
+                "query_id": query.get("query_id", ""),
+                "partition": query.get("partition", ""),
+                "expected_statement_id": query.get("expected_statement_id", ""),
                 "top_statement_id": reranked_ids[0] if reranked_ids else "",
-                "rank": rank(reranked_ids, query["expected_statement_id"]),
+                "rank": rank(reranked_ids, query.get("expected_statement_id", "")),
                 "latency_ms": rerank_ms,
                 "candidate_ids": reranked_ids,
             }
@@ -269,37 +323,42 @@ def main() -> int:
     semantic_metrics = evaluate_rows(semantic_rows)
     sparse_metrics = evaluate_rows(sparse_rows)
     reranker_metrics = evaluate_rows(reranker_rows)
-    holdout_semantic = semantic_metrics["engineering_holdout"]
-    holdout_sparse = sparse_metrics["engineering_holdout"]
-    holdout_reranker = reranker_metrics["engineering_holdout"]
-    gates = corpus["gates"]
+    # Every metric set holds the held-out partition, which the corpus check above requires.
+    holdout_semantic = semantic_metrics.get(HOLDOUT_PARTITION, {})
+    holdout_sparse = sparse_metrics.get(HOLDOUT_PARTITION, {})
+    holdout_reranker = reranker_metrics.get(HOLDOUT_PARTITION, {})
+    semantic_recall = holdout_semantic.get("recall_at_1", 0.0)
+    semantic_false_answer_rate = holdout_semantic.get("false_answer_rate", 0.0)
     semantic_gate_values = {
-        "engineering_holdout_recall_at_1": holdout_semantic["recall_at_1"],
-        "engineering_holdout_recall_delta_vs_sparse": holdout_semantic["recall_at_1"] - holdout_sparse["recall_at_1"],
-        "engineering_holdout_false_answer_rate": holdout_semantic["false_answer_rate"],
+        "engineering_holdout_recall_at_1": semantic_recall,
+        "engineering_holdout_recall_delta_vs_sparse": semantic_recall - holdout_sparse.get("recall_at_1", 0.0),
+        "engineering_holdout_false_answer_rate": semantic_false_answer_rate,
         "peak_memory_mib": semantic_peak_rss / 1_048_576,
     }
     semantic_checks = {
         "engineering_holdout_recall_at_1": semantic_gate_values.get("engineering_holdout_recall_at_1", 0.0)
-        >= gates["semantic"]["engineering_holdout_recall_at_1_min"],
+        >= semantic_gates.get("engineering_holdout_recall_at_1_min", 0.0),
         "engineering_holdout_recall_delta_vs_sparse": semantic_gate_values.get("engineering_holdout_recall_delta_vs_sparse", 0.0)
-        >= gates["semantic"]["engineering_holdout_recall_delta_vs_sparse_min"],
+        >= semantic_gates.get("engineering_holdout_recall_delta_vs_sparse_min", 0.0),
         "engineering_holdout_false_answer_rate": semantic_gate_values.get("engineering_holdout_false_answer_rate", 0.0)
-        <= gates["semantic"]["engineering_holdout_false_answer_rate_max"],
-        "peak_memory_mib": semantic_gate_values.get("peak_memory_mib", 0.0) <= gates["semantic"]["peak_memory_mib_max"],
+        <= semantic_gates.get("engineering_holdout_false_answer_rate_max", 0.0),
+        "peak_memory_mib": semantic_gate_values.get("peak_memory_mib", 0.0) <= semantic_gates.get("peak_memory_mib_max", 0.0),
     }
     reranker_gate_values = {
-        "engineering_holdout_recall_delta": holdout_reranker["recall_at_1"] - holdout_semantic["recall_at_1"],
-        "engineering_holdout_false_answer_delta": holdout_reranker["false_answer_rate"] - holdout_semantic["false_answer_rate"],
+        "engineering_holdout_recall_delta": holdout_reranker.get("recall_at_1", 0.0) - semantic_recall,
+        "engineering_holdout_false_answer_delta": holdout_reranker.get("false_answer_rate", 0.0) - semantic_false_answer_rate,
         "peak_memory_mib": reranker_peak_bytes / 1_048_576,
     }
     reranker_checks = {
         "engineering_holdout_recall_delta": reranker_gate_values.get("engineering_holdout_recall_delta", 0.0)
-        >= gates["reranker"]["engineering_holdout_recall_delta_min"],
+        >= reranker_gates.get("engineering_holdout_recall_delta_min", 0.0),
         "engineering_holdout_false_answer_delta": reranker_gate_values.get("engineering_holdout_false_answer_delta", 0.0)
-        <= gates["reranker"]["engineering_holdout_false_answer_delta_max"],
-        "peak_memory_mib": reranker_gate_values.get("peak_memory_mib", 0.0) <= gates["reranker"]["peak_memory_mib_max"],
+        <= reranker_gates.get("engineering_holdout_false_answer_delta_max", 0.0),
+        "peak_memory_mib": reranker_gate_values.get("peak_memory_mib", 0.0) <= reranker_gates.get("peak_memory_mib_max", 0.0),
     }
+    semantic_passed = all(semantic_checks.values())
+    reranker_passed = all(reranker_checks.values())
+    reranker_positive = reranker_gate_values.get("engineering_holdout_recall_delta", 0.0) > 0.0
     artifact_bytes = sum(
         value.stat().st_size
         for value in model_path.rglob("*")
@@ -309,13 +368,14 @@ def main() -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "source_state": benchmark_source_state(),
         "corpus": {
-            "path": Path(args.corpus).as_posix(),
-            "query_count": len(corpus["queries"]),
-            "evaluation_role": corpus["evaluation_role"],
+            "path": corpus_path.as_posix(),
+            "query_count": len(queries),
+            "evaluation_role": corpus.get("evaluation_role", ""),
         },
         "artifact": {
+            # The manifest's identity fields; the model path stays out of the published report.
             **{
-                key: manifest[key] for key in ("model_id", "model_version", "license_id", "artifact_sha256", "dimension", "backend")
+                name: manifest.get(name, default) for name, default in MODEL_MANIFEST_FIELD_DEFAULTS.items() if name != "model_path"
             },
             "actual_sha256": actual_checksum,
             "size_bytes": artifact_bytes,
@@ -369,20 +429,19 @@ def main() -> int:
         },
         "gates": {
             "semantic": {
-                "thresholds": gates["semantic"],
+                "thresholds": semantic_gates,
                 "values": semantic_gate_values,
                 "checks": semantic_checks,
-                "passed": all(semantic_checks.values()),
-                "promoted_for_opt_in_component_use": all(semantic_checks.values()),
+                "passed": semantic_passed,
+                "promoted_for_opt_in_component_use": semantic_passed,
             },
             "reranker": {
-                "thresholds": gates["reranker"],
+                "thresholds": reranker_gates,
                 "values": reranker_gate_values,
                 "checks": reranker_checks,
-                "passed": all(reranker_checks.values()),
-                "positive_value_observed": reranker_gate_values.get("engineering_holdout_recall_delta", 0.0) > 0.0,
-                "promoted_for_opt_in_component_use": all(reranker_checks.values())
-                and reranker_gate_values.get("engineering_holdout_recall_delta", 0.0) > 0.0,
+                "passed": reranker_passed,
+                "positive_value_observed": reranker_positive,
+                "promoted_for_opt_in_component_use": reranker_passed and reranker_positive,
             },
         },
         "queries": {"sparse": sparse_rows, "semantic": semantic_rows, "reranker": reranker_rows},
@@ -390,8 +449,8 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json_dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json_dumps({"output": output_path.as_posix(), "gates": result.get("gates", {})}, sort_keys=True))
-    result = 0 if result.get("gates", {})["semantic"]["passed"] and result.get("gates", {})["reranker"]["passed"] else 1
-    return result
+    exit_code = 0 if semantic_passed and reranker_passed else 1
+    return exit_code
 
 
 if __name__ == "__main__":

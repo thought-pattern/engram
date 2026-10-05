@@ -1128,34 +1128,6 @@ def freeze_feedback_record(value: dict) -> dict:
     return frozen
 
 
-def trusted_feedback_state(
-    policy: dict,
-    statement_records: tuple[dict, ...],
-    relationship_records: tuple[dict, ...],
-    policy_suppressions: tuple[dict, ...],
-    stale_exclusions: tuple[dict, ...],
-    receipts: dict,
-    statement_evictions: int,
-    relationship_evictions: int,
-    policy_suppression_evictions: int,
-    stale_exclusion_evictions: int,
-) -> dict:
-    """Assemble state from values owned and maintained by FeedbackStore."""
-    result: dict = {
-        "policy": policy,
-        "statement_records": statement_records,
-        "relationship_records": relationship_records,
-        "policy_suppressions": policy_suppressions,
-        "stale_exclusions": stale_exclusions,
-        "receipts": receipts,
-        "statement_evictions": statement_evictions,
-        "relationship_evictions": relationship_evictions,
-        "policy_suppression_evictions": policy_suppression_evictions,
-        "stale_exclusion_evictions": stale_exclusion_evictions,
-    }
-    return result
-
-
 def trusted_feedback_state_copy(value: dict) -> dict:
     """Defensively copy state whose invariants are already established.
 
@@ -1166,18 +1138,18 @@ def trusted_feedback_state_copy(value: dict) -> dict:
     copied = structural_copy(value)
     if not isinstance(copied, dict):
         raise InvalidRequestError("feedback state did not remain an object")
-    result = trusted_feedback_state(
-        copied.get("policy", {}),
-        copied.get("statement_records", ()),
-        copied.get("relationship_records", ()),
-        copied.get("policy_suppressions", ()),
-        copied.get("stale_exclusions", ()),
-        copied.get("receipts", {}),
-        value.get("statement_evictions", 0),
-        value.get("relationship_evictions", 0),
-        value.get("policy_suppression_evictions", 0),
-        value.get("stale_exclusion_evictions", 0),
-    )
+    result: dict = {
+        "policy": copied.get("policy", {}),
+        "statement_records": copied.get("statement_records", ()),
+        "relationship_records": copied.get("relationship_records", ()),
+        "policy_suppressions": copied.get("policy_suppressions", ()),
+        "stale_exclusions": copied.get("stale_exclusions", ()),
+        "receipts": copied.get("receipts", {}),
+        "statement_evictions": value.get("statement_evictions", 0),
+        "relationship_evictions": value.get("relationship_evictions", 0),
+        "policy_suppression_evictions": value.get("policy_suppression_evictions", 0),
+        "stale_exclusion_evictions": value.get("stale_exclusion_evictions", 0),
+    }
     return result
 
 
@@ -1238,8 +1210,8 @@ def feedback_state_from_validated_components(
         raise InvalidRequestError("feedback statement records exceed policy capacity")
     if len(relationship_records) > policy.get("max_relationship_records", 0):
         raise InvalidRequestError("feedback relationship records exceed policy capacity")
-    statement_fingerprints = tuple(trusted_feedback_key_fingerprint(record["key"]) for record in statement_records)
-    relationship_fingerprints = tuple(trusted_feedback_key_fingerprint(record["key"]) for record in relationship_records)
+    statement_fingerprints = tuple(trusted_feedback_key_fingerprint(record.get("key", {})) for record in statement_records)
+    relationship_fingerprints = tuple(trusted_feedback_key_fingerprint(record.get("key", {})) for record in relationship_records)
     if len(set(statement_fingerprints)) != len(statement_fingerprints):
         raise InvalidRequestError("feedback statement record keys must be unique")
     if len(set(relationship_fingerprints)) != len(relationship_fingerprints):
@@ -1249,19 +1221,21 @@ def feedback_state_from_validated_components(
     if relationship_fingerprints != tuple(sorted(relationship_fingerprints)):
         raise InvalidRequestError("feedback relationship records must use canonical key order")
     maximum_buckets = policy.get("max_buckets_per_record", 0)
-    if any(len(record["buckets"]) > maximum_buckets for record in statement_records):
+    if any(len(record.get("buckets", ())) > maximum_buckets for record in statement_records):
         raise InvalidRequestError("feedback statement record buckets exceed policy retention")
-    if any(len(record["buckets"]) > maximum_buckets for record in relationship_records):
+    if any(len(record.get("buckets", ())) > maximum_buckets for record in relationship_records):
         raise InvalidRequestError("feedback relationship record buckets exceed policy retention")
     if len(policy_suppressions) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback policy suppressions exceed policy capacity")
     if len(stale_exclusions) > policy.get("max_statement_records", 0):
         raise InvalidRequestError("feedback stale exclusions exceed policy capacity")
     suppression_keys = tuple(
-        (value["statement_id"], value["namespace"], value["policy_fingerprint"]) for value in policy_suppressions
+        (value.get("statement_id", ""), value.get("namespace", ""), value.get("policy_fingerprint", ""))
+        for value in policy_suppressions
     )
     exclusion_keys = tuple(
-        (value["statement_id"], value["generation"], value["generation_available"]) for value in stale_exclusions
+        (value.get("statement_id", ""), value.get("generation", 0), value.get("generation_available", False))
+        for value in stale_exclusions
     )
     if len(set(suppression_keys)) != len(suppression_keys):
         raise InvalidRequestError("feedback policy suppressions must be unique")
@@ -1273,18 +1247,18 @@ def feedback_state_from_validated_components(
         raise InvalidRequestError("feedback stale exclusions must use canonical order")
     validate_mutation_receipt_ledger_state(receipts)
     receipt_copy = feedback_wire_record(receipts)
-    result = trusted_feedback_state(
-        policy,
-        statement_records,
-        relationship_records,
-        policy_suppressions,
-        stale_exclusions,
-        receipt_copy,
-        internal_integer(statement_evictions, "feedback statement_evictions", 0),
-        internal_integer(relationship_evictions, "feedback relationship_evictions", 0),
-        internal_integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
-        internal_integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
-    )
+    result: dict = {
+        "policy": policy,
+        "statement_records": statement_records,
+        "relationship_records": relationship_records,
+        "policy_suppressions": policy_suppressions,
+        "stale_exclusions": stale_exclusions,
+        "receipts": receipt_copy,
+        "statement_evictions": internal_integer(statement_evictions, "feedback statement_evictions", 0),
+        "relationship_evictions": internal_integer(relationship_evictions, "feedback relationship_evictions", 0),
+        "policy_suppression_evictions": internal_integer(policy_suppression_evictions, "feedback policy_suppression_evictions", 0),
+        "stale_exclusion_evictions": internal_integer(stale_exclusion_evictions, "feedback stale_exclusion_evictions", 0),
+    }
     return result
 
 
@@ -1335,16 +1309,16 @@ def feedback_state(
 def validate_feedback_state(value: object) -> dict:
     data = exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
     result = feedback_state(
-        policy=data["policy"],
-        statement_records=data["statement_records"],
-        relationship_records=data["relationship_records"],
-        policy_suppressions=data["policy_suppressions"],
-        stale_exclusions=data["stale_exclusions"],
-        receipts=data["receipts"],
-        statement_evictions=data["statement_evictions"],
-        relationship_evictions=data["relationship_evictions"],
-        policy_suppression_evictions=data["policy_suppression_evictions"],
-        stale_exclusion_evictions=data["stale_exclusion_evictions"],
+        policy=data.get("policy", {}),
+        statement_records=data.get("statement_records", ()),
+        relationship_records=data.get("relationship_records", ()),
+        policy_suppressions=data.get("policy_suppressions", ()),
+        stale_exclusions=data.get("stale_exclusions", ()),
+        receipts=data.get("receipts", {}),
+        statement_evictions=data.get("statement_evictions", 0),
+        relationship_evictions=data.get("relationship_evictions", 0),
+        policy_suppression_evictions=data.get("policy_suppression_evictions", 0),
+        stale_exclusion_evictions=data.get("stale_exclusion_evictions", 0),
     )
     return result
 
@@ -1370,10 +1344,10 @@ def feedback_state_from_dict(value: object) -> dict:
         values = data.get(name, ())
         if not isinstance(values, list) or not all(isinstance(item, dict) for item in values):
             raise InvalidRequestError(f"feedback state {name} must be an array of objects")
-    statement_values = data["statement_records"]
-    relationship_values = data["relationship_records"]
-    suppression_values = data["policy_suppressions"]
-    exclusion_values = data["stale_exclusions"]
+    statement_values = data.get("statement_records", [])
+    relationship_values = data.get("relationship_records", [])
+    suppression_values = data.get("policy_suppressions", [])
+    exclusion_values = data.get("stale_exclusions", [])
     parsed_statements = tuple(
         sorted(
             (statement_feedback_record_from_dict(item) for item in statement_values),
@@ -1395,16 +1369,16 @@ def feedback_state_from_dict(value: object) -> dict:
         )
     )
     result = feedback_state_from_validated_components(
-        feedback_policy_from_dict(data["policy"]),
+        feedback_policy_from_dict(data.get("policy", {})),
         parsed_statements,
         parsed_relationships,
         tuple(policy_suppression_from_dict(item) for item in suppression_values),
         tuple(stale_exclusion_from_dict(item) for item in exclusion_values),
-        data["receipts"],
-        data["statement_evictions"],
-        data["relationship_evictions"],
-        data["policy_suppression_evictions"],
-        data["stale_exclusion_evictions"],
+        data.get("receipts", {}),
+        data.get("statement_evictions", 0),
+        data.get("relationship_evictions", 0),
+        data.get("policy_suppression_evictions", 0),
+        data.get("stale_exclusion_evictions", 0),
     )
     return result
 
@@ -1427,53 +1401,26 @@ class PreparedFeedbackState(dict):
         self.canonical = state
 
 
-def trusted_feedback_mutation_candidate(
-    before: dict,
-    after: dict,
-    receipt: dict,
-    replayed: bool,
-) -> dict:
-    """Build a candidate from isolated store snapshots and a ledger-owned receipt."""
+def trusted_feedback_record_from_observation(key: dict, observation: dict, policy: dict) -> dict:
+    """Start a statement or relationship aggregate from its first store-validated observation."""
+    outcome = observation.get("outcome", FeedbackOutcome.CANDIDATE)
+    observed_at = observation.get("observed_at", "")
+    statistics = feedback_statistics_increment(feedback_statistics(), outcome)
+    bucket = feedback_bucket(bucket_start(observed_at, policy.get("bucket_seconds", 0)), statistics)
     result: dict = {
-        "before": before,
-        "after": trusted_feedback_state_copy(after) if after is before else after,
-        "receipt": validate_mutation_receipt(receipt),
-        "replayed": replayed,
+        "key": key,
+        "raw": statistics,
+        "buckets": (bucket,),
+        "last_outcome": outcome,
+        "last_observed_at": observed_at,
     }
-    return result
-
-
-def record_statement_feedback(observation: dict, policy: dict) -> dict:
-    statistics = feedback_statistics_increment(feedback_statistics(), observation.get("outcome", FeedbackOutcome.CANDIDATE))
-    bucket = feedback_bucket(bucket_start(observation.get("observed_at", ""), policy.get("bucket_seconds", 0)), statistics)
-    result = trusted_statement_feedback_record(
-        trusted_feedback_observation_statement_key(observation),
-        statistics,
-        (bucket,),
-        observation.get("outcome", FeedbackOutcome.CANDIDATE),
-        observation.get("observed_at", ""),
-    )
-    return result
-
-
-def record_relationship_feedback(observation: dict, policy: dict) -> dict:
-    statistics = feedback_statistics_increment(feedback_statistics(), observation.get("outcome", FeedbackOutcome.CANDIDATE))
-    bucket = feedback_bucket(bucket_start(observation.get("observed_at", ""), policy.get("bucket_seconds", 0)), statistics)
-    statement_key = trusted_feedback_observation_statement_key(observation)
-    result = trusted_relationship_feedback_record(
-        trusted_feedback_observation_relationship_key(observation, statement_key),
-        statistics,
-        (bucket,),
-        observation.get("outcome", FeedbackOutcome.CANDIDATE),
-        observation.get("observed_at", ""),
-    )
     return result
 
 
 def record_buckets(value: object) -> tuple[dict, ...]:
     if not isinstance(value, dict) or not isinstance(value.get("buckets", ()), tuple):
         raise InvalidRequestError("feedback record must contain a tuple of buckets")
-    result = tuple(validate_feedback_bucket(bucket) for bucket in value["buckets"])
+    result = tuple(validate_feedback_bucket(bucket) for bucket in value.get("buckets", ()))
     return result
 
 
@@ -1482,20 +1429,16 @@ def aged_values(records: tuple[object, ...], at: str, policy: dict) -> dict[Feed
     values = dict.fromkeys(FeedbackOutcome, 0.0)
     for record in records:
         for bucket in record_buckets(record):
-            start = require_utc_datetime(bucket["start_at"], "feedback bucket start_at")
+            start = require_utc_datetime(bucket.get("start_at", ""), "feedback bucket start_at")
             # A bucket represents its complete interval. Using its deterministic
             # end prevents same-bucket samples from falling below the integer
             # floor merely because they arrived after the bucket boundary.
             effective_at = start + timedelta(seconds=policy.get("bucket_seconds", 0))
             age_seconds = max(0.0, (evaluation - effective_at).total_seconds())
             weight = 0.5 ** (age_seconds / policy.get("half_life_seconds", 0.0))
-            stats = bucket["statistics"]
-            values[FeedbackOutcome.CANDIDATE] += stats["candidate_count"] * weight
-            values[FeedbackOutcome.ACCEPTED] += stats["accept_count"] * weight
-            values[FeedbackOutcome.REJECTED_QUALITY] += stats["rejected_quality"] * weight
-            values[FeedbackOutcome.REJECTED_CONTEXT] += stats["rejected_context"] * weight
-            values[FeedbackOutcome.REJECTED_STALE] += stats["rejected_stale"] * weight
-            values[FeedbackOutcome.REJECTED_POLICY] += stats["rejected_policy"] * weight
+            stats = bucket.get("statistics", {})
+            for outcome, field_name in FEEDBACK_OUTCOME_COUNTER_FIELDS.items():
+                values[outcome] = values.get(outcome, 0.0) + stats.get(field_name, 0) * weight
     return values
 
 
@@ -1558,38 +1501,40 @@ class FeedbackStore:
         self.state_dirty = False
         self.internal_policy = policy
         self.internal_statement_records = {
-            statement_feedback_key_fingerprint(record["key"]): record for record in statement_records
+            statement_feedback_key_fingerprint(record.get("key", {})): record for record in statement_records
         }
         self.internal_relationship_records = {
-            relationship_feedback_key_fingerprint(record["key"]): record for record in relationship_records
+            relationship_feedback_key_fingerprint(record.get("key", {})): record for record in relationship_records
         }
         self.internal_statement_partitions = record_partitions(self.internal_statement_records, statement_record_partition)
         self.internal_relationship_partitions = record_partitions(
             self.internal_relationship_records, relationship_record_partition
         )
         self.internal_policy_suppressions = {
-            (value["statement_id"], value["namespace"], value["policy_fingerprint"]): value for value in policy_suppressions
+            (value.get("statement_id", ""), value.get("namespace", ""), value.get("policy_fingerprint", "")): value
+            for value in policy_suppressions
         }
         self.internal_stale_exclusions = {
-            (value["statement_id"], value["generation"], value["generation_available"]): value for value in stale_exclusions
+            (value.get("statement_id", ""), value.get("generation", 0), value.get("generation_available", False)): value
+            for value in stale_exclusions
         }
         self.internal_receipts = MutationReceiptLedger(state=state.get("receipts", ()))
         self.internal_statement_evictions = state.get("statement_evictions", 0)
         self.internal_relationship_evictions = state.get("relationship_evictions", 0)
         self.internal_policy_suppression_evictions = state.get("policy_suppression_evictions", 0)
         self.internal_stale_exclusion_evictions = state.get("stale_exclusion_evictions", 0)
-        self.internal_state = trusted_feedback_state(
-            policy,
-            statement_records,
-            relationship_records,
-            policy_suppressions,
-            stale_exclusions,
-            self.internal_receipts.snapshot(),
-            self.internal_statement_evictions,
-            self.internal_relationship_evictions,
-            self.internal_policy_suppression_evictions,
-            self.internal_stale_exclusion_evictions,
-        )
+        self.internal_state = {
+            "policy": policy,
+            "statement_records": statement_records,
+            "relationship_records": relationship_records,
+            "policy_suppressions": policy_suppressions,
+            "stale_exclusions": stale_exclusions,
+            "receipts": self.internal_receipts.snapshot(),
+            "statement_evictions": self.internal_statement_evictions,
+            "relationship_evictions": self.internal_relationship_evictions,
+            "policy_suppression_evictions": self.internal_policy_suppression_evictions,
+            "stale_exclusion_evictions": self.internal_stale_exclusion_evictions,
+        }
 
     @property
     def policy(self) -> dict:
@@ -1626,18 +1571,18 @@ class FeedbackStore:
             if not self.state_dirty:
                 result = trusted_feedback_state_copy(self.internal_state)
                 return result
-            state = trusted_feedback_state(
-                self.internal_policy,
-                tuple(record for _, record in sorted(self.internal_statement_records.items())),
-                tuple(record for _, record in sorted(self.internal_relationship_records.items())),
-                tuple(sorted(self.internal_policy_suppressions.values(), key=policy_suppression_signature)),
-                tuple(sorted(self.internal_stale_exclusions.values(), key=stale_exclusion_signature)),
-                self.internal_receipts.snapshot(),
-                self.internal_statement_evictions,
-                self.internal_relationship_evictions,
-                self.internal_policy_suppression_evictions,
-                self.internal_stale_exclusion_evictions,
-            )
+            state = {
+                "policy": self.internal_policy,
+                "statement_records": tuple(record for _, record in sorted(self.internal_statement_records.items())),
+                "relationship_records": tuple(record for _, record in sorted(self.internal_relationship_records.items())),
+                "policy_suppressions": tuple(sorted(self.internal_policy_suppressions.values(), key=policy_suppression_signature)),
+                "stale_exclusions": tuple(sorted(self.internal_stale_exclusions.values(), key=stale_exclusion_signature)),
+                "receipts": self.internal_receipts.snapshot(),
+                "statement_evictions": self.internal_statement_evictions,
+                "relationship_evictions": self.internal_relationship_evictions,
+                "policy_suppression_evictions": self.internal_policy_suppression_evictions,
+                "stale_exclusion_evictions": self.internal_stale_exclusion_evictions,
+            }
             self.internal_state = state
             self.state_dirty = False
             result = trusted_feedback_state_copy(state)
@@ -1674,54 +1619,75 @@ class FeedbackStore:
 
     def apply_observation(self, observation: dict) -> None:
         self.state_dirty = True
-        statement_key = trusted_feedback_observation_statement_key(observation)
+        # The observation was validated at the store boundary; its statement and
+        # relationship keys are the exact partitions its aggregates live under.
+        statement_key = {
+            "statement_id": observation.get("statement_id", ""),
+            "generation": observation.get("generation", 0),
+            "generation_available": observation.get("generation_available", False),
+            "policy_fingerprint": observation.get("policy_fingerprint", ""),
+        }
         statement_fingerprint = trusted_feedback_key_fingerprint(statement_key)
-        statement = self.internal_statement_records.get(statement_fingerprint)
+        statement = self.internal_statement_records.get(statement_fingerprint, {})
         if statement:
-            updated_statement = trusted_statement_feedback_record_apply(statement, observation, self.internal_policy)
+            updated_statement = trusted_feedback_record_apply(statement, statement_key, observation, self.internal_policy)
         else:
-            updated_statement = record_statement_feedback(observation, self.internal_policy)
+            updated_statement = trusted_feedback_record_from_observation(statement_key, observation, self.internal_policy)
         frozen_statement = freeze_feedback_record(updated_statement)
         self.internal_statement_records[statement_fingerprint] = frozen_statement
-        self.internal_statement_partitions.setdefault(statement_record_partition(frozen_statement), {})[statement_fingerprint] = True
-        relationship_key = trusted_feedback_observation_relationship_key(observation, statement_key)
+        statement_members = self.internal_statement_partitions.setdefault(statement_record_partition(frozen_statement), {})
+        statement_members[statement_fingerprint] = True
+        relationship_key = {
+            "query_identity": observation.get("query_identity", {}),
+            "scope": observation.get("scope", {}),
+            "constraint_fingerprint": observation.get("constraint_fingerprint", ""),
+            "statement": statement_key,
+        }
         relationship_fingerprint = trusted_feedback_key_fingerprint(relationship_key)
-        relationship = self.internal_relationship_records.get(relationship_fingerprint)
+        relationship = self.internal_relationship_records.get(relationship_fingerprint, {})
         if relationship:
-            updated_relationship = trusted_relationship_feedback_record_apply(relationship, observation, self.internal_policy)
+            updated_relationship = trusted_feedback_record_apply(relationship, relationship_key, observation, self.internal_policy)
         else:
-            updated_relationship = record_relationship_feedback(observation, self.internal_policy)
+            updated_relationship = trusted_feedback_record_from_observation(relationship_key, observation, self.internal_policy)
         frozen_relationship = freeze_feedback_record(updated_relationship)
         self.internal_relationship_records[relationship_fingerprint] = frozen_relationship
-        self.internal_relationship_partitions.setdefault(relationship_record_partition(frozen_relationship), {})[
-            relationship_fingerprint
-        ] = True
+        relationship_members = self.internal_relationship_partitions.setdefault(
+            relationship_record_partition(frozen_relationship), {}
+        )
+        relationship_members[relationship_fingerprint] = True
+        outcome = observation.get("outcome", FeedbackOutcome.CANDIDATE)
         suppression_key = (
             observation.get("statement_id", ""),
-            observation.get("scope", {})["namespace"],
+            observation.get("scope", {}).get("namespace", ""),
             observation.get("policy_fingerprint", ""),
         )
-        if observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.REJECTED_POLICY:
+        if outcome == FeedbackOutcome.REJECTED_POLICY:
             self.internal_policy_suppressions[suppression_key] = freeze_feedback_record(
                 policy_suppression(*suppression_key, observation.get("observed_at", ""))
             )
-        elif observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.ACCEPTED:
+        elif outcome == FeedbackOutcome.ACCEPTED:
             self.internal_policy_suppressions.pop(suppression_key, {})
-        if observation.get("outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.REJECTED_STALE:
+        if outcome == FeedbackOutcome.REJECTED_STALE:
             exclusion = stale_exclusion(
                 observation.get("statement_id", ""),
                 observation.get("generation", 0),
                 observation.get("generation_available", False),
                 observation.get("observed_at", ""),
             )
-            exclusion_key = (exclusion["statement_id"], exclusion["generation"], exclusion["generation_available"])
+            exclusion_key = (
+                exclusion.get("statement_id", ""),
+                exclusion.get("generation", 0),
+                exclusion.get("generation_available", False),
+            )
             self.internal_stale_exclusions[exclusion_key] = freeze_feedback_record(exclusion)
 
     def enforce_capacity(self) -> None:
-        while len(self.internal_statement_records) > self.internal_policy["max_statement_records"]:
+        statement_capacity = self.internal_policy.get("max_statement_records", 0)
+        relationship_capacity = self.internal_policy.get("max_relationship_records", 0)
+        while len(self.internal_statement_records) > statement_capacity:
             oldest_key = min(
                 self.internal_statement_records,
-                key=lambda key: (utc_datetime(self.internal_statement_records[key]["last_observed_at"]), key),
+                key=lambda key: (utc_datetime(self.internal_statement_records.get(key, {}).get("last_observed_at", "")), key),
             )
             remove_partition_member(
                 self.internal_statement_partitions,
@@ -1730,10 +1696,10 @@ class FeedbackStore:
             )
             del self.internal_statement_records[oldest_key]
             self.internal_statement_evictions += 1
-        while len(self.internal_relationship_records) > self.internal_policy["max_relationship_records"]:
+        while len(self.internal_relationship_records) > relationship_capacity:
             oldest_key = min(
                 self.internal_relationship_records,
-                key=lambda key: (utc_datetime(self.internal_relationship_records[key]["last_observed_at"]), key),
+                key=lambda key: (utc_datetime(self.internal_relationship_records.get(key, {}).get("last_observed_at", "")), key),
             )
             remove_partition_member(
                 self.internal_relationship_partitions,
@@ -1742,17 +1708,17 @@ class FeedbackStore:
             )
             del self.internal_relationship_records[oldest_key]
             self.internal_relationship_evictions += 1
-        while len(self.internal_policy_suppressions) > self.internal_policy["max_statement_records"]:
+        while len(self.internal_policy_suppressions) > statement_capacity:
             oldest_key = min(
                 self.internal_policy_suppressions,
-                key=lambda key: (utc_datetime(self.internal_policy_suppressions[key]["observed_at"]), key),
+                key=lambda key: (utc_datetime(self.internal_policy_suppressions.get(key, {}).get("observed_at", "")), key),
             )
             del self.internal_policy_suppressions[oldest_key]
             self.internal_policy_suppression_evictions += 1
-        while len(self.internal_stale_exclusions) > self.internal_policy["max_statement_records"]:
+        while len(self.internal_stale_exclusions) > statement_capacity:
             oldest_key = min(
                 self.internal_stale_exclusions,
-                key=lambda key: (utc_datetime(self.internal_stale_exclusions[key]["observed_at"]), key),
+                key=lambda key: (utc_datetime(self.internal_stale_exclusions.get(key, {}).get("observed_at", "")), key),
             )
             del self.internal_stale_exclusions[oldest_key]
             self.internal_stale_exclusion_evictions += 1
@@ -1782,12 +1748,14 @@ class FeedbackStore:
         with self.internal_lock:
             before = self.snapshot()
             planned = self.internal_plan(request_id, validated_observations, lifecycle_status)
-            if planned["replayed"]:
-                result = trusted_feedback_mutation_candidate(before, before, planned["receipt"], True)
+            receipt = validate_mutation_receipt(planned.get("receipt", {}))
+            if planned.get("replayed", False):
+                # A replay changes nothing, so its isolated after state is a copy of before.
+                result = {"before": before, "after": trusted_feedback_state_copy(before), "receipt": receipt, "replayed": True}
                 return result
-            candidate = planned["candidate"]
+            candidate = planned.get("candidate", self)
             after = PreparedFeedbackState(candidate.snapshot(), self, candidate)
-            result = trusted_feedback_mutation_candidate(before, after, planned["receipt"], False)
+            result = {"before": before, "after": after, "receipt": receipt, "replayed": False}
             return result
 
     def apply_validated(
@@ -1803,9 +1771,10 @@ class FeedbackStore:
         """
         with self.internal_lock:
             planned = self.internal_plan(request_id, validated_observations, lifecycle_status)
-            if not planned["replayed"]:
-                self.adopt(planned["candidate"])
-            result = {"receipt": planned["receipt"], "replayed": planned["replayed"]}
+            replayed = planned.get("replayed", False)
+            if not replayed:
+                self.adopt(planned.get("candidate", self))
+            result = {"receipt": planned.get("receipt", {}), "replayed": replayed}
             return result
 
     def internal_plan(
@@ -1814,7 +1783,11 @@ class FeedbackStore:
         validated_observations: tuple[dict, ...],
         lifecycle_status: LifecycleHandoffStatus,
     ) -> dict:
-        """Check the receipt and apply observations to an off-live clone."""
+        """Check the receipt and apply observations to an off-live clone.
+
+        A replay changes nothing, so its candidate is this live store itself;
+        callers publish a candidate only when ``replayed`` is false.
+        """
         require_text(request_id, "feedback request_id", MAX_REFERENCE_ID_BYTES)
         if not validated_observations or len(validated_observations) > MAX_FEEDBACK_OBSERVATIONS:
             raise InvalidRequestError("validated feedback observations must be a non-empty bounded tuple")
@@ -1823,14 +1796,16 @@ class FeedbackStore:
         signature = feedback_payload_signature(validated_observations)
         with self.internal_lock:
             lookup = self.internal_receipts.lookup(request_id, MutationOperation.RECORD_FEEDBACK, signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
-                result: dict = {"candidate": None, "receipt": receipt_lookup_receipt(lookup), "replayed": True}
+            # The ledger always reports an outcome; a missing one must not authorize a mutation.
+            lookup_outcome = lookup.get("outcome", ReceiptLookupOutcome.CONFLICT)
+            if lookup_outcome == ReceiptLookupOutcome.REPLAY:
+                result: dict = {"candidate": self, "receipt": receipt_lookup_receipt(lookup), "replayed": True}
                 return result
-            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+            if lookup_outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"feedback request_id is associated with a different observation: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+            if lookup_outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"feedback request is already in progress: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+            if lookup_outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"feedback request result expired and cannot be reapplied safely: {request_id}")
             candidate = self.clone()
             for observation in validated_observations:
@@ -1838,7 +1813,9 @@ class FeedbackStore:
             candidate.enforce_capacity()
             outcomes = {outcome.value: 0 for outcome in FeedbackOutcome}
             for observation in validated_observations:
-                outcomes[observation["outcome"].value] += 1
+                outcome_value = observation.get("outcome", FeedbackOutcome.CANDIDATE).value
+                outcomes[outcome_value] = outcomes.get(outcome_value, 0) + 1
+            created_at = max((observation.get("observed_at", "") for observation in validated_observations), key=utc_datetime)
             receipt = mutation_receipt(
                 sequence=candidate.internal_receipts.next_sequence,
                 request_id=request_id,
@@ -1852,7 +1829,7 @@ class FeedbackStore:
                     "lifecycle_status": lifecycle_status.value,
                 },
                 completion_state=ReceiptCompletionState.COMPLETED,
-                created_at=max((observation["observed_at"] for observation in validated_observations), key=utc_datetime),
+                created_at=created_at,
             )
             candidate.internal_receipts.record(receipt)
             result = {"candidate": candidate, "receipt": receipt, "replayed": False}
@@ -1896,11 +1873,12 @@ class FeedbackStore:
             statement_values = aged_values(statement_records, evaluation_time, self.internal_policy)
             relationship_values = aged_values(relationship_records, evaluation_time, self.internal_policy)
 
-        statement_accept = statement_values[FeedbackOutcome.ACCEPTED]
-        statement_reject = statement_values[FeedbackOutcome.REJECTED_QUALITY] + statement_values[FeedbackOutcome.REJECTED_STALE]
-        relationship_accept = relationship_values[FeedbackOutcome.ACCEPTED]
+        statement_accept = statement_values.get(FeedbackOutcome.ACCEPTED, 0.0)
+        statement_quality_reject = statement_values.get(FeedbackOutcome.REJECTED_QUALITY, 0.0)
+        statement_reject = statement_quality_reject + statement_values.get(FeedbackOutcome.REJECTED_STALE, 0.0)
+        relationship_accept = relationship_values.get(FeedbackOutcome.ACCEPTED, 0.0)
         relationship_reject = sum(
-            relationship_values[outcome]
+            relationship_values.get(outcome, 0.0)
             for outcome in (
                 FeedbackOutcome.REJECTED_QUALITY,
                 FeedbackOutcome.REJECTED_CONTEXT,
@@ -1910,12 +1888,15 @@ class FeedbackStore:
         )
         statement_samples = statement_accept + statement_reject
         relationship_samples = relationship_accept + relationship_reject
-        statement_available = statement_samples >= self.internal_policy["minimum_verdict_samples"]
-        relationship_available = relationship_samples >= self.internal_policy["minimum_verdict_samples"]
+        minimum_samples = self.internal_policy.get("minimum_verdict_samples", 0)
+        statement_available = statement_samples >= minimum_samples
+        relationship_available = relationship_samples >= minimum_samples
+        prior_accept = self.internal_policy.get("prior_accept", 0.0)
+        prior_reject = self.internal_policy.get("prior_reject", 0.0)
 
         def posterior(accepted: float, rejected: float) -> float:
-            numerator = accepted + self.internal_policy["prior_accept"]
-            denominator = accepted + rejected + self.internal_policy["prior_accept"] + self.internal_policy["prior_reject"]
+            numerator = accepted + prior_accept
+            denominator = accepted + rejected + prior_accept + prior_reject
             result = numerator / denominator
             return result
 
@@ -1961,12 +1942,12 @@ class FeedbackStore:
         result = False
         with self.internal_lock:
             for exclusion in self.internal_stale_exclusions.values():
-                if exclusion["statement_id"] != statement_id:
+                if exclusion.get("statement_id", "") != statement_id:
                     continue
-                if not exclusion["generation_available"]:
+                if not exclusion.get("generation_available", False):
                     result = not generation_available
                     break
-                if generation_available and current_generation >= exclusion["generation"]:
+                if generation_available and current_generation >= exclusion.get("generation", 0):
                     result = True
                     break
         return result
@@ -1988,19 +1969,20 @@ class FeedbackStore:
         internal_integer(limit, "feedback inspection limit", 1, MAX_INSPECTION_RECORDS)
         with self.internal_lock:
             statement_values = sorted(
-                self.internal_statement_records.values(), key=lambda record: statement_feedback_key_fingerprint(record["key"])
+                self.internal_statement_records.values(),
+                key=lambda record: statement_feedback_key_fingerprint(record.get("key", {})),
             )
             relationship_values = sorted(
                 self.internal_relationship_records.values(),
-                key=lambda record: relationship_feedback_key_fingerprint(record["key"]),
+                key=lambda record: relationship_feedback_key_fingerprint(record.get("key", {})),
             )
             receipt_snapshot = self.internal_receipts.snapshot()
             receipt_values = sorted(
-                receipt_snapshot["receipts"],
-                key=lambda value: value["sequence"],
+                receipt_snapshot.get("receipts", []),
+                key=lambda value: value.get("sequence", 0),
                 reverse=True,
             )
-            receipt_tombstones = receipt_snapshot["tombstones"]
+            receipt_tombstones = receipt_snapshot.get("tombstones", [])
             result = {
                 "policy_fingerprint": feedback_policy_fingerprint(self.internal_policy),
                 "statement_record_count": len(statement_values),
@@ -2011,13 +1993,13 @@ class FeedbackStore:
                 "receipt_tombstone_count": len(receipt_tombstones),
                 "receipts": [
                     {
-                        "diagnostic_id": internal_diagnostic_id(value["request_id"]),
-                        "sequence": value["sequence"],
-                        "result_code": value["result_code"],
-                        "completion_state": value["completion_state"],
-                        "observation_count": value["result"].get("observation_count", 0),
-                        "outcomes": value["result"].get("outcomes", {}),
-                        "lifecycle_status": value["result"].get("lifecycle_status", ""),
+                        "diagnostic_id": internal_diagnostic_id(value.get("request_id", "")),
+                        "sequence": value.get("sequence", 0),
+                        "result_code": value.get("result_code", ""),
+                        "completion_state": value.get("completion_state", ""),
+                        "observation_count": value.get("result", {}).get("observation_count", 0),
+                        "outcomes": value.get("result", {}).get("outcomes", {}),
+                        "lifecycle_status": value.get("result", {}).get("lifecycle_status", ""),
                     }
                     for value in receipt_values[:limit]
                 ],
@@ -2028,22 +2010,22 @@ class FeedbackStore:
                 "stale_exclusion_evictions": self.internal_stale_exclusion_evictions,
                 "statements": [
                     {
-                        "diagnostic_id": internal_diagnostic_id(statement_feedback_key_fingerprint(record["key"])),
-                        "statistics": feedback_statistics_to_dict(record["raw"]),
-                        "bucket_count": len(record["buckets"]),
-                        "last_outcome": record["last_outcome"].value,
-                        "last_observed_at": record["last_observed_at"],
+                        "diagnostic_id": internal_diagnostic_id(statement_feedback_key_fingerprint(record.get("key", {}))),
+                        "statistics": feedback_statistics_to_dict(record.get("raw", {})),
+                        "bucket_count": len(record.get("buckets", ())),
+                        "last_outcome": record.get("last_outcome", FeedbackOutcome.CANDIDATE).value,
+                        "last_observed_at": record.get("last_observed_at", ""),
                     }
                     for record in statement_values[:limit]
                 ],
                 "omitted_statement_count": max(0, len(statement_values) - limit),
                 "relationships": [
                     {
-                        "diagnostic_id": internal_diagnostic_id(relationship_feedback_key_fingerprint(record["key"])),
-                        "statistics": feedback_statistics_to_dict(record["raw"]),
-                        "bucket_count": len(record["buckets"]),
-                        "last_outcome": record["last_outcome"].value,
-                        "last_observed_at": record["last_observed_at"],
+                        "diagnostic_id": internal_diagnostic_id(relationship_feedback_key_fingerprint(record.get("key", {}))),
+                        "statistics": feedback_statistics_to_dict(record.get("raw", {})),
+                        "bucket_count": len(record.get("buckets", ())),
+                        "last_outcome": record.get("last_outcome", FeedbackOutcome.CANDIDATE).value,
+                        "last_observed_at": record.get("last_observed_at", ""),
                     }
                     for record in relationship_values[:limit]
                 ],
@@ -2069,7 +2051,7 @@ def negative_resolution_key(
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise InvalidRequestError("negative scope must match query identity scope") from error
-    if validated_query_identity["scope"] != validated_scope:
+    if validated_query_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("negative scope must match query identity scope")
     validated_constraint = internal_fingerprint(constraint_fingerprint, "negative constraint_fingerprint")
     validated_plan = internal_fingerprint(resolver_plan_fingerprint, "negative resolver_plan_fingerprint")
@@ -2089,12 +2071,12 @@ def negative_resolution_key(
 def validate_negative_resolution_key(value: object) -> dict:
     data = exact_mapping(value, "NegativeResolutionKey", NEGATIVE_RESOLUTION_KEY_FIELDS)
     result = negative_resolution_key(
-        data["query_identity"],
-        data["scope"],
-        data["constraint_fingerprint"],
-        data["resolver_plan_fingerprint"],
-        data["capability_readiness_fingerprint"],
-        data["policy_fingerprint"],
+        data.get("query_identity", {}),
+        data.get("scope", {}),
+        data.get("constraint_fingerprint", ""),
+        data.get("resolver_plan_fingerprint", ""),
+        data.get("capability_readiness_fingerprint", ""),
+        data.get("policy_fingerprint", ""),
     )
     return result
 
@@ -2102,12 +2084,12 @@ def validate_negative_resolution_key(value: object) -> dict:
 def negative_resolution_key_to_dict(value: object) -> dict:
     current = validate_negative_resolution_key(value)
     result = {
-        "query_identity": query_identity_to_dict(current["query_identity"]),
-        "scope": scope_key_to_dict(current["scope"]),
-        "constraint_fingerprint": current["constraint_fingerprint"],
-        "resolver_plan_fingerprint": current["resolver_plan_fingerprint"],
-        "capability_readiness_fingerprint": current["capability_readiness_fingerprint"],
-        "policy_fingerprint": current["policy_fingerprint"],
+        "query_identity": query_identity_to_dict(current.get("query_identity", {})),
+        "scope": scope_key_to_dict(current.get("scope", {})),
+        "constraint_fingerprint": current.get("constraint_fingerprint", ""),
+        "resolver_plan_fingerprint": current.get("resolver_plan_fingerprint", ""),
+        "capability_readiness_fingerprint": current.get("capability_readiness_fingerprint", ""),
+        "policy_fingerprint": current.get("policy_fingerprint", ""),
     }
     return result
 
@@ -2121,9 +2103,9 @@ def negative_resolution_key_fingerprint(value: object) -> str:
 def negative_resolution_key_relationship_fingerprint(value: object) -> str:
     current = validate_negative_resolution_key(value)
     data = {
-        "query_identity": query_identity_to_dict(current["query_identity"]),
-        "scope": scope_key_to_dict(current["scope"]),
-        "constraint_fingerprint": current["constraint_fingerprint"],
+        "query_identity": query_identity_to_dict(current.get("query_identity", {})),
+        "scope": scope_key_to_dict(current.get("scope", {})),
+        "constraint_fingerprint": current.get("constraint_fingerprint", ""),
     }
     result = canonical_fingerprint(data)
     return result
@@ -2160,6 +2142,11 @@ def negative_resolution(
 
 
 def empty_negative_resolution() -> dict:
+    """Return a fresh, validated copy of the documented null NegativeResolution.
+
+    Lookup misses and unavailable negative keys use this concrete null object
+    instead of an absent value; each call returns an isolated record.
+    """
     key = negative_resolution_key(
         query_identity=query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
         scope=EMPTY_SCOPE_KEY,
@@ -2180,11 +2167,11 @@ def empty_negative_resolution() -> dict:
 def validate_negative_resolution(value: object) -> dict:
     data = exact_mapping(value, "NegativeResolution", NEGATIVE_RESOLUTION_FIELDS)
     result = negative_resolution(
-        data["key"],
-        data["reason"],
-        data["created_at"],
-        data["expires_at"],
-        data["hit_count"],
+        data.get("key", {}),
+        data.get("reason", NegativeResolutionReason.INSUFFICIENT_KNOWLEDGE),
+        data.get("created_at", ""),
+        data.get("expires_at", ""),
+        data.get("hit_count", 0),
     )
     return result
 
@@ -2268,14 +2255,14 @@ class NegativeResolutionStore:
             entry = heapq_heappop(heap)
             if self.live_heap_entry(entry):
                 self.remove_record(entry[1])
-                self.internal_metrics["expiries"] += 1
+                self.internal_metrics["expiries"] = self.internal_metrics.get("expiries", 0) + 1
 
     def invalidate_related(self, fingerprint: str, relationship: str) -> None:
         """Remove every other record of this relationship (changed plan or policy state)."""
         stale = [member for member in self.internal_relationships.get(relationship, {}) if member != fingerprint]
         for member in stale:
             self.remove_record(member)
-            self.internal_metrics["invalidations"] += 1
+            self.internal_metrics["invalidations"] = self.internal_metrics.get("invalidations", 0) + 1
         # Removed records leave heap entries behind; rebuild once they outnumber
         # the live records, so the heap stays proportional to the store.
         if len(self.internal_expiry_heap) > 2 * len(self.internal_records):
@@ -2291,17 +2278,17 @@ class NegativeResolutionStore:
         fingerprint = negative_resolution_key_fingerprint(validated_key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
         with self.internal_lock:
-            self.internal_metrics["lookups"] += 1
+            self.internal_metrics["lookups"] = self.internal_metrics.get("lookups", 0) + 1
             self.expire(at)
             self.invalidate_related(fingerprint, relationship)
             if fingerprint not in self.internal_records:
-                self.internal_metrics["misses"] += 1
+                self.internal_metrics["misses"] = self.internal_metrics.get("misses", 0) + 1
                 result = negative_lookup(False)
                 return result
             record = self.internal_records.get(fingerprint, {})
             updated = negative_resolution_with_changes(record, {"hit_count": record.get("hit_count", 0) + 1})
             self.internal_records[fingerprint] = updated
-            self.internal_metrics["hits"] += 1
+            self.internal_metrics["hits"] = self.internal_metrics.get("hits", 0) + 1
             result = negative_lookup(True, updated)
             return result
 
@@ -2330,12 +2317,12 @@ class NegativeResolutionStore:
             self.internal_record_relationships[fingerprint] = relationship
             self.internal_relationships.setdefault(relationship, {})[fingerprint] = True
             heapq_heappush(self.internal_expiry_heap, (utc_datetime(record.get("expires_at", "")), fingerprint))
-            self.internal_metrics["admissions"] += 1
+            self.internal_metrics["admissions"] = self.internal_metrics.get("admissions", 0) + 1
             while len(self.internal_records) > self.max_records:
                 entry = heapq_heappop(self.internal_expiry_heap)
                 if self.live_heap_entry(entry):
                     self.remove_record(entry[1])
-                    self.internal_metrics["evictions"] += 1
+                    self.internal_metrics["evictions"] = self.internal_metrics.get("evictions", 0) + 1
             result = validate_negative_resolution(record)
             return result
 
@@ -2361,7 +2348,7 @@ class NegativeResolutionStore:
             self.internal_record_relationships.clear()
             self.internal_relationships.clear()
             self.internal_expiry_heap.clear()
-            self.internal_metrics["invalidations"] += removed
+            self.internal_metrics["invalidations"] = self.internal_metrics.get("invalidations", 0) + removed
 
     def inspect(self, limit: int = MAX_INSPECTION_RECORDS) -> dict:
         internal_integer(limit, "negative inspection limit", 1, MAX_INSPECTION_RECORDS)
@@ -2376,10 +2363,10 @@ class NegativeResolutionStore:
                 "records": [
                     {
                         "diagnostic_id": internal_diagnostic_id(fingerprint),
-                        "reason": record["reason"].value,
-                        "created_at": record["created_at"],
-                        "expires_at": record["expires_at"],
-                        "hit_count": record["hit_count"],
+                        "reason": record.get("reason", NegativeResolutionReason.INSUFFICIENT_KNOWLEDGE).value,
+                        "created_at": record.get("created_at", ""),
+                        "expires_at": record.get("expires_at", ""),
+                        "hit_count": record.get("hit_count", 0),
                     }
                     for fingerprint, record in records[:limit]
                 ],

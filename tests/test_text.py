@@ -1,6 +1,6 @@
 """Tests for text processing."""
 
-from pytest import MonkeyPatch as pytest_MonkeyPatch, raises as pytest_raises
+from pytest import raises as pytest_raises
 
 from engram import text as text_module
 from engram.constants import DEFAULT_STOPWORDS
@@ -107,7 +107,7 @@ def test_extract_keywords_custom_stopwords() -> None:
     assert result == ["word"]
 
 
-def test_required_nltk_failure_is_not_silently_degraded(monkeypatch: pytest_MonkeyPatch) -> None:
+def test_required_nltk_failure_is_not_silently_degraded(monkeypatch) -> None:
     def unavailable(internal_text: str) -> list[str]:
         raise LookupError("required tokenizer missing")
 

@@ -7,10 +7,10 @@ from engram.config import engram_config
 from engram.constants import DEFAULT_STOPWORDS
 from engram.core import Engram
 from engram.pattern import PatternMatcher
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES, SpacyPipelines
 from engram.text import extract_keywords_spacy, lemmatize_text_spacy
 
-requires_model = pytest_mark.skipif(not get_nlp(), reason="en_core_web_sm not installed")
+requires_model = pytest_mark.skipif(not SPACY_PIPELINES.pipeline(), reason="en_core_web_sm not installed")
 
 
 def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
@@ -22,12 +22,12 @@ def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
 
     monkeypatch.setattr(spacy_setup, "spacy_load", missing_model)
 
-    assert spacy_setup.internal_load("missing_model", ("ner",)) == ()
+    assert SpacyPipelines("missing_model").pipeline(("ner",)) == ()
     assert calls == [("missing_model", ["ner"])]
 
 
 def test_enabled_spacy_feature_fails_transport_neutral_preflight(monkeypatch):
-    monkeypatch.setattr("engram.core.get_nlp", lambda disable=(): ())
+    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", lambda disable=(): ())
 
     with pytest_raises(ValueError, match="pre-provisioned English model"):
         Engram(config=engram_config(use_spacy_facts=True))
@@ -93,7 +93,7 @@ def test_spacy_fact_learning_learns_relational_fact():
     result = engram.pattern_query("Einstein developed the theory of relativity")
 
     assert result[2] == "Tell me more."
-    patterns = [s["pattern"] for s in engram.statements]
+    patterns = [stored.get("pattern", "") for stored in engram.statements]
     assert "EINSTEIN" in patterns
 
 
@@ -107,5 +107,6 @@ def test_spacy_fact_learning_default_extractor_skips_relational_fact():
 
     # Nothing learned, so the catch-all answers normally.
     assert result[2] == "Tell me more."
-    patterns = [s["pattern"] for s in engram.statements]
+    assert all("pattern" in stored for stored in engram.statements)
+    patterns = [stored.get("pattern", "") for stored in engram.statements]
     assert "EINSTEIN" not in patterns

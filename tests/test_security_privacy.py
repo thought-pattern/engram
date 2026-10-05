@@ -25,8 +25,7 @@ from engram.errors import InvalidRequestError
 from engram.graph import MemGraphConnection
 from engram.mcp_server import MCPConversationService
 from engram.service import EngramCore, service_request_signature
-
-from .bolt_stub import BoltStub
+from tests.bolt_stub import BoltStub
 
 
 def test_shared_service_rejects_oversized_request_and_identity_fields_before_state_change() -> None:
@@ -88,7 +87,9 @@ def test_conversation_and_mcp_share_the_request_bound() -> None:
     with pytest_raises(InvalidRequestError, match="text exceeds"):
         service.send("x" * (MAX_REQUEST_BYTES + 1))
 
-    assert service.inspect()["turn_count"] == 0
+    snapshot = service.inspect()
+    assert "turn_count" in snapshot
+    assert snapshot.get("turn_count", 0) == 0
     service.stop()
 
 
@@ -185,7 +186,9 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
 
     engine = Engram()
     engine.internal_graph_client = FailingGraph()
-    engine.config["graph"]["enabled"] = True
+    assert "graph" in engine.config
+    graph_config = engine.config.get("graph", {})
+    graph_config["enabled"] = True
     core = EngramCore(engine)
     engine = core.engram
 
@@ -197,14 +200,19 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
         assert engine.structured_proposition_projections("France") == []
         resolved = core.resolve_request("What is the capital of France?", "database-failure")
         started = core.start_conversation(user_id="alice")
-        turn = core.chat(started["user_id"], "What is the capital of France?")
+        started_user_id = started.get("user_id", "")
+        assert started_user_id
+        turn = core.chat(started_user_id, "What is the capital of France?")
 
     visible = f"{resolved}{turn}"
     assert secret not in visible
     assert secret in caplog.text
     assert "Graph read failed" in caplog.text
     assert "RuntimeError" in caplog.text
-    assert resolved["outcome"] == ResolutionOutcome.MISS
-    assert all(item["state"] != ResolverState.FAILED for item in resolved["resolver_results"])
-    assert turn["response"] == ""
+    assert {"outcome", "resolver_results"} <= resolved.keys()
+    assert resolved.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.MISS
+    # A resolver result without a state reads as FAILED, so it still fails the check.
+    assert all(item.get("state", ResolverState.FAILED) != ResolverState.FAILED for item in resolved.get("resolver_results", ()))
+    assert "response" in turn
+    assert turn.get("response", "") == ""
     core.close()

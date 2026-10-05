@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Read-only check that a graph's schema is compatible with Engram's."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
@@ -18,19 +17,6 @@ from engram.schema_catalog import packaged_schema
 SCHEMA_FILE = packaged_schema()
 
 
-def connection_settings(config_path: str, host: str, port: int) -> dict:
-    """Resolve the verification connection without importing another script."""
-
-    configured = load_config(config_path).get("graph", {}) or {}
-    result = {
-        "host": host or configured.get("host", "localhost"),
-        "port": port or configured.get("port", 7687),
-        "username": configured.get("username", ""),
-        "password": configured.get("password", ""),
-    }
-    return result
-
-
 def main() -> None:
     """Check compatibility without issuing writes."""
     parser = argparse_ArgumentParser(description="Check that a graph's schema is compatible with Engram's")
@@ -44,7 +30,14 @@ def main() -> None:
     )
     arguments = parser.parse_args()
 
-    settings = connection_settings(arguments.config, arguments.host, arguments.port)
+    # Verification connection: command-line overrides win over the configured graph endpoint.
+    configured = load_config(arguments.config).get("graph", {}) or {}
+    settings = {
+        "host": arguments.host or configured.get("host", "localhost"),
+        "port": arguments.port or configured.get("port", 7687),
+        "username": configured.get("username", ""),
+        "password": configured.get("password", ""),
+    }
     connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
     try:
         if not connection.connect():

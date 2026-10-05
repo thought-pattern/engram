@@ -14,15 +14,13 @@ from engram.identity import (
     QualifierKind,
     QueryOperator,
     RetrievalOrigin,
-    build_retrieval_representation,
-    build_scoped_retrieval_key,
-    build_standalone_identity,
     entity_reference,
     extract_entities_and_identifiers,
     extract_lexical_terms,
     extract_operator,
     extract_qualifiers,
     extract_relation_surface,
+    extract_standalone_identity,
     identity_qualifier,
     normalize_retrieval_key,
     query_identity,
@@ -39,6 +37,7 @@ from engram.identity import (
     scope_key_signature,
     scope_key_to_dict,
     scoped_retrieval_key_from_dict,
+    scoped_retrieval_key_from_text,
     scoped_retrieval_key_to_dict,
     scoped_retrieval_key_to_json,
     validate_authoritative_identity,
@@ -49,11 +48,12 @@ from engram.identity import (
 )
 
 NORMALIZATION_FIXTURE = Path(__file__).parent / "fixtures" / "identity" / "normalization.json"
-
-
-def fixture() -> dict:
-    result = json_loads(NORMALIZATION_FIXTURE.read_text(encoding="utf-8"))
-    return result
+# The external corpus is decoded once at ingress; both case lists are required, so a malformed corpus fails collection.
+NORMALIZATION_CORPUS = json_loads(NORMALIZATION_FIXTURE.read_text(encoding="utf-8"))
+NORMALIZATION_CASES = NORMALIZATION_CORPUS.get("normalization_cases", [])
+IDENTITY_CONTRASTS = NORMALIZATION_CORPUS.get("identity_contrasts", [])
+if not NORMALIZATION_CASES or not IDENTITY_CONTRASTS:
+    raise ValueError("identity normalization corpus must define normalization_cases and identity_contrasts")
 
 
 def none_paths(value, path: str = "root") -> list[str]:
@@ -63,7 +63,7 @@ def none_paths(value, path: str = "root") -> list[str]:
     if isinstance(value, dict):
         result = [nested for key, item in value.items() for nested in none_paths(item, f"{path}.{key}")]
         return result
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, list | tuple | set):
         result = [nested for index, item in enumerate(value) for nested in none_paths(item, f"{path}[{index}]")]
         return result
     result = []
@@ -114,7 +114,7 @@ def test_scope_key_scope_validation_revalidates_and_copies_mutable_input() -> No
     assert validated == source
     assert validated is not source
     source["namespace"] = "mutated"
-    assert validated["namespace"] == "support"
+    assert validated.get("namespace", "") == "support"
 
 
 def test_identity_contracts_component_and_query_identity_codecs_round_trip() -> None:
@@ -139,23 +139,24 @@ def test_identity_contracts_component_and_query_identity_codecs_round_trip() -> 
 def test_identity_contracts_unknown_operator_and_empty_relation_are_concrete() -> None:
     query = query_identity(canonical_form="opaque request")
 
-    assert query["operator"] == QueryOperator.UNKNOWN
-    assert query["entities"] == ()
-    assert query["relation"] == relation_reference()
-    assert query["qualifiers"] == ()
-    assert query["lexical_terms"] == ()
-    assert query["scope"] == scope_key()
+    assert {"operator", "entities", "qualifiers", "lexical_terms"} <= set(query)
+    assert query.get("operator", QueryOperator.UNKNOWN) == QueryOperator.UNKNOWN
+    assert query.get("entities", ()) == ()
+    assert query.get("relation", {}) == relation_reference()
+    assert query.get("qualifiers", ()) == ()
+    assert query.get("lexical_terms", ()) == ()
+    assert query.get("scope", {}) == scope_key()
 
 
 def test_identity_contracts_reject_unknown_fields() -> None:
-    payload = query_identity_to_dict(build_standalone_identity("Who created Python?"))
+    payload = query_identity_to_dict(extract_standalone_identity("Who created Python?"))
     payload["unexpected"] = "value"
     with pytest_raises(IdentityValidationError, match="unsupported fields"):
         query_identity_from_dict(payload)
 
 
 @pytest_mark.parametrize(
-    "factory",
+    "malformed_call",
     [
         lambda: entity_reference("Ada Lovelace", "not a canonical id"),
         lambda: relation_reference("", "predicate:born"),
@@ -164,9 +165,9 @@ def test_identity_contracts_reject_unknown_fields() -> None:
         lambda: query_identity(canonical_form="normalized", lexical_terms=("two words",)),
     ],
 )
-def test_identity_contracts_malformed_components_fail_without_reinterpretation(factory) -> None:
+def test_identity_contracts_malformed_components_fail_without_reinterpretation(malformed_call) -> None:
     with pytest_raises(IdentityValidationError):
-        factory()
+        malformed_call()
 
 
 def test_identity_contracts_leaf_records_are_exact_revalidated_dictionaries() -> None:
@@ -174,30 +175,32 @@ def test_identity_contracts_leaf_records_are_exact_revalidated_dictionaries() ->
     qualifier = identity_qualifier(QualifierKind.HISTORICAL, "historical")
     query = query_identity(canonical_form="alan turing", entities=(entity,), qualifiers=(qualifier,))
 
+    query_entity = query.get("entities", ())[0]
+    query_qualifier = query.get("qualifiers", ())[0]
     assert type(entity) is dict
     assert type(query) is dict
-    assert type(query["entities"][0]) is dict
-    assert type(query["qualifiers"][0]) is dict
+    assert type(query_entity) is dict
+    assert type(query_qualifier) is dict
     entity["surface"] = "mutated"
-    assert query["entities"][0]["surface"] == "Alan Turing"
+    assert query_entity.get("surface", "") == "Alan Turing"
 
-    malformed_entity = dict(query["entities"][0])
+    malformed_entity = dict(query_entity)
     malformed_entity["unexpected"] = "value"
     with pytest_raises(IdentityValidationError, match="unsupported fields"):
         validate_entity_reference(malformed_entity)
 
-    malformed_qualifier = dict(query["qualifiers"][0])
+    malformed_qualifier = dict(query_qualifier)
     malformed_qualifier["value"] = "Not Normalized"
     with pytest_raises(IdentityValidationError, match="already be normalized"):
         validate_identity_qualifier(malformed_qualifier)
 
 
-@pytest_mark.parametrize("case", fixture()["normalization_cases"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", NORMALIZATION_CASES, ids=lambda case: case.get("id", ""))
 def test_retrieval_normalization_golden_normalization_cases(case: dict) -> None:
     assert normalize_retrieval_key(case.get("input", "")) == case.get("expected", "")
 
 
-@pytest_mark.parametrize("case", fixture()["normalization_cases"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", NORMALIZATION_CASES, ids=lambda case: case.get("id", ""))
 def test_retrieval_normalization_normalization_is_idempotent(case: dict) -> None:
     once = normalize_retrieval_key(case.get("input", ""))
     assert normalize_retrieval_key(once) == once
@@ -224,21 +227,25 @@ def test_retrieval_normalization_identity_bearing_symbols_survive_normalization(
 
 
 def test_scoped_retrieval_and_representations_scoped_key_codec_and_scope_separation() -> None:
-    support = build_scoped_retrieval_key(scope_key("support", "pro"), "What’s the port?")
-    billing = build_scoped_retrieval_key(scope_key("billing", "pro"), "What is the port?")
+    support = scoped_retrieval_key_from_text(scope_key("support", "pro"), "What’s the port?")
+    billing = scoped_retrieval_key_from_text(scope_key("billing", "pro"), "What is the port?")
 
     assert type(support) is dict
-    assert support["normalized_key"] == "what is the port"
+    assert support.get("normalized_key", "") == "what is the port"
     assert support != billing
     assert scoped_retrieval_key_from_dict(scoped_retrieval_key_to_dict(support)) == support
 
     validated = validate_scoped_retrieval_key(support)
     assert validated is not support
-    assert validated["scope"] is not support["scope"]
+    assert "scope" in validated
+    assert "scope" in support
+    validated_scope = validated.get("scope", {})
+    support_scope = support.get("scope", {})
+    assert validated_scope is not support_scope
     support["normalized_key"] = "mutated"
-    support["scope"]["namespace"] = "mutated"
-    assert validated["normalized_key"] == "what is the port"
-    assert validated["scope"]["namespace"] == "support"
+    support_scope["namespace"] = "mutated"
+    assert validated.get("normalized_key", "") == "what is the port"
+    assert validated_scope.get("namespace", "") == "support"
 
 
 def test_scoped_retrieval_and_representations_representation_deduplicates_by_normalized_key_and_retains_provenance() -> None:
@@ -253,13 +260,17 @@ def test_scoped_retrieval_and_representations_representation_deduplicates_by_nor
     bindings = retrieval_representation_bindings(retrieval, scope_key("support", "pro"))
 
     assert all(type(binding) is dict for binding in bindings)
-    assert retrieval["aliases"] == ("Postgres default port",)
-    assert [binding["origin"] for binding in bindings] == [RetrievalOrigin.CANONICAL, RetrievalOrigin.ALIAS]
-    assert [binding["representation"] for binding in bindings] == [
+    assert all("origin" in binding for binding in bindings)
+    assert retrieval.get("aliases", ()) == ("Postgres default port",)
+    assert [binding.get("origin", RetrievalOrigin.CANONICAL) for binding in bindings] == [
+        RetrievalOrigin.CANONICAL,
+        RetrievalOrigin.ALIAS,
+    ]
+    assert [binding.get("representation", "") for binding in bindings] == [
         "What's the default PostgreSQL port?",
         "Postgres default port",
     ]
-    assert len({scoped_retrieval_key_to_json(binding["key"]) for binding in bindings}) == 2
+    assert len({scoped_retrieval_key_to_json(binding.get("key", {})) for binding in bindings}) == 2
     assert retrieval_representation_from_dict(retrieval_representation_to_dict(retrieval)) == retrieval
     assert "pattern_aliases" not in retrieval_representation_to_dict(retrieval)
     assert "response" not in retrieval_representation_to_dict(retrieval)
@@ -274,7 +285,7 @@ def test_scoped_retrieval_and_representations_representation_enforces_bounds_and
             aliases=tuple(f"alias {index}" for index in range(MAX_RETRIEVAL_ALIASES + 1)),
         )
     with pytest_raises(IdentityValidationError, match="non-whitespace"):
-        build_retrieval_representation("   ")
+        retrieval_representation("   ")
 
 
 def test_scoped_retrieval_and_representations_maximum_alias_payload_round_trips() -> None:
@@ -336,14 +347,15 @@ def test_identity_extraction_entity_and_technical_identifier_extraction_is_surfa
     entities = extract_entities_and_identifiers(
         "Compare Ada Lovelace with PostgreSQL v16.2 at config/engram.yml after RFC 7231, error E-1234, and C++."
     )
-    surfaces = [entity["surface"] for entity in entities]
+    surfaces = [entity.get("surface", "") for entity in entities]
 
     assert "Ada Lovelace" in surfaces
     assert "PostgreSQL" in surfaces
     assert "v16.2" in surfaces
     assert "config/engram.yml" in surfaces
     assert "RFC 7231" in surfaces
-    assert all(entity["canonical_id"] == "" for entity in entities)
+    assert all("canonical_id" in entity for entity in entities)
+    assert all(entity.get("canonical_id", "") == "" for entity in entities)
 
 
 @pytest_mark.parametrize(
@@ -364,22 +376,31 @@ def test_identity_extraction_entity_and_technical_identifier_extraction_is_surfa
 def test_identity_extraction_relation_extraction_abstains_when_uncertain(input_text: str, expected: str) -> None:
     operator = extract_operator(input_text)
     entities = extract_entities_and_identifiers(input_text)
-    assert extract_relation_surface(input_text, operator, entities)["surface"] == expected
+    relation = extract_relation_surface(input_text, operator, entities)
+    assert "surface" in relation
+    assert relation.get("surface", "") == expected
 
 
 def test_identity_extraction_standalone_builder_is_deterministic_and_preserves_semantic_contrasts() -> None:
     scope = scope_key("biography", "public")
-    when = build_standalone_identity("When was Ada Lovelace born?", scope)
-    where = build_standalone_identity("Where was Ada Lovelace born?", scope)
+    when = extract_standalone_identity("When was Ada Lovelace born?", scope)
+    where = extract_standalone_identity("Where was Ada Lovelace born?", scope)
 
-    assert build_standalone_identity("When was Ada Lovelace born?", scope) == when
-    assert when["operator"] == QueryOperator.WHEN
-    assert where["operator"] == QueryOperator.WHERE
-    assert when["lexical_terms"] == where["lexical_terms"]
-    assert when["canonical_form"] != where["canonical_form"]
-    assert build_scoped_retrieval_key(scope, when["canonical_form"]) != build_scoped_retrieval_key(
+    when_canonical_form = when.get("canonical_form", "")
+    where_canonical_form = where.get("canonical_form", "")
+
+    assert extract_standalone_identity("When was Ada Lovelace born?", scope) == when
+    assert when.get("operator", QueryOperator.UNKNOWN) == QueryOperator.WHEN
+    assert where.get("operator", QueryOperator.UNKNOWN) == QueryOperator.WHERE
+    assert "lexical_terms" in when
+    assert "lexical_terms" in where
+    assert when.get("lexical_terms", ()) == where.get("lexical_terms", ())
+    assert when_canonical_form
+    assert where_canonical_form
+    assert when_canonical_form != where_canonical_form
+    assert scoped_retrieval_key_from_text(scope, when_canonical_form) != scoped_retrieval_key_from_text(
         scope,
-        where["canonical_form"],
+        where_canonical_form,
     )
 
 
@@ -405,13 +426,13 @@ def test_authoritative_identity_valid_authoritative_identity_is_preserved_exactl
     assert validated is authoritative
     assert decoded_identity == authoritative
     assert decoded_retrieval == retrieval
-    assert decoded_identity["entities"][0]["surface"] == "Alan Turing"
-    assert decoded_retrieval["canonical"] == "When was Alan Turing born?"
+    assert decoded_identity.get("entities", ())[0].get("surface", "") == "Alan Turing"
+    assert decoded_retrieval.get("canonical", "") == "When was Alan Turing born?"
 
 
 def test_authoritative_identity_authoritative_contract_rejects_null_malformed_and_oversized_input() -> None:
-    identity = query_identity_to_dict(build_standalone_identity("Who created Python?"))
-    retrieval = retrieval_representation_to_dict(build_retrieval_representation("Who created Python?"))
+    identity = query_identity_to_dict(extract_standalone_identity("Who created Python?"))
+    retrieval = retrieval_representation_to_dict(retrieval_representation("Who created Python?"))
 
     identity["relation"] = json_loads("null")
     with pytest_raises(IdentityValidationError, match="identity relation must be an object"):
@@ -421,54 +442,61 @@ def test_authoritative_identity_authoritative_contract_rejects_null_malformed_an
         query_identity(canonical_form="x" * (MAX_CANONICAL_FORM_BYTES + 1))
 
 
-@pytest_mark.parametrize("case", fixture()["identity_contrasts"], ids=lambda case: case["id"])
+@pytest_mark.parametrize("case", IDENTITY_CONTRASTS, ids=lambda case: case.get("id", ""))
 def test_identity_conformance_corpus_adversarial_pairs_produce_distinct_scoped_keys(case: dict) -> None:
     scope = scope_key("conformance", "v1")
-    left = build_standalone_identity(case.get("left", ""), scope)
-    right = build_standalone_identity(case.get("right", ""), scope)
+    left = extract_standalone_identity(case.get("left", ""), scope)
+    right = extract_standalone_identity(case.get("right", ""), scope)
 
     assert left != right
-    assert build_scoped_retrieval_key(scope, left["canonical_form"]) != build_scoped_retrieval_key(
+    assert scoped_retrieval_key_from_text(scope, left.get("canonical_form", "")) != scoped_retrieval_key_from_text(
         scope,
-        right["canonical_form"],
+        right.get("canonical_form", ""),
     )
 
 
 def test_identity_conformance_corpus_same_language_in_different_scopes_produces_distinct_keys() -> None:
     request = "What are the support hours?"
-    support = build_standalone_identity(request, scope_key("support", "pro"))
-    billing = build_standalone_identity(request, scope_key("billing", "pro"))
+    support = extract_standalone_identity(request, scope_key("support", "pro"))
+    billing = extract_standalone_identity(request, scope_key("billing", "pro"))
+    support_canonical_form = support.get("canonical_form", "")
+    billing_canonical_form = billing.get("canonical_form", "")
+    support_scope = support.get("scope", {})
+    billing_scope = billing.get("scope", {})
 
-    assert support["canonical_form"] == billing["canonical_form"]
-    assert support["scope"] != billing["scope"]
-    assert build_scoped_retrieval_key(support["scope"], support["canonical_form"]) != build_scoped_retrieval_key(
-        billing["scope"], billing["canonical_form"]
+    assert support_canonical_form
+    assert support_canonical_form == billing_canonical_form
+    assert support_scope
+    assert billing_scope
+    assert support_scope != billing_scope
+    assert scoped_retrieval_key_from_text(support_scope, support_canonical_form) != scoped_retrieval_key_from_text(
+        billing_scope, billing_canonical_form
     )
 
 
 def test_identity_conformance_corpus_generated_scoped_key_properties() -> None:
-    requests = tuple(case["input"] for case in fixture()["normalization_cases"])
+    requests = tuple(case.get("input", "") for case in NORMALIZATION_CASES)
     scopes = (scope_key(), scope_key("support", "free"), scope_key("support", "pro"))
 
     for request in requests:
-        keys = tuple(build_scoped_retrieval_key(scope, request) for scope in scopes)
+        keys = tuple(scoped_retrieval_key_from_text(scope, request) for scope in scopes)
         assert len({scoped_retrieval_key_to_json(key) for key in keys}) == len(scopes)
         for key in keys:
             assert scoped_retrieval_key_from_dict(scoped_retrieval_key_to_dict(key)) == key
-            assert build_scoped_retrieval_key(key["scope"], key["normalized_key"]) == key
+            assert scoped_retrieval_key_from_text(key.get("scope", {}), key.get("normalized_key", "")) == key
 
 
 def test_identity_conformance_corpus_contract_outputs_are_recursively_concrete() -> None:
-    identity = build_standalone_identity("Where is PostgreSQL v16.2 supported?", scope_key("support", "v1"))
-    retrieval = build_retrieval_representation(
+    identity = extract_standalone_identity("Where is PostgreSQL v16.2 supported?", scope_key("support", "v1"))
+    retrieval = retrieval_representation(
         "Where is PostgreSQL v16.2 supported?",
         ("PostgreSQL v16.2 support location",),
     )
-    bindings = retrieval_representation_bindings(retrieval, identity["scope"])
+    bindings = retrieval_representation_bindings(retrieval, identity.get("scope", {}))
     outputs = {
         "identity": query_identity_to_dict(identity),
         "retrieval": retrieval_representation_to_dict(retrieval),
-        "keys": [scoped_retrieval_key_to_dict(binding["key"]) for binding in bindings],
+        "keys": [scoped_retrieval_key_to_dict(binding.get("key", {})) for binding in bindings],
     }
 
     assert none_paths(outputs) == []

@@ -25,8 +25,8 @@ def test_pattern_tier_pattern_match_answers_first() -> None:
 
     result = pipeline.respond(engram, "support hours", llm_fn=llm_fn)
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Support is available 9 to 5."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Support is available 9 to 5."
     assert calls == []
 
 
@@ -39,7 +39,7 @@ def test_pattern_tier_configured_fallback_does_not_preempt() -> None:
 
     result = pipeline.respond(engram, "something entirely new", llm_fn=llm_fn)
 
-    assert result["source"] == "llm"
+    assert result.get("source", "") == "llm"
     assert len(calls) == 1
 
 
@@ -50,12 +50,12 @@ def test_statement_tier_confident_match_answers_without_llm() -> None:
 
     result = pipeline.respond(engram, "paris capital france", llm_fn=llm_fn)
 
-    assert result["source"] == "statement"
-    assert result["response"] == "Paris is the capital of France."
-    assert result["score"] >= 0.7
+    assert result.get("source", "") == "statement"
+    assert result.get("response", "") == "Paris is the capital of France."
+    assert result.get("score", 0.0) >= 0.7
     assert calls == []
     # The hit was recorded against the answering statement.
-    assert engram.get_statement(stmt_id)["hit_count"] == 1
+    assert engram.get_statement(stmt_id).get("hit_count", 0) == 1
 
 
 def test_statement_tier_weak_match_goes_to_llm_with_context() -> None:
@@ -66,7 +66,7 @@ def test_statement_tier_weak_match_goes_to_llm_with_context() -> None:
     # Only partial keyword overlap: below the confidence threshold.
     result = pipeline.respond(engram, "france pastries and wine culture", llm_fn=llm_fn)
 
-    assert result["source"] == "llm"
+    assert result.get("source", "") == "llm"
     assert len(calls) == 1
     _, context_statements = calls[0]
     assert "Paris is the capital of France." in context_statements
@@ -79,9 +79,9 @@ def test_llm_tier_does_not_store_generated_responses_as_statements() -> None:
     first = pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn)
     second = pipeline.respond(engram, "boiling point of water", llm_fn=llm_fn)
 
-    assert first["source"] == "llm"
+    assert first.get("source", "") == "llm"
     assert len(calls) == 2
-    assert second["source"] == "llm"
+    assert second.get("source", "") == "llm"
     assert engram.statements == []
 
 
@@ -91,8 +91,8 @@ def test_llm_tier_llm_updates_session_context() -> None:
 
     pipeline.respond(engram, "tell me about paris", context_id="user1", llm_fn=llm_fn)
 
-    session = engram.sessions["user1"]
-    assert session["previous_response"] == "Paris is lovely in spring."
+    session = engram.sessions.get("user1", {})
+    assert session.get("previous_response", "") == "Paris is lovely in spring."
 
 
 def test_none_tier_no_answer_returns_retrieval() -> None:
@@ -101,10 +101,11 @@ def test_none_tier_no_answer_returns_retrieval() -> None:
 
     result = pipeline.respond(engram, "france pastries and wine culture")
 
-    assert result["source"] == "none"
-    assert result["response"] == ""
-    assert result["matches"]  # the weak retrieval is handed back
-    assert 0.0 < result["score"] < 0.7
+    assert "response" in result
+    assert result.get("source", "") == "none"
+    assert result.get("response", "") == ""
+    assert result.get("matches", [])  # the weak retrieval is handed back
+    assert 0.0 < result.get("score", 0.0) < 0.7
 
 
 def test_none_tier_empty_store_no_llm() -> None:
@@ -112,9 +113,10 @@ def test_none_tier_empty_store_no_llm() -> None:
 
     result = pipeline.respond(engram, "anything at all")
 
-    assert result["source"] == "none"
-    assert result["matches"] == []
-    assert result["score"] == 0.0
+    assert {"matches", "score"} <= result.keys()
+    assert result.get("source", "") == "none"
+    assert result.get("matches", []) == []
+    assert result.get("score", 0.0) == 0.0
 
 
 def test_user_aware_chat_missing_user_uses_default_context() -> None:
@@ -123,7 +125,7 @@ def test_user_aware_chat_missing_user_uses_default_context() -> None:
 
     result = pipeline.chat(engram, "hello", user_id="")
 
-    assert result["user_id"] == "0"
+    assert result.get("user_id", "") == "0"
     assert "0" in engram.sessions
 
 
@@ -134,13 +136,14 @@ def test_user_aware_chat_context_is_isolated_but_learned_facts_are_shared() -> N
     alice = pipeline.chat(engram, "Sushi is good.", user_id="Alice")
     carol = pipeline.chat(engram, "What's good?", user_id="Carol")
 
-    assert alice["source"] == "pattern"
-    assert carol["source"] == "pattern"
-    assert carol["response"] == "Sushi is good."
-    learned_id = engram.pattern_to_statement["SUSHI"]
-    assert engram.get_statement(learned_id)["introduced_by_user_id"] == "Alice"
-    assert engram.sessions["Alice"]["input_history"] == ["Sushi is good."]
-    assert engram.sessions["Carol"]["input_history"] == ["What's good?"]
+    assert alice.get("source", "") == "pattern"
+    assert carol.get("source", "") == "pattern"
+    assert carol.get("response", "") == "Sushi is good."
+    learned_id = engram.pattern_to_statement.get("SUSHI", "")
+    assert learned_id
+    assert engram.get_statement(learned_id).get("introduced_by_user_id", "") == "Alice"
+    assert engram.sessions.get("Alice", {}).get("input_history", []) == ["Sushi is good."]
+    assert engram.sessions.get("Carol", {}).get("input_history", []) == ["What's good?"]
 
 
 def test_user_aware_chat_user_labels_are_case_sensitive_and_caller_owned() -> None:
@@ -164,8 +167,8 @@ def test_question_routing_question_hitting_catchall_keeps_the_category() -> None
 
     result = pipeline.respond(engram, "python programming language?")
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Tell me more."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Tell me more."
 
 
 def test_question_routing_wildcard_category_answers_before_the_model() -> None:
@@ -175,8 +178,8 @@ def test_question_routing_wildcard_category_answers_before_the_model() -> None:
 
     result = pipeline.respond(engram, "What is the meaning of life?", llm_fn=llm_fn)
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Tell me more."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Tell me more."
     assert calls == []
 
 
@@ -186,8 +189,8 @@ def test_question_routing_question_without_answer_gets_deferred_shrug() -> None:
 
     result = pipeline.respond(engram, "What is the meaning of life?")
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Tell me more."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Tell me more."
 
 
 def test_graph_backed_pattern_tier_reports_graph_provenance(monkeypatch) -> None:
@@ -196,8 +199,8 @@ def test_graph_backed_pattern_tier_reports_graph_provenance(monkeypatch) -> None
 
     result = pipeline.respond(engram, "Who is Sarah married to?")
 
-    assert result["source"] == "graph"
-    assert result["response"] == "Sarah is married to Abraham."
+    assert result.get("source", "") == "graph"
+    assert result.get("response", "") == "Sarah is married to Abraham."
 
 
 def test_question_routing_statement_hitting_catchall_answers_immediately() -> None:
@@ -208,8 +211,8 @@ def test_question_routing_statement_hitting_catchall_answers_immediately() -> No
 
     result = pipeline.respond(engram, "i enjoy the python programming language", llm_fn=llm_fn)
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Tell me more."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Tell me more."
     assert calls == []
 
 
@@ -220,8 +223,8 @@ def test_question_routing_specific_question_pattern_still_answers_first() -> Non
 
     result = pipeline.respond(engram, "Who are you?")
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "I am ENGRAM."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "I am ENGRAM."
 
 
 def test_pipeline_result_detail_pattern_tier_carries_pattern_and_captures() -> None:
@@ -230,8 +233,8 @@ def test_pipeline_result_detail_pattern_tier_carries_pattern_and_captures() -> N
 
     result = pipeline.respond(engram, "my name is alice")
 
-    assert result["pattern"] == "MY NAME IS *"
-    assert result["captured"] == ["alice"]
+    assert result.get("pattern", "") == "MY NAME IS *"
+    assert result.get("captured", []) == ["alice"]
 
 
 def test_pipeline_result_detail_statement_tier_has_empty_pattern_fields() -> None:
@@ -240,9 +243,10 @@ def test_pipeline_result_detail_statement_tier_has_empty_pattern_fields() -> Non
 
     result = pipeline.respond(engram, "paris capital france")
 
-    assert result["source"] == "statement"
-    assert result["pattern"] == ""
-    assert result["captured"] == []
+    assert {"pattern", "captured"} <= result.keys()
+    assert result.get("source", "") == "statement"
+    assert result.get("pattern", "") == ""
+    assert result.get("captured", []) == []
 
 
 def test_conversational_composition_chat_says_every_matched_sentence() -> None:
@@ -252,8 +256,8 @@ def test_conversational_composition_chat_says_every_matched_sentence() -> None:
 
     result = pipeline.chat(engram, "First. Second.", user_id="speaker")
 
-    assert result["response"] == "First reply. Second reply."
-    assert result["pattern"] == "SECOND"
+    assert result.get("response", "") == "First reply. Second reply."
+    assert result.get("pattern", "") == "SECOND"
 
 
 def test_conversational_composition_pattern_query_joins_matched_sentences() -> None:
@@ -264,7 +268,7 @@ def test_conversational_composition_pattern_query_joins_matched_sentences() -> N
     result = engram.pattern_query("First. Second.")
 
     assert result[2] == "First reply. Second reply."
-    assert result[0]["pattern"] == "SECOND"
+    assert result[0].get("pattern", "") == "SECOND"
 
 
 def test_conversational_composition_repetition_feedback_keeps_the_category() -> None:
@@ -278,7 +282,7 @@ def test_conversational_composition_repetition_feedback_keeps_the_category() -> 
         user_id="speaker",
     )
 
-    assert result["response"] == "Why do you say that? Why do you say that?"
+    assert result.get("response", "") == "Why do you say that? Why do you say that?"
 
 
 def test_wildcard_category_is_what_the_session_records() -> None:
@@ -288,11 +292,11 @@ def test_wildcard_category_is_what_the_session_records() -> None:
 
     result = pipeline.respond(engram, "python programming language?", context_id="s1")
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Tell me more."
-    session = engram.sessions["s1"]
-    assert session["response_history"] == ["Tell me more."]
-    assert session["previous_response"] == "Tell me more."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Tell me more."
+    session = engram.sessions.get("s1", {})
+    assert session.get("response_history", []) == ["Tell me more."]
+    assert session.get("previous_response", "") == "Tell me more."
 
 
 def test_content_keyword_gate_question_words_alone_are_no_evidence() -> None:
@@ -302,7 +306,8 @@ def test_content_keyword_gate_question_words_alone_are_no_evidence() -> None:
 
     result = pipeline.respond(engram, "why why why why why")
 
-    assert result["source"] != "statement"
+    assert "source" in result
+    assert result.get("source", "") != "statement"
 
 
 def test_content_keyword_gate_single_content_keyword_still_retrieves_statement() -> None:
@@ -311,5 +316,5 @@ def test_content_keyword_gate_single_content_keyword_still_retrieves_statement()
 
     result = pipeline.respond(engram, "water?")
 
-    assert result["source"] == "statement"
-    assert result["response"] == "It boils at 100 C."
+    assert result.get("source", "") == "statement"
+    assert result.get("response", "") == "It boils at 100 C."

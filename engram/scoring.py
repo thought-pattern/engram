@@ -43,7 +43,7 @@ def keyword_idf(keyword: str, keyword_index: dict[str, dict], total_statements: 
         IDF weight, always positive.
     """
     entry = keyword_index.get(keyword, {})
-    df = len(entry["statement_ids"]) if entry else 0
+    df = len(entry.get("statement_ids", set()))
     if df < 1:
         df = 1
     if total_statements < 1:

@@ -9,6 +9,7 @@ from engram.artifacts import LifecycleState
 from engram.constants import (
     CANDIDATE_ELIGIBILITY_FIELDS,
     DEFAULT_FUSION_WEIGHTS,
+    EARLIEST_UTC,
     FUSION_AMBIGUITY_MARGIN,
     FUSION_ANSWER_THRESHOLD,
     FUSION_CONSERVATIVE_MINIMUM,
@@ -48,9 +49,8 @@ from engram.resolution import (
     feature_set,
     trusted_candidate,
     trusted_candidate_to_dict,
-    trusted_candidate_to_json,
     trusted_candidate_with_changes,
-    trusted_feature_set,
+    trusted_evidence_reference_to_dict,
     validate_candidate,
     validate_evidence_reference,
     validate_query_frame,
@@ -234,7 +234,7 @@ def candidate_eligibility(
     evidence_eligible: object = True,
     answer_eligible: object = True,
     reason_codes: object = (),
-    feature_values: object = {},
+    feature_values: object = EMPTY_FEATURE_VALUES,
     feature_available: object = (),
 ) -> dict:
     """Validate separate score, evidence, and direct-answer eligibility."""
@@ -495,19 +495,20 @@ class EngramCandidateAuthority:
             "aggregate_value",
             "aggregate_value_available",
         }
-        if set(provenance) != required or provenance.get("producer") != "graph_composition":
+        if set(provenance) != required or provenance.get("producer", "") != "graph_composition":
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
             return result
+        # The exact field-set check above guarantees every key, so the defaults are never read.
         tuple_values = (
-            provenance["proposition_ids"],
-            provenance["identity_chain"],
-            provenance["trust_chain"],
-            provenance["predicate_labels"],
-            provenance["terminal_labels"],
-            provenance["terminal_types"],
+            provenance.get("proposition_ids", ()),
+            provenance.get("identity_chain", ()),
+            provenance.get("trust_chain", ()),
+            provenance.get("predicate_labels", ()),
+            provenance.get("terminal_labels", ()),
+            provenance.get("terminal_types", ()),
         )
         if not all(isinstance(value, tuple) for value in tuple_values):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
@@ -525,12 +526,12 @@ class EngramCandidateAuthority:
             return result
         if (
             len(candidate.get("evidence", ())) != len(proposition_ids)
-            or tuple(reference["evidence_id"] for reference in candidate.get("evidence", ())) != proposition_ids
+            or tuple(reference.get("evidence_id", "") for reference in candidate.get("evidence", ())) != proposition_ids
         ):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.SUPPORT_REFERENCE_STALE,))
             return result
         try:
-            operator = GraphCompositionOperator(str(provenance["operator"]))
+            operator = GraphCompositionOperator(str(provenance.get("operator", "")))
             evaluator = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ()))
             for index, proposition_id in enumerate(proposition_ids):
                 if not isinstance(proposition_id, str) or not proposition_id:
@@ -539,24 +540,25 @@ class EngramCandidateAuthority:
                 if not isinstance(current_values, tuple) or len(current_values) != 1:
                     raise InvalidRequestError("composition Proposition is unavailable")
                 current = validate_proposition_projection(current_values[0])
-                if current.get("projection_id") != PropositionProjectionQuery.BY_ID:
+                if current.get("projection_id", "") != PropositionProjectionQuery.BY_ID:
                     raise InvalidRequestError("composition Proposition was not read by ID")
                 identity_value = identity_chain[index]
                 trust = trust_chain[index]
                 identity = identity_value if isinstance(identity_value, tuple) else ()
                 if len(identity) != 3 or isinstance(trust, bool) or not isinstance(trust, (int, float)):
                     raise InvalidRequestError("composition provenance chain is malformed")
-                if (
-                    current["subject_entity_id"],
-                    current["predicate_id"],
-                    current["object_entity_id"],
-                ) != identity:
+                current_identity = (
+                    current.get("subject_entity_id", ""),
+                    current.get("predicate_id", ""),
+                    current.get("object_entity_id", ""),
+                )
+                if current_identity != identity:
                     raise InvalidRequestError("composition Proposition identity changed")
-                if not current["supplied_trust_available"] or current["supplied_trust"] != trust:
+                if not current.get("supplied_trust_available", False) or current.get("supplied_trust", 0.0) != trust:
                     raise InvalidRequestError("composition Proposition trust changed")
-                if not evaluator.evaluate(current, frame)["eligible"]:
+                if not evaluator.evaluate(current, frame).get("eligible", False):
                     raise InvalidRequestError("composition Proposition is no longer eligible")
-            root_label = str(provenance["root_label"])
+            root_label = str(provenance.get("root_label", ""))
             chain = " → ".join(str(value) for value in predicate_labels)
             if operator == GraphCompositionOperator.LOOKUP:
                 if len(terminal_labels) != 1:
@@ -568,12 +570,13 @@ class EngramCandidateAuthority:
                 GraphCompositionOperator.OR,
                 GraphCompositionOperator.NOT,
             }:
-                if not provenance["truth_available"] or not isinstance(provenance["truth_value"], bool):
+                truth_value = provenance.get("truth_value", False)
+                if not provenance.get("truth_available", False) or not isinstance(truth_value, bool):
                     raise InvalidRequestError("composition truth is unavailable")
-                response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if provenance['truth_value'] else 'false'}."
+                response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth_value else 'false'}."
             else:
-                aggregate = provenance["aggregate_value"]
-                if not provenance["aggregate_value_available"] or not isinstance(aggregate, str) or not aggregate:
+                aggregate = provenance.get("aggregate_value", "")
+                if not provenance.get("aggregate_value_available", False) or not isinstance(aggregate, str) or not aggregate:
                     raise InvalidRequestError("composition aggregate is unavailable")
                 response = f"{root_label} — {operator.value.lower()} {chain}: {aggregate}."
             object_type = ExpectedObjectType(str(terminal_types[0])) if terminal_types else ExpectedObjectType.UNKNOWN
@@ -593,63 +596,62 @@ class EngramCandidateAuthority:
         return result
 
     def evaluate(self, candidate: dict, frame: dict) -> dict:
-        if (
-            candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "relation_one_hop"
-        ):
+        candidate_provenance = candidate.get("provenance", {})
+        producer = candidate_provenance.get("producer", "")
+        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == "relation_one_hop":
             result = self.relation_candidate(candidate, frame)
             return result
-        if (
-            candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == "graph_composition"
-        ):
+        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == "graph_composition":
             result = self.composition_candidate(candidate, frame)
             return result
-        if (
-            candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-            and candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_PRODUCER
-        ):
+        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == UTILITY_RESOLVER_PRODUCER:
             if frame.get("required_source_label", ""):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
                 return result
             if frame.get("required_metadata", {}):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
                 return result
-            plugin_name = candidate.get("provenance", {}).get("plugin_name", "")
+            plugin_name = candidate_provenance.get("plugin_name", "")
             evaluated = evaluate_named_utility(frame.get("original_text", ""), plugin_name)
+            canonical_input = evaluated.get("canonical_input", "")
+            # A candidate without a recorded canonical input never matches, even an empty one.
             if (
-                evaluated["status"] != "resolved"
-                or candidate.get("provenance", {}).get("canonical_input") != evaluated["canonical_input"]
+                evaluated.get("status", "") != "resolved"
+                or "canonical_input" not in candidate_provenance
+                or candidate_provenance.get("canonical_input", "") != canonical_input
             ):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
-            digest = hashlib_sha256(f"{plugin_name}:{evaluated['canonical_input']}".encode()).hexdigest()
+            digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
             if candidate.get("statement_id", "") != f"utility:{plugin_name}:sha256:{digest}":
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
-            if candidate.get("response", "") != evaluated["response"]:
+            if candidate.get("response", "") != evaluated.get("response", ""):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH,))
                 return result
             result = candidate_eligibility(True, True, True)
             return result
         artifact = self.internal_engram.response_repository.find_artifact(candidate.get("statement_id", ""))
         if artifact:
+            # A found artifact is a complete accepted record, so its field defaults are never read.
+            statement_id = artifact.get("statement_id", "")
+            generation = artifact.get("generation", 0)
+            metadata = artifact.get("metadata", {})
+            support_references = artifact.get("support_references", ())
+            eligibility_context = frame.get("eligibility_context", {})
             if isinstance(self.internal_feedback_store, FeedbackStore):
-                if self.internal_feedback_store.stale_excluded(artifact["statement_id"], artifact["generation"]):
+                if self.internal_feedback_store.stale_excluded(statement_id, generation):
                     result = candidate_eligibility(False, False, False, (FusionPolicyReason.FEEDBACK_STALE_EXCLUDED,))
                     return result
                 if self.internal_feedback_store.policy_suppressed(
-                    artifact["statement_id"],
-                    frame.get("scope", {})["namespace"],
+                    statement_id,
+                    frame.get("scope", {}).get("namespace", ""),
                     self.internal_policy_fingerprint,
                 ):
                     result = candidate_eligibility(False, False, False, (FusionPolicyReason.FEEDBACK_POLICY_SUPPRESSED,))
                     return result
-            decision = evaluate_artifact_eligibility(
-                artifact,
-                frame.get("eligibility_context", {}),
-            )
-            if not decision["direct_answer_eligible"]:
+            decision = evaluate_artifact_eligibility(artifact, eligibility_context)
+            if not decision.get("direct_answer_eligible", False):
                 result = candidate_eligibility(
                     False,
                     False,
@@ -657,18 +659,18 @@ class EngramCandidateAuthority:
                     (FusionPolicyReason.ARTIFACT_INELIGIBLE,),
                 )
                 return result
-            if artifact["scope"] != frame.get("scope", {}):
+            if artifact.get("scope", {}) != frame.get("scope", {}):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
                 return result
-            if artifact["response"] != candidate.get("response", ""):
+            if artifact.get("response", "") != candidate.get("response", ""):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH,))
                 return result
-            if "generation" in candidate.get("provenance", {}):
-                candidate_generation = candidate.get("provenance", {})["generation"]
+            if "generation" in candidate_provenance:
+                candidate_generation = candidate_provenance.get("generation", 0)
                 if (
                     isinstance(candidate_generation, bool)
                     or not isinstance(candidate_generation, int)
-                    or candidate_generation != artifact["generation"]
+                    or candidate_generation != generation
                 ):
                     result = candidate_eligibility(
                         False,
@@ -677,26 +679,27 @@ class EngramCandidateAuthority:
                         (FusionPolicyReason.AUTHORITATIVE_GENERATION_MISMATCH,),
                     )
                     return result
-            if frame.get("required_source_label", "") and artifact["provenance"]["source_label"] != frame.get(
-                "required_source_label", ""
-            ):
+            required_source_label = frame.get("required_source_label", "")
+            if required_source_label and artifact.get("provenance", {}).get("source_label", "") != required_source_label:
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
                 return result
+            # Presence is tested first, so the lookup default is never compared.
             if any(
-                key not in artifact["metadata"] or artifact["metadata"][key] != value
-                for key, value in frame.get("required_metadata", {}).items()
+                key not in metadata or metadata.get(key, "") != value for key, value in frame.get("required_metadata", {}).items()
             ):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
                 return result
-            if not candidate_visibility_allowed(artifact["metadata"], frame.get("scope", {})):
+            if not candidate_visibility_allowed(metadata, frame.get("scope", {})):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.OWNERSHIP_VISIBILITY_MISMATCH,))
                 return result
             feature_values: dict[FusionFeature, float] = {
-                FusionFeature.SUPPORT: float(bool(artifact["support_references"])),
+                FusionFeature.SUPPORT: float(bool(support_references)),
             }
             feature_available = [FusionFeature.SUPPORT]
-            if artifact["statistics"]["query_count"]:
-                feature_values[FusionFeature.HISTORY] = artifact["statistics"]["hit_count"] / artifact["statistics"]["query_count"]
+            statistics = artifact.get("statistics", {})
+            query_count = statistics.get("query_count", 0)
+            if query_count:
+                feature_values[FusionFeature.HISTORY] = statistics.get("hit_count", 0) / query_count
                 feature_available.append(FusionFeature.HISTORY)
             if isinstance(self.internal_feedback_store, FeedbackStore):
                 feedback_history = self.internal_feedback_store.history(
@@ -704,37 +707,41 @@ class EngramCandidateAuthority:
                     constraint_fingerprint(
                         frame.get("expected_object_type", ExpectedObjectType.UNKNOWN).value,
                         frame.get("required_metadata", {}),
-                        frame.get("required_source_label", ""),
+                        required_source_label,
                     ),
-                    artifact["statement_id"],
-                    artifact["generation"],
+                    statement_id,
+                    generation,
                     self.internal_policy_fingerprint,
-                    frame.get("eligibility_context", {})["evaluation_time"],
+                    eligibility_context.get("evaluation_time", EARLIEST_UTC),
                 )
-                if feedback_history["available"]:
+                if feedback_history.get("available", False):
+                    feedback_value = feedback_history.get("value", 0.0)
                     if FusionFeature.HISTORY in feature_available:
-                        feature_values[FusionFeature.HISTORY] = (
-                            feature_values.get(FusionFeature.HISTORY, 0.0) + feedback_history["value"]
-                        ) / 2.0
+                        artifact_history = feature_values.get(FusionFeature.HISTORY, 0.0)
+                        feature_values[FusionFeature.HISTORY] = (artifact_history + feedback_value) / 2.0
                     else:
-                        feature_values[FusionFeature.HISTORY] = feedback_history["value"]
+                        feature_values[FusionFeature.HISTORY] = feedback_value
                         feature_available.append(FusionFeature.HISTORY)
-            authority = artifact["metadata"].get("authority")
-            if (
-                isinstance(authority, (int, float))
-                and not isinstance(authority, bool)
-                and math_isfinite(float(authority))
-                and 0.0 <= float(authority) <= 1.0
-            ):
-                feature_values[FusionFeature.AUTHORITY] = float(authority)
-                feature_available.append(FusionFeature.AUTHORITY)
-            support_complete = artifact["metadata"].get("support_complete", True)
+            # Authority is optional metadata: absence leaves the feature unavailable.
+            if "authority" in metadata:
+                authority = metadata.get("authority", 0.0)
+                if (
+                    isinstance(authority, (int, float))
+                    and not isinstance(authority, bool)
+                    and math_isfinite(float(authority))
+                    and 0.0 <= float(authority) <= 1.0
+                ):
+                    feature_values[FusionFeature.AUTHORITY] = float(authority)
+                    feature_available.append(FusionFeature.AUTHORITY)
+            support_complete = metadata.get("support_complete", True)
             answer_eligible = isinstance(support_complete, bool) and support_complete
             reasons: tuple[FusionPolicyReason, ...] = () if answer_eligible else (FusionPolicyReason.SUPPORT_INCOMPLETE,)
             retained_support = tuple(
-                reference["evidence_id"] for reference in candidate.get("evidence", ()) if reference["kind"] == EvidenceKind.SUPPORT
+                reference.get("evidence_id", "")
+                for reference in candidate.get("evidence", ())
+                if reference.get("kind", "") == EvidenceKind.SUPPORT
             )
-            support_ids = {reference.get("id", "") for reference in artifact["support_references"]}
+            support_ids = {reference.get("id", "") for reference in support_references}
             if any(reference_id not in support_ids for reference_id in retained_support):
                 answer_eligible = False
                 reasons = tuple(dict.fromkeys((*reasons, FusionPolicyReason.SUPPORT_REFERENCE_STALE)))
@@ -751,20 +758,6 @@ class EngramCandidateAuthority:
         return result
 
 
-def trusted_fusion_contribution(
-    candidate: dict,
-    normalized: dict,
-    eligibility: dict,
-) -> dict:
-    """Build a contribution from engine-owned validated components."""
-    result: dict = {
-        "candidate": candidate,
-        "normalized": normalized,
-        "eligibility": eligibility,
-    }
-    return result
-
-
 def trusted_fusion_contribution_to_dict(current: dict) -> dict:
     """Serialize one engine-owned contribution."""
     result = {
@@ -777,17 +770,19 @@ def trusted_fusion_contribution_to_dict(current: dict) -> dict:
 
 def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     """Render an engine-owned contribution for bounded diagnostics."""
+    candidate = current.get("candidate", {})
+    features = candidate.get("features", {})
     result = {
-        "candidate_id": current.get("candidate", {})["candidate_id"],
-        "source": current.get("candidate", {})["source"].value,
+        "candidate_id": candidate.get("candidate_id", ""),
+        "source": candidate.get("source", CandidateSource.EXACT).value,
         "raw_features": {
-            "values": dict(current.get("candidate", {})["features"]["values"]),
-            "unavailable": list(current.get("candidate", {})["features"]["unavailable"]),
+            "values": dict(features.get("values", {})),
+            "unavailable": list(features.get("unavailable", ())),
         },
         "normalized_features": trusted_normalized_feature_set_to_dict(current.get("normalized", {})),
         "eligibility": trusted_candidate_eligibility_to_dict(current.get("eligibility", {})),
-        "diagnostic_fields": sorted(current.get("candidate", {})["diagnostics"]),
-        "evidence_ids": [reference["evidence_id"] for reference in current.get("candidate", {})["evidence"]],
+        "diagnostic_fields": sorted(candidate.get("diagnostics", {})),
+        "evidence_ids": [reference.get("evidence_id", "") for reference in candidate.get("evidence", ())],
     }
     return result
 
@@ -799,33 +794,13 @@ def trusted_fusion_contribution_to_json(value: dict) -> str:
     return result
 
 
-def trusted_fused_candidate(
-    candidate: dict,
-    contributions: tuple[dict, ...],
-    normalized: dict,
-    score: float,
-    score_contributions: dict[FusionFeature, float],
-    eligibility: dict,
-) -> dict:
-    """Build a fused candidate from engine-owned validated components."""
-    result: dict = {
-        "candidate": candidate,
-        "contributions": contributions,
-        "normalized": normalized,
-        "score": score,
-        "score_contributions": dict(dict(score_contributions)),
-        "eligibility": eligibility,
-    }
-    return result
-
-
 def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...]:
     """Collect active sources from an engine-owned fused candidate."""
     sources = tuple(
         dict.fromkeys(
-            contribution["candidate"]["source"]
+            contribution.get("candidate", {}).get("source", CandidateSource.EXACT)
             for contribution in current.get("contributions", ())
-            if contribution["eligibility"]["score_eligible"]
+            if contribution.get("eligibility", {}).get("score_eligible", False)
         )
     )
     return sources
@@ -833,12 +808,13 @@ def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...
 
 def trusted_fused_candidate_to_dict(current: dict) -> dict:
     """Serialize one engine-owned fused candidate."""
+    score_contributions = current.get("score_contributions", {})
     result = {
         "candidate": trusted_candidate_to_dict(current.get("candidate", {})),
         "contributions": [trusted_fusion_contribution_to_dict(contribution) for contribution in current.get("contributions", ())],
         "normalized": trusted_normalized_feature_set_to_dict(current.get("normalized", {})),
         "score": current.get("score", 0.0),
-        "score_contributions": {feature.value: current.get("score_contributions", {})[feature] for feature in FusionFeature},
+        "score_contributions": {feature.value: score_contributions.get(feature, 0.0) for feature in FusionFeature},
         "eligibility": trusted_candidate_eligibility_to_dict(current.get("eligibility", {})),
     }
     return result
@@ -848,18 +824,21 @@ def trusted_fused_candidate_to_report_dict(current: dict) -> dict:
     """Render an engine-owned fused candidate for bounded diagnostics."""
     visible = current.get("contributions", ())[:MAX_FUSION_REPORT_CONTRIBUTIONS]
     sources = trusted_fused_candidate_sources(current)
+    candidate = current.get("candidate", {})
+    score_contributions = current.get("score_contributions", {})
+    eligibility = current.get("eligibility", {})
     result = {
-        "statement_id": current.get("candidate", {})["statement_id"],
-        "candidate_id": current.get("candidate", {})["candidate_id"],
+        "statement_id": candidate.get("statement_id", ""),
+        "candidate_id": candidate.get("candidate_id", ""),
         "sources": [source.value for source in sources],
         "score": current.get("score", 0.0),
         "normalized_features": trusted_normalized_feature_set_to_dict(current.get("normalized", {})),
-        "score_contributions": {feature.value: current.get("score_contributions", {})[feature] for feature in FusionFeature},
+        "score_contributions": {feature.value: score_contributions.get(feature, 0.0) for feature in FusionFeature},
         "eligibility": {
-            "score": current.get("eligibility", {})["score_eligible"],
-            "evidence": current.get("eligibility", {})["evidence_eligible"],
-            "answer": current.get("eligibility", {})["answer_eligible"],
-            "reason_codes": [reason.value for reason in current.get("eligibility", {})["reason_codes"]],
+            "score": eligibility.get("score_eligible", False),
+            "evidence": eligibility.get("evidence_eligible", False),
+            "answer": eligibility.get("answer_eligible", False),
+            "reason_codes": [reason.value for reason in eligibility.get("reason_codes", ())],
         },
         "contributions": [trusted_fusion_contribution_to_report_dict(contribution) for contribution in visible],
         "omitted_contribution_count": len(current.get("contributions", ())) - len(visible),
@@ -874,38 +853,12 @@ def trusted_fused_candidate_to_json(value: dict) -> str:
     return result
 
 
-def trusted_fusion_decision(
-    outcome: ResolutionOutcome,
-    selected_candidate: dict,
-    response_candidates: tuple[dict, ...],
-    evidence: tuple[dict, ...],
-    confidence: float,
-    confidence_available: bool,
-    reason_codes: tuple[str, ...],
-    report: dict,
-    working_memory_bytes: int,
-) -> dict:
-    """Build a decision from values whose invariants the engine has established."""
-    selected_available = outcome == ResolutionOutcome.ANSWER
-    selected = trusted_candidate_with_changes(selected_candidate, {})
-    result: dict = {
-        "outcome": outcome,
-        "selected_candidate": selected,
-        "selected_candidate_available": selected_available,
-        "response_candidates": tuple(trusted_candidate_with_changes(candidate, {}) for candidate in response_candidates),
-        "evidence": evidence,
-        "confidence": confidence,
-        "confidence_available": confidence_available,
-        "reason_codes": reason_codes,
-        "report": dict(dict(report)),
-        "working_memory_bytes": working_memory_bytes,
-    }
-    return result
-
-
 def normalize_validated_candidate_features(validated_candidate: dict) -> dict:
-    """Normalize a candidate already copied and validated at the engine boundary."""
-    raw = validated_candidate.get("features", {})["values"]
+    """Normalize a candidate already copied and validated at the engine boundary.
+
+    Raw feature reads below follow a presence test, so their defaults are never used.
+    """
+    raw = validated_candidate.get("features", {}).get("values", {})
     values = dict.fromkeys(FusionFeature, 0.0)
     available: set[FusionFeature] = set()
 
@@ -913,40 +866,35 @@ def normalize_validated_candidate_features(validated_candidate: dict) -> dict:
         values[feature] = bounded_unit(value)
         available.add(feature)
 
-    if validated_candidate.get("source", CandidateSource.EXACT) == CandidateSource.EXACT and "exact_match" in raw:
-        assign(FusionFeature.EXACT, raw["exact_match"])
+    source = validated_candidate.get("source", CandidateSource.EXACT)
+    if source == CandidateSource.EXACT and "exact_match" in raw:
+        assign(FusionFeature.EXACT, raw.get("exact_match", 0.0))
     if (
-        validated_candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
-        and validated_candidate.get("provenance", {}).get("producer") == UTILITY_RESOLVER_PRODUCER
+        source == CandidateSource.UTILITY
+        and validated_candidate.get("provenance", {}).get("producer", "") == UTILITY_RESOLVER_PRODUCER
         and "utility_match" in raw
     ):
-        assign(FusionFeature.EXACT, raw["utility_match"])
-    if validated_candidate.get("source", CandidateSource.EXACT) == CandidateSource.SPARSE and "sparse_score" in raw:
-        assign(FusionFeature.LEXICAL, raw["sparse_score"])
-    if validated_candidate.get("source", CandidateSource.EXACT) in (
-        CandidateSource.SUPPORT_SEMANTIC,
-        CandidateSource.STANDALONE_SEMANTIC,
-    ) and ("semantic_score" in raw):
-        assign(FusionFeature.SEMANTIC, raw["semantic_score"])
+        assign(FusionFeature.EXACT, raw.get("utility_match", 0.0))
+    if source == CandidateSource.SPARSE and "sparse_score" in raw:
+        assign(FusionFeature.LEXICAL, raw.get("sparse_score", 0.0))
+    if source in (CandidateSource.SUPPORT_SEMANTIC, CandidateSource.STANDALONE_SEMANTIC) and "semantic_score" in raw:
+        assign(FusionFeature.SEMANTIC, raw.get("semantic_score", 0.0))
     for raw_name, feature in (
         ("entity_match", FusionFeature.ENTITY),
         ("relation_match", FusionFeature.RELATION),
         ("object_type_match", FusionFeature.OBJECT_TYPE),
     ):
         if raw_name in raw:
-            assign(feature, raw[raw_name])
-    if validated_candidate.get("source", CandidateSource.EXACT) == CandidateSource.SUPPORT_SEMANTIC and "support_coverage" in raw:
-        assign(FusionFeature.SUPPORT, raw["support_coverage"])
+            assign(feature, raw.get(raw_name, 0.0))
+    if source == CandidateSource.SUPPORT_SEMANTIC and "support_coverage" in raw:
+        assign(FusionFeature.SUPPORT, raw.get("support_coverage", 0.0))
     elif validated_candidate.get("evidence", ()):
-        support_available = any(item["kind"] == EvidenceKind.SUPPORT for item in validated_candidate.get("evidence", ()))
+        support_available = any(item.get("kind", "") == EvidenceKind.SUPPORT for item in validated_candidate.get("evidence", ()))
         assign(FusionFeature.SUPPORT, float(support_available))
-    if validated_candidate.get("source", CandidateSource.EXACT) in (
-        CandidateSource.SUPPORT_SEMANTIC,
-        CandidateSource.STANDALONE_SEMANTIC,
-    ) and ("authority_score" in raw):
-        assign(FusionFeature.AUTHORITY, raw["authority_score"])
+    if source in (CandidateSource.SUPPORT_SEMANTIC, CandidateSource.STANDALONE_SEMANTIC) and "authority_score" in raw:
+        assign(FusionFeature.AUTHORITY, raw.get("authority_score", 0.0))
     ordered_available = tuple(feature for feature in FusionFeature if feature in available)
-    result = trusted_normalized_feature_set(values, ordered_available)
+    result = {"values": values, "available": ordered_available}
     return result
 
 
@@ -963,25 +911,45 @@ def merge_validated_candidate_eligibility(
         for feature in FusionFeature
         if feature in set(validated_first.get("feature_available", ())).union(validated_second.get("feature_available", ()))
     )
-    result = trusted_candidate_eligibility(
-        validated_first.get("score_eligible", False) and validated_second.get("score_eligible", False),
-        validated_first.get("evidence_eligible", False) and validated_second.get("evidence_eligible", False),
-        validated_first.get("answer_eligible", False) and validated_second.get("answer_eligible", False),
-        reasons,
-        values,
-        available,
-    )
+    result = {
+        "score_eligible": validated_first.get("score_eligible", False) and validated_second.get("score_eligible", False),
+        "evidence_eligible": validated_first.get("evidence_eligible", False) and validated_second.get("evidence_eligible", False),
+        "answer_eligible": validated_first.get("answer_eligible", False) and validated_second.get("answer_eligible", False),
+        "reason_codes": reasons,
+        "feature_values": values,
+        "feature_available": available,
+    }
     return result
 
 
-def trusted_canonical_candidate_key(candidate: dict) -> tuple[int, str, str]:
-    """Order a candidate already validated at the fusion boundary."""
-    result = (
-        FUSION_SOURCE_ORDER[candidate.get("source", CandidateSource.EXACT)],
-        candidate.get("candidate_id", ""),
-        trusted_candidate_to_json(candidate),
-    )
-    return result
+def canonical_native_key(value: object) -> tuple:
+    """Return a type-tagged, totally ordered native key for one serialized record.
+
+    The key distinguishes exactly what the canonical JSON encoding of the
+    record distinguishes (Booleans, integers, floats by their shortest repr,
+    string data, sequences and key-sorted mappings), so equal keys mean equal
+    external encodings without producing text. Every tag carries one payload
+    type, which keeps any two keys comparable.
+    """
+    if isinstance(value, bool):
+        key = ("bool", value)
+    elif isinstance(value, int):
+        key = ("int", int(value))
+    elif isinstance(value, float):
+        if not math_isfinite(value):
+            raise InvalidRequestError("fusion record keys require finite numbers")
+        key = ("float", float.__repr__(value))
+    elif isinstance(value, str):
+        key = ("str", str.__str__(value))
+    elif isinstance(value, (list, tuple)):
+        key = ("list", tuple(canonical_native_key(item) for item in value))
+    elif isinstance(value, dict):
+        if not all(isinstance(name, str) for name in value):
+            raise InvalidRequestError("fusion record keys require string mapping keys")
+        key = ("dict", tuple((str.__str__(name), canonical_native_key(item)) for name, item in sorted(value.items())))
+    else:
+        raise InvalidRequestError("fusion record keys contain an unsupported native value")
+    return key
 
 
 def dedupe_evidence(
@@ -989,11 +957,12 @@ def dedupe_evidence(
     scope: dict,
 ) -> tuple[tuple[dict, ...], int]:
     """Retain unique in-scope evidence and count conflicting identifiers."""
-    groups: dict[str, dict[str, dict]] = {}
+    groups: dict[str, dict[tuple, dict]] = {}
     for reference in evidence:
-        if reference["scope"] != scope:
+        if reference.get("scope", {}) != scope:
             continue
-        groups.setdefault(reference["evidence_id"], {})[evidence_reference_to_json(reference)] = reference
+        variant_key = canonical_native_key(trusted_evidence_reference_to_dict(reference))
+        groups.setdefault(reference.get("evidence_id", ""), {})[variant_key] = reference
     retained = []
     conflict_count = 0
     for evidence_id in sorted(groups):
@@ -1001,7 +970,7 @@ def dedupe_evidence(
         if len(variants) != 1:
             conflict_count += 1
             continue
-        retained.append(variants[sorted(variants)[0]])
+        retained.extend(variants.values())
     result = tuple(retained), conflict_count
     return result
 
@@ -1010,14 +979,18 @@ def apply_validated_authoritative_features(
     normalized: dict,
     eligibility: dict,
 ) -> dict:
-    """Overlay authority values already validated at the fusion boundary."""
+    """Overlay authority values already validated at the fusion boundary.
+
+    Candidate eligibility guarantees a value for every available feature.
+    """
     values = dict(normalized.get("values", {}))
     available = set(normalized.get("available", ()))
+    feature_values = eligibility.get("feature_values", {})
     for feature in eligibility.get("feature_available", ()):
-        values[feature] = eligibility.get("feature_values", {})[feature]
+        values[feature] = feature_values.get(feature, 0.0)
         available.add(feature)
     ordered_available = tuple(feature for feature in FusionFeature if feature in available)
-    result = trusted_normalized_feature_set(values, ordered_available)
+    result = {"values": values, "available": ordered_available}
     return result
 
 
@@ -1060,7 +1033,7 @@ class CandidateFusionEngine:
         if candidate.get("lifecycle", LifecycleState.RETIRED) != LifecycleState.ACTIVE:
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_LIFECYCLE_INELIGIBLE,))
             return result
-        if any(reference["scope"] != frame.get("scope", {}) for reference in candidate.get("evidence", ())):
+        if any(reference.get("scope", {}) != frame.get("scope", {}) for reference in candidate.get("evidence", ())):
             result = candidate_eligibility(
                 False,
                 False,
@@ -1070,10 +1043,11 @@ class CandidateFusionEngine:
             return result
         reasons = []
         answer_eligible = True
-        if candidate.get("features", {})["values"].get("explicit_conflict", 0.0) > 0.0:
+        if candidate.get("features", {}).get("values", {}).get("explicit_conflict", 0.0) > 0.0:
             answer_eligible = False
             reasons.append(FusionPolicyReason.EXPLICIT_CONFLICT)
-        if FusionFeature.SUPPORT in normalized.get("available", ()) and normalized.get("values", {})[FusionFeature.SUPPORT] == 0.0:
+        support_value = normalized.get("values", {}).get(FusionFeature.SUPPORT, 0.0)
+        if FusionFeature.SUPPORT in normalized.get("available", ()) and support_value == 0.0:
             answer_eligible = False
             reasons.append(FusionPolicyReason.SUPPORT_INCOMPLETE)
         structural = candidate_eligibility(True, True, answer_eligible, tuple(reasons))
@@ -1082,18 +1056,22 @@ class CandidateFusionEngine:
         return result
 
     def internal_score(self, normalized: dict) -> tuple[float, dict[FusionFeature, float]]:
+        # The validated policy weights and normalized values cover every FusionFeature.
+        weights = self.policy.get("weights", {})
+        normalized_values = normalized.get("values", {})
         weighted = dict.fromkeys(FusionFeature, 0.0)
         numerator = 0.0
         denominator = 0.0
         for feature in normalized.get("available", ()):
             if feature in (FusionFeature.EXACT, FusionFeature.MARGIN):
                 continue
-            contribution = self.policy["weights"][feature] * normalized.get("values", {})[feature]
+            weight = weights.get(feature, 0.0)
+            contribution = weight * normalized_values.get(feature, 0.0)
             weighted[feature] = contribution
             numerator += contribution
-            denominator += self.policy["weights"][feature]
+            denominator += weight
         base = numerator / denominator if denominator else 0.0
-        exact = normalized.get("values", {})[FusionFeature.EXACT] if FusionFeature.EXACT in normalized.get("available", ()) else 0.0
+        exact = normalized_values.get(FusionFeature.EXACT, 0.0) if FusionFeature.EXACT in normalized.get("available", ()) else 0.0
         weighted[FusionFeature.EXACT] = exact
         score = exact + (1.0 - exact) * base
         bounded_score = bounded_unit(score)
@@ -1106,132 +1084,148 @@ class CandidateFusionEngine:
         contributions: tuple[dict, ...],
         frame: dict,
     ) -> dict:
-        active = tuple(contribution for contribution in contributions if contribution["eligibility"]["score_eligible"])
-        representative = (active or contributions)[0]["candidate"]
+        # Contributions are engine-built {candidate, normalized, eligibility} records whose
+        # eligibility and normalized maps are complete, so the read defaults are never used.
+        active = tuple(
+            contribution for contribution in contributions if contribution.get("eligibility", {}).get("score_eligible", False)
+        )
+        representative = (active or contributions)[0].get("candidate", {})
         if active:
-            eligibility = active[0]["eligibility"]
+            eligibility = active[0].get("eligibility", {})
             for contribution in active[1:]:
-                eligibility = merge_validated_candidate_eligibility(eligibility, contribution["eligibility"])
+                eligibility = merge_validated_candidate_eligibility(eligibility, contribution.get("eligibility", {}))
         else:
-            eligibility = contributions[0]["eligibility"]
+            eligibility = contributions[0].get("eligibility", {})
             for contribution in contributions[1:]:
-                eligibility = merge_validated_candidate_eligibility(eligibility, contribution["eligibility"])
+                eligibility = merge_validated_candidate_eligibility(eligibility, contribution.get("eligibility", {}))
         excluded_reasons = tuple(
             reason
             for contribution in contributions
-            if not contribution["eligibility"]["score_eligible"]
-            for reason in contribution["eligibility"]["reason_codes"]
+            if not contribution.get("eligibility", {}).get("score_eligible", False)
+            for reason in contribution.get("eligibility", {}).get("reason_codes", ())
         )
         if active and excluded_reasons:
-            eligibility = trusted_candidate_eligibility(
-                eligibility["score_eligible"],
-                eligibility["evidence_eligible"],
-                eligibility["answer_eligible"],
-                tuple(dict.fromkeys((*eligibility["reason_codes"], *excluded_reasons))),
-                eligibility["feature_values"],
-                eligibility["feature_available"],
-            )
-        if active and len({contribution["candidate"]["response"] for contribution in active}) != 1:
-            eligibility = trusted_candidate_eligibility(
-                False,
-                False,
-                False,
-                tuple(dict.fromkeys((*eligibility["reason_codes"], FusionPolicyReason.CANDIDATE_STATEMENT_CONFLICT))),
-                eligibility["feature_values"],
-                eligibility["feature_available"],
-            )
+            eligibility = {
+                "score_eligible": eligibility.get("score_eligible", False),
+                "evidence_eligible": eligibility.get("evidence_eligible", False),
+                "answer_eligible": eligibility.get("answer_eligible", False),
+                "reason_codes": tuple(dict.fromkeys((*eligibility.get("reason_codes", ()), *excluded_reasons))),
+                "feature_values": dict(eligibility.get("feature_values", {})),
+                "feature_available": eligibility.get("feature_available", ()),
+            }
+        if active and len({contribution.get("candidate", {}).get("response", "") for contribution in active}) != 1:
+            eligibility = {
+                "score_eligible": False,
+                "evidence_eligible": False,
+                "answer_eligible": False,
+                "reason_codes": tuple(
+                    dict.fromkeys((*eligibility.get("reason_codes", ()), FusionPolicyReason.CANDIDATE_STATEMENT_CONFLICT))
+                ),
+                "feature_values": dict(eligibility.get("feature_values", {})),
+                "feature_available": eligibility.get("feature_available", ()),
+            }
             active = ()
         values = dict.fromkeys(FusionFeature, 0.0)
         available: set[FusionFeature] = set()
         for feature in FusionFeature:
             observed = [
-                contribution["normalized"]["values"][feature]
+                contribution.get("normalized", {}).get("values", {}).get(feature, 0.0)
                 for contribution in active
-                if feature in contribution["normalized"]["available"]
+                if feature in contribution.get("normalized", {}).get("available", ())
             ]
             if observed:
                 values[feature] = min(observed) if feature in FUSION_CONSERVATIVE_MINIMUM else max(observed)
                 available.add(feature)
-        sources = tuple(dict.fromkeys(contribution["candidate"]["source"] for contribution in active))
-        families = tuple(dict.fromkeys(FUSION_SOURCE_FAMILY[source] for source in sources))
+        sources = tuple(
+            dict.fromkeys(contribution.get("candidate", {}).get("source", CandidateSource.EXACT) for contribution in active)
+        )
+        families = tuple(dict.fromkeys(FUSION_SOURCE_FAMILY.get(source, "") for source in sources))
         if active:
             values[FusionFeature.AGREEMENT] = min(1.0, max(0.0, (len(families) - 1) / 2.0))
             available.add(FusionFeature.AGREEMENT)
         active_evidence = tuple(
             reference
             for contribution in active
-            if FusionPolicyReason.SUPPORT_REFERENCE_STALE not in contribution["eligibility"]["reason_codes"]
-            for reference in contribution["candidate"]["evidence"]
+            if FusionPolicyReason.SUPPORT_REFERENCE_STALE not in contribution.get("eligibility", {}).get("reason_codes", ())
+            for reference in contribution.get("candidate", {}).get("evidence", ())
         )
         retained_evidence, evidence_conflicts = dedupe_evidence(active_evidence, frame.get("scope", {}))
-        support_present = any(reference["kind"] == EvidenceKind.SUPPORT for reference in retained_evidence)
+        support_present = any(reference.get("kind", "") == EvidenceKind.SUPPORT for reference in retained_evidence)
         if active:
-            values[FusionFeature.SUPPORT] = max(values[FusionFeature.SUPPORT], float(support_present))
+            values[FusionFeature.SUPPORT] = max(values.get(FusionFeature.SUPPORT, 0.0), float(support_present))
             available.add(FusionFeature.SUPPORT)
-        reasons = list(eligibility["reason_codes"])
-        answer_eligible = eligibility["answer_eligible"]
-        exact_present = CandidateSource.EXACT in sources and values[FusionFeature.EXACT] == 1.0
+        reasons = list(eligibility.get("reason_codes", ()))
+        answer_eligible = eligibility.get("answer_eligible", False)
+        exact_value = values.get(FusionFeature.EXACT, 0.0)
+        exact_present = CandidateSource.EXACT in sources and exact_value == 1.0
         utility_present = (
             any(
-                contribution["candidate"]["source"] == CandidateSource.UTILITY
-                and contribution["candidate"]["provenance"].get("producer") == UTILITY_RESOLVER_PRODUCER
+                contribution.get("candidate", {}).get("source", CandidateSource.EXACT) == CandidateSource.UTILITY
+                and contribution.get("candidate", {}).get("provenance", {}).get("producer", "") == UTILITY_RESOLVER_PRODUCER
                 for contribution in active
             )
-            and values[FusionFeature.EXACT] == 1.0
+            and exact_value == 1.0
         )
         deterministic_present = exact_present or utility_present
         if evidence_conflicts:
             answer_eligible = False
             reasons.append(FusionPolicyReason.EVIDENCE_REFERENCE_CONFLICT)
-        if active and not deterministic_present and len(families) < self.policy["minimum_independent_sources"]:
+        if active and not deterministic_present and len(families) < self.policy.get("minimum_independent_sources", 0):
             answer_eligible = False
             reasons.append(FusionPolicyReason.INDEPENDENT_SOURCES_MISSING)
-        if active and not deterministic_present and self.policy["require_support_for_non_exact"] and not support_present:
+        if active and not deterministic_present and self.policy.get("require_support_for_non_exact", False) and not support_present:
             answer_eligible = False
             reasons.append(FusionPolicyReason.SUPPORT_INCOMPLETE)
         identity_features = (FusionFeature.ENTITY, FusionFeature.RELATION)
-        if any(feature in available and values[feature] == 0.0 for feature in identity_features):
+        if any(feature in available and values.get(feature, 0.0) == 0.0 for feature in identity_features):
             answer_eligible = False
             reasons.append(FusionPolicyReason.IDENTITY_FEATURE_MISMATCH)
         if (
             active
             and not exact_present
             and frame.get("expected_object_type", ExpectedObjectType.UNKNOWN) != ExpectedObjectType.UNKNOWN
-            and (FusionFeature.OBJECT_TYPE not in available or values[FusionFeature.OBJECT_TYPE] == 0.0)
+            and (FusionFeature.OBJECT_TYPE not in available or values.get(FusionFeature.OBJECT_TYPE, 0.0) == 0.0)
         ):
             answer_eligible = False
             reasons.append(FusionPolicyReason.OBJECT_TYPE_FEATURE_MISMATCH)
-        eligibility = trusted_candidate_eligibility(
-            eligibility["score_eligible"],
-            eligibility["evidence_eligible"],
-            answer_eligible,
-            tuple(dict.fromkeys(reasons)),
-            eligibility["feature_values"],
-            eligibility["feature_available"],
-        )
-        normalized = trusted_normalized_feature_set(values, tuple(feature for feature in FusionFeature if feature in available))
+        eligibility = {
+            "score_eligible": eligibility.get("score_eligible", False),
+            "evidence_eligible": eligibility.get("evidence_eligible", False),
+            "answer_eligible": answer_eligible,
+            "reason_codes": tuple(dict.fromkeys(reasons)),
+            "feature_values": dict(eligibility.get("feature_values", {})),
+            "feature_available": eligibility.get("feature_available", ()),
+        }
+        normalized = {"values": values, "available": tuple(feature for feature in FusionFeature if feature in available)}
         score, score_contributions = self.internal_score(normalized)
         digest = hashlib_sha256(f"{self.policy_fingerprint}:{frame.get('diagnostic_id', '')}:{statement_id}".encode()).hexdigest()
         fused = trusted_candidate(
             candidate_id=f"fused:sha256:{digest}",
             statement_id=statement_id,
-            response=representative["response"],
-            source=representative["source"],
-            features=trusted_feature_set(
-                values={feature.value: values[feature] for feature in normalized["available"]},
-                unavailable=tuple(sorted(feature.value for feature in FusionFeature if feature not in normalized["available"])),
-            ),
+            response=representative.get("response", ""),
+            source=representative.get("source", CandidateSource.EXACT),
+            features={
+                "values": {feature.value: values.get(feature, 0.0) for feature in normalized.get("available", ())},
+                "unavailable": tuple(sorted(feature.value for feature in FusionFeature if feature not in available)),
+            },
             evidence=retained_evidence,
-            scope=representative["scope"],
-            lifecycle=representative["lifecycle"],
+            scope=representative.get("scope", {}),
+            lifecycle=representative.get("lifecycle", LifecycleState.RETIRED),
             provenance={
-                **dict(representative["provenance"]),
+                **dict(representative.get("provenance", {})),
                 "resolver_sources": [source.value for source in sources],
                 "resolver_families": list(families),
             },
             diagnostics={"fusion_contribution_count": len(contributions)},
         )
-        result = trusted_fused_candidate(fused, contributions, normalized, score, score_contributions, eligibility)
+        result = {
+            "candidate": fused,
+            "contributions": contributions,
+            "normalized": normalized,
+            "score": score,
+            "score_contributions": dict(score_contributions),
+            "eligibility": eligibility,
+        }
         return result
 
     def exhausted_decision(
@@ -1259,17 +1253,19 @@ class CandidateFusionEngine:
         reasons = [reason.value]
         if retained_evidence:
             reasons.append(FusionPolicyReason.GRAPH_EVIDENCE_AVAILABLE.value)
-        result = trusted_fusion_decision(
-            outcome,
-            empty_candidate(),
-            (),
-            retained_evidence,
-            0.0,
-            False,
-            tuple(reasons),
-            report,
-            working_memory_bytes,
-        )
+        # An exhausted decision is EVIDENCE or MISS, so no candidate is selected.
+        result = {
+            "outcome": outcome,
+            "selected_candidate": empty_candidate(),
+            "selected_candidate_available": False,
+            "response_candidates": (),
+            "evidence": retained_evidence,
+            "confidence": 0.0,
+            "confidence_available": False,
+            "reason_codes": tuple(reasons),
+            "report": report,
+            "working_memory_bytes": working_memory_bytes,
+        }
         return result
 
     def decide(
@@ -1299,18 +1295,19 @@ class CandidateFusionEngine:
             raise InvalidRequestError("fusion working_memory_limit must be a nonnegative integer")
         if not working_memory_limit_available and working_memory_limit != 0:
             raise InvalidRequestError("fusion working_memory_limit requires availability")
-        if working_memory_limit_available and working_memory_limit > frame.get("budget", {})["max_working_memory_bytes"]:
+        frame_working_memory_limit = frame.get("budget", {}).get("max_working_memory_bytes", 0)
+        if working_memory_limit_available and working_memory_limit > frame_working_memory_limit:
             raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("fusion cooperative_check must be callable")
         control_check = cooperative_check if cooperative_check != () else (lambda: False)
-        memory_limit = (
-            working_memory_limit if working_memory_limit_available else frame.get("budget", {})["max_working_memory_bytes"]
-        )
+        memory_limit = working_memory_limit if working_memory_limit_available else frame_working_memory_limit
         control_check()
         # Evidence is retained even by an exhausted decision, so all of it is
-        # validated (the count is already bounded); candidates are copied and
-        # serialized one at a time against the working-memory allowance.
+        # validated (the count is already bounded); candidates are copied one at
+        # a time against the working-memory allowance. Working memory is counted
+        # in bytes of each value's external JSON encoding, the same unit as the
+        # diagnostic report bound; equality and ordering use native keys.
         validated_evidence = []
         working_bytes = 0
         for value in evidence:
@@ -1319,15 +1316,15 @@ class CandidateFusionEngine:
             validated_evidence.append(reference)
             working_bytes += len(evidence_reference_to_json(reference).encode("utf-8"))
         evidence = tuple(validated_evidence)
-        serialized_values = []
+        keyed_values = []
         for value in candidates:
             control_check()
             if working_bytes > memory_limit:
                 break
             candidate = validate_candidate(value)
-            serialized = trusted_candidate_to_json(candidate)
-            serialized_values.append((candidate, serialized))
-            working_bytes += len(serialized.encode("utf-8"))
+            payload = trusted_candidate_to_dict(candidate)
+            keyed_values.append((candidate, canonical_native_key(payload)))
+            working_bytes += len(json_text(payload).encode("utf-8"))
         if working_bytes > memory_limit:
             result = self.exhausted_decision(
                 frame,
@@ -1337,13 +1334,22 @@ class CandidateFusionEngine:
                 memory_limit,
             )
             return result
-        serialized_candidates = tuple(serialized_values)
-        candidates = tuple(candidate for candidate, _ in serialized_candidates)
-        candidate_variants: dict[str, set[str]] = {}
-        for candidate_value, serialized in serialized_candidates:
-            candidate_variants.setdefault(candidate_value["candidate_id"], set()).add(serialized)
+        keyed_candidates = tuple(keyed_values)
+        candidates = tuple(candidate for candidate, _ in keyed_candidates)
+        candidate_variants: dict[str, set[tuple]] = {}
+        for candidate_value, candidate_key in keyed_candidates:
+            candidate_variants.setdefault(candidate_value.get("candidate_id", ""), set()).add(candidate_key)
         conflicting_candidate_ids = {candidate_id for candidate_id, variants in candidate_variants.items() if len(variants) > 1}
-        ordered = tuple(sorted(candidates, key=trusted_canonical_candidate_key))
+        # Canonical order: source rank, candidate ID, then the full native record key.
+        ordered_keys = sorted(
+            keyed_candidates,
+            key=lambda item: (
+                FUSION_SOURCE_ORDER.get(item[0].get("source", CandidateSource.EXACT), len(FUSION_SOURCE_ORDER)),
+                item[0].get("candidate_id", ""),
+                item[1],
+            ),
+        )
+        ordered = tuple(candidate for candidate, _ in ordered_keys)
         contribution_groups: dict[str, list[dict]] = {}
         for candidate in ordered:
             control_check()
@@ -1352,11 +1358,11 @@ class CandidateFusionEngine:
                 candidate,
                 frame,
                 normalized,
-                candidate["candidate_id"] in conflicting_candidate_ids,
+                candidate.get("candidate_id", "") in conflicting_candidate_ids,
             )
             normalized = apply_validated_authoritative_features(normalized, eligibility)
-            contribution = trusted_fusion_contribution(candidate, normalized, eligibility)
-            contribution_groups.setdefault(candidate["statement_id"], []).append(contribution)
+            contribution = {"candidate": candidate, "normalized": normalized, "eligibility": eligibility}
+            contribution_groups.setdefault(candidate.get("statement_id", ""), []).append(contribution)
             contribution_json = trusted_fusion_contribution_to_json(contribution)
             working_bytes += len(contribution_json.encode("utf-8"))
             if working_bytes > memory_limit:
@@ -1399,17 +1405,20 @@ class CandidateFusionEngine:
             "scores": [],
         }
         if isinstance(self.internal_reranker, TransparentLogisticReranker) and self.internal_reranker.enabled:
+            reranker_settings = self.internal_reranker.settings
             eligible_shortlist = sorted(
-                (value for value in fused if value["eligibility"]["score_eligible"]),
-                key=lambda value: (-value["score"], value["candidate"]["statement_id"]),
-            )[: self.internal_reranker.settings["shortlist_size"]]
+                (value for value in fused if value.get("eligibility", {}).get("score_eligible", False)),
+                key=lambda value: (-value.get("score", 0.0), value.get("candidate", {}).get("statement_id", "")),
+            )[: reranker_settings.get("shortlist_size", 0)]
             shortlist = tuple(
                 {
-                    "statement_id": item["candidate"]["statement_id"],
-                    "base_score": item["score"],
+                    "statement_id": item.get("candidate", {}).get("statement_id", ""),
+                    "base_score": item.get("score", 0.0),
                     "features": {
                         name: (
-                            item["score"] if name == "base_score" else item["normalized"]["values"].get(FusionFeature(name), 0.0)
+                            item.get("score", 0.0)
+                            if name == "base_score"
+                            else item.get("normalized", {}).get("values", {}).get(FusionFeature(name), 0.0)
                         )
                         for name in RERANKER_FEATURES
                     },
@@ -1427,7 +1436,7 @@ class CandidateFusionEngine:
                     "applied": False,
                     "reason": "reranker_exception",
                     "exception_type": type(error).__name__,
-                    "model_version": self.internal_reranker.settings["model_version"],
+                    "model_version": reranker_settings.get("model_version", ""),
                     "elapsed_ns": 0,
                     "model_time_target_exceeded": False,
                     "input_bytes": 0,
@@ -1446,45 +1455,40 @@ class CandidateFusionEngine:
                     reranked_scores[statement_id] = bounded_unit(value.get("score", 0.0))
                 updated_fused = []
                 for item in fused:
-                    statement_id = item["candidate"]["statement_id"]
+                    item_candidate = item.get("candidate", {})
+                    statement_id = item_candidate.get("statement_id", "")
                     if statement_id not in reranked_scores:
                         updated_fused.append(item)
                         continue
-                    rerank_score = reranked_scores[statement_id]
+                    rerank_score = reranked_scores.get(statement_id, 0.0)
                     updated_candidate = trusted_candidate_with_changes(
-                        item["candidate"],
+                        item_candidate,
                         {
                             "provenance": {
-                                **dict(item["candidate"]["provenance"]),
-                                "reranker_implementation": self.internal_reranker.settings["implementation"],
-                                "reranker_model_version": self.internal_reranker.settings["model_version"],
+                                **dict(item_candidate.get("provenance", {})),
+                                "reranker_implementation": reranker_settings.get("implementation", ""),
+                                "reranker_model_version": reranker_settings.get("model_version", ""),
                             },
                             "diagnostics": {
-                                **dict(item["candidate"]["diagnostics"]),
-                                "fusion_base_score": item["score"],
+                                **dict(item_candidate.get("diagnostics", {})),
+                                "fusion_base_score": item.get("score", 0.0),
                                 "reranker_score": rerank_score,
                             },
                         },
                     )
-                    updated_fused.append(
-                        trusted_fused_candidate(
-                            updated_candidate,
-                            item["contributions"],
-                            item["normalized"],
-                            item["score"],
-                            item["score_contributions"],
-                            item["eligibility"],
-                        )
-                    )
+                    updated_item = dict(item)
+                    updated_item["candidate"] = updated_candidate
+                    updated_item["score_contributions"] = dict(item.get("score_contributions", {}))
+                    updated_fused.append(updated_item)
                 fused = tuple(updated_fused)
         ranked = tuple(
             sorted(
-                (candidate for candidate in fused if candidate["eligibility"]["score_eligible"]),
+                (candidate for candidate in fused if candidate.get("eligibility", {}).get("score_eligible", False)),
                 key=lambda item: (
-                    item["candidate"]["statement_id"] not in reranked_scores,
-                    -reranked_scores.get(item["candidate"]["statement_id"], 0.0),
-                    -item["score"],
-                    item["candidate"]["statement_id"],
+                    item.get("candidate", {}).get("statement_id", "") not in reranked_scores,
+                    -reranked_scores.get(item.get("candidate", {}).get("statement_id", ""), 0.0),
+                    -item.get("score", 0.0),
+                    item.get("candidate", {}).get("statement_id", ""),
                 ),
             )
         )
@@ -1492,18 +1496,16 @@ class CandidateFusionEngine:
             margin_available = len(ranked) > 1
             # A reranked leader with a lower fused score than the runner-up
             # has no margin, so the disagreement resolves as ambiguous.
-            margin = max(0.0, ranked[0]["score"] - ranked[1]["score"]) if margin_available else 1.0
+            margin = max(0.0, ranked[0].get("score", 0.0) - ranked[1].get("score", 0.0)) if margin_available else 1.0
             top = ranked[0]
-            values = dict(top["normalized"]["values"])
+            values = dict(top.get("normalized", {}).get("values", {}))
             values[FusionFeature.MARGIN] = margin if margin_available else 0.0
-            available = set(top["normalized"]["available"])
+            available = set(top.get("normalized", {}).get("available", ()))
             if margin_available:
                 available.add(FusionFeature.MARGIN)
-            top_normalized = trusted_normalized_feature_set(
-                values, tuple(feature for feature in FusionFeature if feature in available)
-            )
+            top_normalized = {"values": values, "available": tuple(feature for feature in FusionFeature if feature in available)}
             top_candidate = trusted_candidate_with_changes(
-                top["candidate"],
+                top.get("candidate", {}),
                 {
                     "features": feature_set(
                         values={feature.value: values.get(feature, 0.0) for feature in available},
@@ -1511,22 +1513,23 @@ class CandidateFusionEngine:
                     )
                 },
             )
-            top = trusted_fused_candidate(
-                top_candidate,
-                top["contributions"],
-                top_normalized,
-                top["score"],
-                top["score_contributions"],
-                top["eligibility"],
-            )
+            top = {
+                "candidate": top_candidate,
+                "contributions": top.get("contributions", ()),
+                "normalized": top_normalized,
+                "score": top.get("score", 0.0),
+                "score_contributions": dict(top.get("score_contributions", {})),
+                "eligibility": top.get("eligibility", {}),
+            }
             ranked = (top, *ranked[1:])
         else:
             margin_available = False
             margin = 0.0
+        evidence_threshold = self.policy.get("evidence_threshold", 0.0)
         evidence_candidates = tuple(
             item
             for item in ranked
-            if item["eligibility"]["evidence_eligible"] and item["score"] >= self.policy["evidence_threshold"]
+            if item.get("eligibility", {}).get("evidence_eligible", False) and item.get("score", 0.0) >= evidence_threshold
         )
         reasons: list[str] = []
         selected = empty_candidate()
@@ -1534,11 +1537,16 @@ class CandidateFusionEngine:
         confidence_available = False
         response_candidates: tuple[dict, ...] = ()
         retained_evidence, top_level_evidence_conflicts = dedupe_evidence(evidence, frame.get("scope", {}))
-        if ranked and ranked[0]["eligibility"]["answer_eligible"] and ranked[0]["score"] >= self.policy["answer_threshold"]:
-            top = ranked[0]
-            if margin_available and margin < self.policy["ambiguity_margin"]:
+        leader = ranked[0] if ranked else {}
+        if (
+            leader
+            and leader.get("eligibility", {}).get("answer_eligible", False)
+            and leader.get("score", 0.0) >= self.policy.get("answer_threshold", 0.0)
+        ):
+            top = leader
+            if margin_available and margin < self.policy.get("ambiguity_margin", 0.0):
                 outcome = ResolutionOutcome.EVIDENCE
-                response_candidates = tuple(item["candidate"] for item in evidence_candidates)
+                response_candidates = tuple(item.get("candidate", {}) for item in evidence_candidates)
                 reasons.extend(
                     (
                         FusionPolicyReason.AMBIGUOUS_TOP_CANDIDATES.value,
@@ -1547,14 +1555,14 @@ class CandidateFusionEngine:
                 )
             else:
                 outcome = ResolutionOutcome.ANSWER
-                selected = top["candidate"]
+                selected = top.get("candidate", {})
                 response_candidates = (selected,)
                 retained_evidence = ()
-                confidence = top["score"]
+                confidence = top.get("score", 0.0)
                 confidence_available = True
                 reasons.append(
                     FusionPolicyReason.ANSWER_EXACT_ELIGIBLE.value
-                    if selected["source"] == CandidateSource.EXACT
+                    if selected.get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
                     else FusionPolicyReason.ANSWER_FUSION_THRESHOLD.value
                 )
                 reasons.append(
@@ -1564,12 +1572,12 @@ class CandidateFusionEngine:
                 )
         elif evidence_candidates or retained_evidence:
             outcome = ResolutionOutcome.EVIDENCE
-            response_candidates = tuple(item["candidate"] for item in evidence_candidates)
+            response_candidates = tuple(item.get("candidate", {}) for item in evidence_candidates)
             if ranked:
                 top = ranked[0]
                 reasons.append(
                     FusionPolicyReason.ANSWER_ELIGIBILITY_PREVENTED.value
-                    if not top["eligibility"]["answer_eligible"]
+                    if not top.get("eligibility", {}).get("answer_eligible", False)
                     else FusionPolicyReason.ANSWER_THRESHOLD_NOT_MET.value
                 )
             if evidence_candidates:
@@ -1584,12 +1592,12 @@ class CandidateFusionEngine:
                 else FusionPolicyReason.EVIDENCE_THRESHOLD_NOT_MET.value
             )
         control_check()
-        ranked_ids = {candidate["candidate"]["statement_id"] for candidate in ranked}
+        ranked_ids = {candidate.get("candidate", {}).get("statement_id", "") for candidate in ranked}
         report_values = (
             *ranked,
-            *(candidate for candidate in fused if candidate["candidate"]["statement_id"] not in ranked_ids),
+            *(candidate for candidate in fused if candidate.get("candidate", {}).get("statement_id", "") not in ranked_ids),
         )
-        visible_report_values = report_values[: self.policy["max_report_candidates"]]
+        visible_report_values = report_values[: self.policy.get("max_report_candidates", 0)]
         candidate_reports = [trusted_fused_candidate_to_report_dict(candidate) for candidate in visible_report_values]
 
         report = {
@@ -1636,17 +1644,19 @@ class CandidateFusionEngine:
                 memory_limit,
             )
             return result
-        result = trusted_fusion_decision(
-            outcome,
-            selected,
-            response_candidates,
-            retained_evidence,
-            confidence,
-            confidence_available,
-            tuple(dict.fromkeys(reasons)),
-            report,
-            working_bytes,
-        )
+        # The decision carries isolated copies of the engine-owned candidates it returns.
+        result = {
+            "outcome": outcome,
+            "selected_candidate": trusted_candidate_with_changes(selected, {}),
+            "selected_candidate_available": outcome == ResolutionOutcome.ANSWER,
+            "response_candidates": tuple(trusted_candidate_with_changes(candidate, {}) for candidate in response_candidates),
+            "evidence": retained_evidence,
+            "confidence": confidence,
+            "confidence_available": confidence_available,
+            "reason_codes": tuple(dict.fromkeys(reasons)),
+            "report": report,
+            "working_memory_bytes": working_bytes,
+        }
         return result
 
 

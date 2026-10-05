@@ -11,7 +11,7 @@ if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
 from engram.config import load_config
-from engram.constants import ResolutionOutcome
+from engram.constants import ExpectedObjectType, ResolutionOutcome
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.resolution import resolver_result_to_dict, validate_resolution_result
@@ -41,44 +41,50 @@ def run(config_path: str) -> dict[str, object]:
                     "elapsed_ms": elapsed_ms,
                     "matches": [
                         {
-                            "canonical_id": row["canonical_id"],
-                            "primary_label": row["primary_label"],
-                            "object_type": row["object_type"].value,
+                            "canonical_id": row.get("canonical_id", ""),
+                            "primary_label": row.get("primary_label", ""),
+                            "object_type": row.get("object_type", ExpectedObjectType.UNKNOWN).value,
                         }
                         for row in rows
                     ],
                 }
             )
-        predicates = {row["canonical_id"]: row for surface in predicate_rows for row in surface["matches"] if isinstance(row, dict)}
+        predicates = {
+            row.get("canonical_id", ""): row
+            for surface in predicate_rows
+            for row in surface.get("matches", [])
+            if isinstance(row, dict)
+        }
         one_hop = []
         second_hop_subjects = {}
         if len(entities) == 1:
+            root_entity_id = entities[0].get("canonical_id", "")
             for predicate_id in sorted(predicates):
                 rows, elapsed_ms = timed(
                     lambda predicate_id=predicate_id: engine.relation_one_hop_proposition_projections(
-                        entities[0]["canonical_id"],
+                        root_entity_id,
                         predicate_id,
                         row_limit=4,
                     )
                 )
                 one_hop.append(
                     {
-                        "subject_entity_id": entities[0]["canonical_id"],
+                        "subject_entity_id": root_entity_id,
                         "predicate_id": predicate_id,
                         "elapsed_ms": elapsed_ms,
                         "propositions": [
                             {
-                                "proposition_id": row["projection"]["proposition_id"],
-                                "object_entity_id": row["projection"]["object_entity_id"],
-                                "object_label": row["object_label"],
-                                "object_type": row["object_type"].value,
+                                "proposition_id": row.get("projection", {}).get("proposition_id", ""),
+                                "object_entity_id": row.get("projection", {}).get("object_entity_id", ""),
+                                "object_label": row.get("object_label", ""),
+                                "object_type": row.get("object_type", ExpectedObjectType.UNKNOWN).value,
                             }
                             for row in rows
                         ],
                     }
                 )
                 for row in rows:
-                    second_hop_subjects[row["projection"]["object_entity_id"]] = row["object_label"]
+                    second_hop_subjects[row.get("projection", {}).get("object_entity_id", "")] = row.get("object_label", "")
         two_hop = []
         for subject_id in sorted(second_hop_subjects)[:4]:
             for predicate_id in sorted(predicates):
@@ -98,10 +104,10 @@ def run(config_path: str) -> dict[str, object]:
                             "elapsed_ms": elapsed_ms,
                             "propositions": [
                                 {
-                                    "proposition_id": row["projection"]["proposition_id"],
-                                    "object_entity_id": row["projection"]["object_entity_id"],
-                                    "object_label": row["object_label"],
-                                    "object_type": row["object_type"].value,
+                                    "proposition_id": row.get("projection", {}).get("proposition_id", ""),
+                                    "object_entity_id": row.get("projection", {}).get("object_entity_id", ""),
+                                    "object_label": row.get("object_label", ""),
+                                    "object_type": row.get("object_type", ExpectedObjectType.UNKNOWN).value,
                                 }
                                 for row in rows
                             ],
@@ -152,9 +158,9 @@ def run(config_path: str) -> dict[str, object]:
                 "elapsed_ms": entity_ms,
                 "matches": [
                     {
-                        "canonical_id": row["canonical_id"],
-                        "primary_label": row["primary_label"],
-                        "entity_type": row["entity_type"].value,
+                        "canonical_id": row.get("canonical_id", ""),
+                        "primary_label": row.get("primary_label", ""),
+                        "entity_type": row.get("entity_type", ExpectedObjectType.UNKNOWN).value,
                     }
                     for row in entities
                 ],

@@ -8,8 +8,8 @@ temporals. Phrasing degrades to a bare active frame if spaCy is
 unavailable, so lost NLP weakens phrasing rather than breaking recall.
 """
 
-from engram import phrasing
 from engram.phrasing import deslug, phrase_fact, phrase_facts
+from engram.spacy_setup import SPACY_PIPELINES
 
 
 def test_active_finite_verb_is_bare():
@@ -65,6 +65,6 @@ def test_phrase_facts_joins_sentences():
 
 def test_degrades_without_spacy(monkeypatch):
     """A missing model falls back to a bare active frame, overrides still fire."""
-    monkeypatch.setattr(phrasing, "get_nlp", lambda disable=(): ())
+    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", lambda disable=(): ())
     assert phrase_fact("Alice", "member_of", "UN") == "Alice member of UN."
     assert phrase_fact("Einstein", "date_of_birth", "1879") == "Einstein was born on 1879."

@@ -46,82 +46,59 @@ from engram.resolution import (
     validate_proposition_validity_inputs,
 )
 
-
-def internal_record() -> dict:
-    result = proposition_evidence_record(
-        proposition_id="proposition:01J5M6Q9J8",
-        source_resolver="structured_graph",
-        source_contributions=("structured_graph",),
-        features=feature_set(
-            values={"structured_match": 1.0, "supplied_trust": 0.84},
-            unavailable=("semantic_similarity",),
-        ),
-        canonical_references=canonical_proposition_references(
-            subject_entity_id="entity:alan-turing",
-            predicate_id="predicate:birth-date",
-            object_entity_id="entity:1912-06-23",
-        ),
-        validity=proposition_validity_inputs(
-            evaluation_time="2026-08-16T12:00:00Z",
-            active=True,
-            system_current=True,
-            valid_time_current=True,
-            valid_from="1912-06-23T00:00:00Z",
-            valid_from_available=True,
-        ),
-        trust=proposition_trust_inputs(
-            trust_category="verified_public",
-            trust_category_available=True,
-            supplied_trust=0.84,
-            supplied_trust_available=True,
-        ),
-        disclosure=disclosure_decision(
-            ownership=PropositionOwnership.PUBLIC,
-            basis=DisclosureBasis.PUBLIC_RULE,
-            scope=scope_key(namespace="support", context_fingerprint="account:one"),
-        ),
-        path=("proposition:01J5M6Q9J8",),
-        selection_reasons=("canonical_complete", "structured_match"),
-    )
-    return result
-
-
-def change_record(value: object, **changes: object) -> dict:
-    result = proposition_evidence_record_with_changes(value, changes)
-    return result
-
-
-def semantic_record() -> dict:
-    result = proposition_evidence_record_with_changes(
-        internal_record(),
-        {
-            "source_resolver": "support_semantic",
-            "source_contributions": ("support_semantic",),
-            "features": feature_set(
-                values={"semantic_similarity": 0.81, "supplied_trust": 0.84},
-                unavailable=("structured_match",),
-            ),
-            "selection_reasons": ("canonical_complete", "semantic_similarity"),
-        },
-    )
-    return result
-
-
-def policy_record(*, features=()) -> dict:
-    selected_features = (
-        features
-        if type(features) is dict
-        else feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.84},
-            unavailable=("semantic_similarity", "source_agreement"),
-        )
-    )
-    result = proposition_evidence_record_with_changes(internal_record(), {"features": selected_features})
-    return result
+# Read-only inputs: proposition_evidence_record and the *_with_changes revalidation copy every nested component.
+STRUCTURED_RECORD_VALUES = {
+    "proposition_id": "proposition:01J5M6Q9J8",
+    "source_resolver": "structured_graph",
+    "source_contributions": ("structured_graph",),
+    "features": feature_set(
+        values={"structured_match": 1.0, "supplied_trust": 0.84},
+        unavailable=("semantic_similarity",),
+    ),
+    "canonical_references": canonical_proposition_references(
+        subject_entity_id="entity:alan-turing",
+        predicate_id="predicate:birth-date",
+        object_entity_id="entity:1912-06-23",
+    ),
+    "validity": proposition_validity_inputs(
+        evaluation_time="2026-08-16T12:00:00Z",
+        active=True,
+        system_current=True,
+        valid_time_current=True,
+        valid_from="1912-06-23T00:00:00Z",
+        valid_from_available=True,
+    ),
+    "trust": proposition_trust_inputs(
+        trust_category="verified_public",
+        trust_category_available=True,
+        supplied_trust=0.84,
+        supplied_trust_available=True,
+    ),
+    "disclosure": disclosure_decision(
+        ownership=PropositionOwnership.PUBLIC,
+        basis=DisclosureBasis.PUBLIC_RULE,
+        scope=scope_key(namespace="support", context_fingerprint="account:one"),
+    ),
+    "path": ("proposition:01J5M6Q9J8",),
+    "selection_reasons": ("canonical_complete", "structured_match"),
+}
+SEMANTIC_RECORD_CHANGES = {
+    "source_resolver": "support_semantic",
+    "source_contributions": ("support_semantic",),
+    "features": feature_set(
+        values={"semantic_similarity": 0.81, "supplied_trust": 0.84},
+        unavailable=("structured_match",),
+    ),
+    "selection_reasons": ("canonical_complete", "semantic_similarity"),
+}
+POLICY_RECORD_FEATURES = feature_set(
+    values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.84},
+    unavailable=("semantic_similarity", "source_agreement"),
+)
 
 
 def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> None:
-    record = internal_record()
+    record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
     encoded = proposition_evidence_record_to_json(record)
 
     serialized = proposition_evidence_record_to_dict(record)
@@ -145,11 +122,12 @@ def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> No
     copied = validate_proposition_evidence_record(record)
     assert copied == record
     assert copied is not record
-    assert copied["canonical_references"] is not record["canonical_references"]
-    assert copied["validity"] is not record["validity"]
-    assert copied["trust"] is not record["trust"]
-    assert copied["disclosure"] is not record["disclosure"]
-    assert copied["features"] is not record["features"]
+    assert {"canonical_references", "validity", "trust", "disclosure", "features"} <= set(record)
+    assert copied.get("canonical_references", {}) is not record.get("canonical_references", {})
+    assert copied.get("validity", {}) is not record.get("validity", {})
+    assert copied.get("trust", {}) is not record.get("trust", {})
+    assert copied.get("disclosure", {}) is not record.get("disclosure", {})
+    assert copied.get("features", {}) is not record.get("features", {})
 
     malformed = dict(record)
     malformed["unexpected"] = True
@@ -195,15 +173,17 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
             validator(malformed)
 
     scope["namespace"] = "mutated"
-    assert disclosure["scope"]["namespace"] == "support"
+    assert disclosure.get("scope", {}).get("namespace", "") == "support"
     disclosure["authority_available"] = True
     with pytest_raises(InvalidRequestError):
         validate_disclosure_decision(disclosure)
 
 
 def test_proposition_evidence_normalization_merges_sources_features_and_reasons_deterministically() -> None:
-    structured = internal_record()
-    semantic = semantic_record()
+    structured = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
+    semantic = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), SEMANTIC_RECORD_CHANGES
+    )
 
     forward = canonicalize_proposition_evidence((structured, semantic, semantic))
     reverse = canonicalize_proposition_evidence((semantic, structured))
@@ -211,66 +191,78 @@ def test_proposition_evidence_normalization_merges_sources_features_and_reasons_
     assert forward == reverse
     assert len(forward) == 1
     merged = forward[0]
-    assert merged["source_resolver"] == "structured_graph"
-    assert merged["source_contributions"] == ("structured_graph", "support_semantic")
-    assert merged["features"]["values"] == {
+    merged_features = merged.get("features", {})
+    assert merged.get("source_resolver", "") == "structured_graph"
+    assert merged.get("source_contributions", ()) == ("structured_graph", "support_semantic")
+    assert merged_features.get("values", {}) == {
         "semantic_similarity": 0.81,
         "source_agreement": 1.0,
         "structured_match": 1.0,
         "supplied_trust": 0.84,
     }
-    assert merged["features"]["unavailable"] == ()
-    assert merged["selection_reasons"] == (
+    assert "unavailable" in merged_features
+    assert merged_features.get("unavailable", ()) == ()
+    assert merged.get("selection_reasons", ()) == (
         "canonical_complete",
         "semantic_similarity",
         "source_agreement",
         "structured_match",
     )
     assert canonicalize_proposition_evidence(forward) == forward
-    assert structured["source_contributions"] == ("structured_graph",)
-    assert semantic["source_contributions"] == ("support_semantic",)
+    assert structured.get("source_contributions", ()) == ("structured_graph",)
+    assert semantic.get("source_contributions", ()) == ("support_semantic",)
 
 
 def test_proposition_evidence_normalization_orders_distinct_propositions_by_stable_id() -> None:
     first = proposition_evidence_record_with_changes(
-        internal_record(), {"proposition_id": "proposition:a", "path": ("proposition:a",)}
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"proposition_id": "proposition:a", "path": ("proposition:a",)}
     )
     second = proposition_evidence_record_with_changes(
-        internal_record(), {"proposition_id": "proposition:b", "path": ("proposition:b",)}
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"proposition_id": "proposition:b", "path": ("proposition:b",)}
     )
 
     normalized = canonicalize_proposition_evidence((second, first))
 
-    assert tuple(record["proposition_id"] for record in normalized) == ("proposition:a", "proposition:b")
+    assert tuple(record.get("proposition_id", "") for record in normalized) == ("proposition:a", "proposition:b")
 
 
 @pytest_mark.parametrize(
     ("conflicting", "message"),
     [
         (
-            change_record(
-                semantic_record(),
-                canonical_references=canonical_proposition_references(
-                    "entity:alan-turing",
-                    "predicate:birth-date",
-                    "entity:different",
+            proposition_evidence_record_with_changes(
+                proposition_evidence_record_with_changes(
+                    proposition_evidence_record(**STRUCTURED_RECORD_VALUES), SEMANTIC_RECORD_CHANGES
                 ),
+                {
+                    "canonical_references": canonical_proposition_references(
+                        "entity:alan-turing",
+                        "predicate:birth-date",
+                        "entity:different",
+                    ),
+                },
             ),
             "conflicting canonical references",
         ),
         (
-            change_record(
-                semantic_record(),
-                features=feature_set(values={"semantic_similarity": 0.81, "structured_match": 0.5, "supplied_trust": 0.84}),
+            proposition_evidence_record_with_changes(
+                proposition_evidence_record_with_changes(
+                    proposition_evidence_record(**STRUCTURED_RECORD_VALUES), SEMANTIC_RECORD_CHANGES
+                ),
+                {"features": feature_set(values={"semantic_similarity": 0.81, "structured_match": 0.5, "supplied_trust": 0.84})},
             ),
             "conflicting measured feature structured_match",
         ),
         (
-            change_record(
-                semantic_record(),
-                disclosure=validate_disclosure_decision(
-                    {**semantic_record()["disclosure"], "scope": scope_key(namespace="different")}
+            proposition_evidence_record_with_changes(
+                proposition_evidence_record_with_changes(
+                    proposition_evidence_record(**STRUCTURED_RECORD_VALUES), SEMANTIC_RECORD_CHANGES
                 ),
+                {
+                    "disclosure": validate_disclosure_decision(
+                        {**STRUCTURED_RECORD_VALUES.get("disclosure", {}), "scope": scope_key(namespace="different")}
+                    ),
+                },
             ),
             "conflicting current evidence state",
         ),
@@ -278,9 +270,9 @@ def test_proposition_evidence_normalization_orders_distinct_propositions_by_stab
 )
 def test_proposition_evidence_normalization_rejects_conflicts_in_either_order(conflicting, message) -> None:
     with pytest_raises(InvalidRequestError, match=message):
-        canonicalize_proposition_evidence((internal_record(), conflicting))
+        canonicalize_proposition_evidence((proposition_evidence_record(**STRUCTURED_RECORD_VALUES), conflicting))
     with pytest_raises(InvalidRequestError, match=message):
-        canonicalize_proposition_evidence((conflicting, internal_record()))
+        canonicalize_proposition_evidence((conflicting, proposition_evidence_record(**STRUCTURED_RECORD_VALUES)))
 
 
 def test_proposition_evidence_normalization_enforces_input_source_and_cooperative_bounds() -> None:
@@ -291,10 +283,9 @@ def test_proposition_evidence_normalization_enforces_input_source_and_cooperativ
         calls += 1
 
     records = tuple(
-        change_record(
-            internal_record(),
-            source_resolver=f"source_{index}",
-            source_contributions=(f"source_{index}",),
+        proposition_evidence_record_with_changes(
+            proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+            {"source_resolver": f"source_{index}", "source_contributions": (f"source_{index}",)},
         )
         for index in range(9)
     )
@@ -302,7 +293,7 @@ def test_proposition_evidence_normalization_enforces_input_source_and_cooperativ
     with pytest_raises(InvalidRequestError, match="sources exceed the limit of 8"):
         canonicalize_proposition_evidence(records, check)
     with pytest_raises(InvalidRequestError, match="at most 1000"):
-        canonicalize_proposition_evidence((internal_record(),) * 1_001)
+        canonicalize_proposition_evidence((proposition_evidence_record(**STRUCTURED_RECORD_VALUES),) * 1_001)
     assert calls == 10
 
 
@@ -342,145 +333,178 @@ def test_evidence_usefulness_policy_decoder_rejects_wrong_wire_types(field, malf
 
 def test_evidence_usefulness_accepts_exact_structured_and_semantic_floor_boundaries() -> None:
     policy = evidence_usefulness_policy()
-    structured = evaluate_evidence_usefulness(policy, policy_record())
+    structured_record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
+    structured = evaluate_evidence_usefulness(
+        policy,
+        proposition_evidence_record_with_changes(structured_record, {"features": POLICY_RECORD_FEATURES}),
+    )
     semantic = evaluate_evidence_usefulness(
         policy,
-        policy_record(
-            features=feature_set(
-                values={"canonical_completeness": 1.0, "semantic_similarity": 0.60, "supplied_trust": 0.84},
-                unavailable=("source_agreement", "structured_match"),
-            )
+        proposition_evidence_record_with_changes(
+            structured_record,
+            {
+                "features": feature_set(
+                    values={"canonical_completeness": 1.0, "semantic_similarity": 0.60, "supplied_trust": 0.84},
+                    unavailable=("source_agreement", "structured_match"),
+                )
+            },
         ),
     )
 
-    assert structured["included"] is True
-    assert EvidenceUsefulnessReason.STRUCTURED_MATCH_QUALIFIED in structured["reasons"]
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_AVAILABLE in structured["reasons"]
-    assert semantic["included"] is True
-    assert EvidenceUsefulnessReason.SEMANTIC_SIMILARITY_QUALIFIED in semantic["reasons"]
-    assert tuple(reason.value for reason in semantic["reasons"]) == tuple(sorted(reason.value for reason in semantic["reasons"]))
+    structured_reasons = structured.get("reasons", ())
+    semantic_reasons = semantic.get("reasons", ())
+    assert structured.get("included", False) is True
+    assert EvidenceUsefulnessReason.STRUCTURED_MATCH_QUALIFIED in structured_reasons
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_AVAILABLE in structured_reasons
+    assert semantic.get("included", False) is True
+    assert EvidenceUsefulnessReason.SEMANTIC_SIMILARITY_QUALIFIED in semantic_reasons
+    assert tuple(reason.value for reason in semantic_reasons) == tuple(sorted(reason.value for reason in semantic_reasons))
 
 
 def test_evidence_usefulness_distinguishes_unavailable_from_measured_zero() -> None:
     policy = evidence_usefulness_policy()
+    structured_record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
     signal_unavailable = evaluate_evidence_usefulness(
         policy,
-        policy_record(
-            features=feature_set(
-                values={"canonical_completeness": 1.0, "supplied_trust": 0.84},
-                unavailable=("semantic_similarity", "source_agreement", "structured_match"),
-            )
+        proposition_evidence_record_with_changes(
+            structured_record,
+            {
+                "features": feature_set(
+                    values={"canonical_completeness": 1.0, "supplied_trust": 0.84},
+                    unavailable=("semantic_similarity", "source_agreement", "structured_match"),
+                )
+            },
         ),
     )
     signal_zero = evaluate_evidence_usefulness(
         policy,
-        policy_record(
-            features=feature_set(
-                values={"canonical_completeness": 1.0, "semantic_similarity": 0.0, "supplied_trust": 0.84},
-                unavailable=("source_agreement", "structured_match"),
-            )
+        proposition_evidence_record_with_changes(
+            structured_record,
+            {
+                "features": feature_set(
+                    values={"canonical_completeness": 1.0, "semantic_similarity": 0.0, "supplied_trust": 0.84},
+                    unavailable=("source_agreement", "structured_match"),
+                )
+            },
         ),
     )
     canonical_unavailable = evaluate_evidence_usefulness(
         policy,
-        policy_record(
-            features=feature_set(
-                values={"structured_match": 1.0, "supplied_trust": 0.84},
-                unavailable=("canonical_completeness",),
-            )
+        proposition_evidence_record_with_changes(
+            structured_record,
+            {
+                "features": feature_set(
+                    values={"structured_match": 1.0, "supplied_trust": 0.84},
+                    unavailable=("canonical_completeness",),
+                )
+            },
         ),
     )
     canonical_zero = evaluate_evidence_usefulness(
         policy,
-        policy_record(
-            features=feature_set(values={"canonical_completeness": 0.0, "structured_match": 1.0, "supplied_trust": 0.84})
+        proposition_evidence_record_with_changes(
+            structured_record,
+            {"features": feature_set(values={"canonical_completeness": 0.0, "structured_match": 1.0, "supplied_trust": 0.84})},
         ),
     )
 
-    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_UNAVAILABLE in signal_unavailable["reasons"]
-    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_BELOW_FLOOR in signal_zero["reasons"]
-    assert EvidenceUsefulnessReason.CANONICAL_COMPLETENESS_UNAVAILABLE in canonical_unavailable["reasons"]
-    assert EvidenceUsefulnessReason.CANONICAL_COMPLETENESS_BELOW_FLOOR in canonical_zero["reasons"]
-    assert not signal_unavailable["included"]
-    assert not signal_zero["included"]
-    assert not canonical_unavailable["included"]
-    assert not canonical_zero["included"]
+    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_UNAVAILABLE in signal_unavailable.get("reasons", ())
+    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_BELOW_FLOOR in signal_zero.get("reasons", ())
+    assert EvidenceUsefulnessReason.CANONICAL_COMPLETENESS_UNAVAILABLE in canonical_unavailable.get("reasons", ())
+    assert EvidenceUsefulnessReason.CANONICAL_COMPLETENESS_BELOW_FLOOR in canonical_zero.get("reasons", ())
+    for decision in (signal_unavailable, signal_zero, canonical_unavailable, canonical_zero):
+        assert "included" in decision
+        assert not decision.get("included", False)
 
 
 def test_evidence_usefulness_configured_trust_floor_distinguishes_absence_zero_and_boundary() -> None:
     policy = evidence_usefulness_policy(supplied_trust_floor=0.5, supplied_trust_floor_available=True)
-    unavailable_record = change_record(
-        policy_record(),
-        trust=proposition_trust_inputs(),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0},
-            unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
-        ),
+    structured_record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
+    unavailable_record = proposition_evidence_record_with_changes(
+        structured_record,
+        {
+            "trust": proposition_trust_inputs(),
+            "features": feature_set(
+                values={"canonical_completeness": 1.0, "structured_match": 1.0},
+                unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
+            ),
+        },
     )
-    measured_zero_record = change_record(
-        policy_record(),
-        trust=proposition_trust_inputs(
-            supplied_trust=0.0,
-            supplied_trust_available=True,
-        ),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
-            unavailable=("semantic_similarity", "source_agreement"),
-        ),
+    measured_zero_record = proposition_evidence_record_with_changes(
+        structured_record,
+        {
+            "trust": proposition_trust_inputs(
+                supplied_trust=0.0,
+                supplied_trust_available=True,
+            ),
+            "features": feature_set(
+                values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
+                unavailable=("semantic_similarity", "source_agreement"),
+            ),
+        },
     )
-    boundary_record = change_record(
-        policy_record(),
-        trust=proposition_trust_inputs(
-            supplied_trust=0.5,
-            supplied_trust_available=True,
-        ),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.5},
-            unavailable=("semantic_similarity", "source_agreement"),
-        ),
+    boundary_record = proposition_evidence_record_with_changes(
+        structured_record,
+        {
+            "trust": proposition_trust_inputs(
+                supplied_trust=0.5,
+                supplied_trust_available=True,
+            ),
+            "features": feature_set(
+                values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.5},
+                unavailable=("semantic_similarity", "source_agreement"),
+            ),
+        },
     )
 
     unavailable = evaluate_evidence_usefulness(policy, unavailable_record)
     measured_zero = evaluate_evidence_usefulness(policy, measured_zero_record)
     boundary = evaluate_evidence_usefulness(policy, boundary_record)
 
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_REQUIRED_UNAVAILABLE in unavailable["reasons"]
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_BELOW_FLOOR in measured_zero["reasons"]
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_FLOOR_SATISFIED in boundary["reasons"]
-    assert unavailable["included"] is False
-    assert measured_zero["included"] is False
-    assert boundary["included"] is True
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_REQUIRED_UNAVAILABLE in unavailable.get("reasons", ())
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_BELOW_FLOOR in measured_zero.get("reasons", ())
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_FLOOR_SATISFIED in boundary.get("reasons", ())
+    assert "included" in unavailable
+    assert unavailable.get("included", False) is False
+    assert "included" in measured_zero
+    assert measured_zero.get("included", False) is False
+    assert boundary.get("included", False) is True
 
 
 def test_evidence_usefulness_default_policy_does_not_rank_or_require_supplied_trust() -> None:
-    unavailable_record = change_record(
-        policy_record(),
-        trust=proposition_trust_inputs(),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0},
-            unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
-        ),
+    structured_record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
+    unavailable_record = proposition_evidence_record_with_changes(
+        structured_record,
+        {
+            "trust": proposition_trust_inputs(),
+            "features": feature_set(
+                values={"canonical_completeness": 1.0, "structured_match": 1.0},
+                unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
+            ),
+        },
     )
-    measured_zero_record = change_record(
-        policy_record(),
-        trust=proposition_trust_inputs(
-            supplied_trust=0.0,
-            supplied_trust_available=True,
-        ),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
-            unavailable=("semantic_similarity", "source_agreement"),
-        ),
+    measured_zero_record = proposition_evidence_record_with_changes(
+        structured_record,
+        {
+            "trust": proposition_trust_inputs(
+                supplied_trust=0.0,
+                supplied_trust_available=True,
+            ),
+            "features": feature_set(
+                values={"canonical_completeness": 1.0, "structured_match": 1.0, "supplied_trust": 0.0},
+                unavailable=("semantic_similarity", "source_agreement"),
+            ),
+        },
     )
 
     policy = evidence_usefulness_policy()
     unavailable = evaluate_evidence_usefulness(policy, unavailable_record)
     measured_zero = evaluate_evidence_usefulness(policy, measured_zero_record)
 
-    assert unavailable["included"] is True
-    assert measured_zero["included"] is True
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_UNAVAILABLE in unavailable["reasons"]
-    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_AVAILABLE in measured_zero["reasons"]
+    assert unavailable.get("included", False) is True
+    assert measured_zero.get("included", False) is True
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_UNAVAILABLE in unavailable.get("reasons", ())
+    assert EvidenceUsefulnessReason.SUPPLIED_TRUST_AVAILABLE in measured_zero.get("reasons", ())
 
 
 def test_evidence_usefulness_decision_rejects_inconsistent_external_reason_sets() -> None:
@@ -499,99 +523,127 @@ def test_evidence_usefulness_decision_rejects_inconsistent_external_reason_sets(
 
 
 def test_evidence_usefulness_source_agreement_cannot_rescue_subfloor_retrieval() -> None:
-    record = policy_record(
-        features=feature_set(
-            values={
-                "canonical_completeness": 1.0,
-                "semantic_similarity": 0.59,
-                "source_agreement": 1.0,
-                "structured_match": 0.0,
-                "supplied_trust": 0.84,
-            },
-        )
+    record = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+        {
+            "features": feature_set(
+                values={
+                    "canonical_completeness": 1.0,
+                    "semantic_similarity": 0.59,
+                    "source_agreement": 1.0,
+                    "structured_match": 0.0,
+                    "supplied_trust": 0.84,
+                },
+            )
+        },
     )
 
     decision = evaluate_evidence_usefulness(evidence_usefulness_policy(), record)
 
-    assert decision["included"] is False
-    assert EvidenceUsefulnessReason.SOURCE_AGREEMENT_QUALIFIED in decision["reasons"]
-    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_BELOW_FLOOR in decision["reasons"]
+    assert "included" in decision
+    assert decision.get("included", False) is False
+    assert EvidenceUsefulnessReason.SOURCE_AGREEMENT_QUALIFIED in decision.get("reasons", ())
+    assert EvidenceUsefulnessReason.RETRIEVAL_SIGNAL_BELOW_FLOOR in decision.get("reasons", ())
 
 
 def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero() -> None:
-    unavailable = change_record(internal_record(), trust=proposition_trust_inputs())
-    measured_zero = change_record(
-        internal_record(),
-        trust=proposition_trust_inputs(
-            supplied_trust=0.0,
-            supplied_trust_available=True,
-        ),
+    unavailable = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"trust": proposition_trust_inputs()}
+    )
+    measured_zero = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+        {
+            "trust": proposition_trust_inputs(
+                supplied_trust=0.0,
+                supplied_trust_available=True,
+            )
+        },
     )
 
-    assert unavailable["trust"]["supplied_trust"] == measured_zero["trust"]["supplied_trust"] == 0.0
-    assert unavailable["trust"]["supplied_trust_available"] is False
-    assert measured_zero["trust"]["supplied_trust_available"] is True
+    unavailable_trust = unavailable.get("trust", {})
+    measured_zero_trust = measured_zero.get("trust", {})
+    assert {"supplied_trust", "supplied_trust_available"} <= set(unavailable_trust)
+    assert {"supplied_trust", "supplied_trust_available"} <= set(measured_zero_trust)
+    assert unavailable_trust.get("supplied_trust", 0.0) == measured_zero_trust.get("supplied_trust", 0.0) == 0.0
+    assert unavailable_trust.get("supplied_trust_available", False) is False
+    assert measured_zero_trust.get("supplied_trust_available", False) is True
     assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(unavailable)) == unavailable
     assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(measured_zero)) == measured_zero
 
 
 @pytest_mark.parametrize(
-    ("factory", "internal_message"),
+    ("apply_invalid_change", "internal_message"),
     [
-        (lambda: change_record(internal_record(), proposition_id="x" * 257), "256 UTF-8 bytes"),
-        (lambda: change_record(internal_record(), proposition_id="proposition id"), "whitespace"),
-        (lambda: change_record(internal_record(), selection_reasons=("reason with spaces",)), "whitespace"),
-        (lambda: change_record(internal_record(), path=("proposition:other",)), "singleton proposition_id"),
-        (lambda: change_record(internal_record(), path=()), "singleton proposition_id"),
-        (lambda: change_record(internal_record(), selection_reasons=()), "1 through 16"),
-        (lambda: change_record(internal_record(), selection_reasons=("z", "a")), "unique and sorted"),
-        (lambda: change_record(internal_record(), selection_reasons=tuple(f"r{i:02d}" for i in range(17))), "1 through 16"),
-        (lambda: change_record(internal_record(), source_contributions=()), "1 through 8"),
-        (lambda: change_record(internal_record(), source_contributions=("semantic_proposition",)), "must be present"),
+        (lambda record: proposition_evidence_record_with_changes(record, {"proposition_id": "x" * 257}), "256 UTF-8 bytes"),
+        (lambda record: proposition_evidence_record_with_changes(record, {"proposition_id": "proposition id"}), "whitespace"),
         (
-            lambda: change_record(
-                internal_record(),
-                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "active": False}),
+            lambda record: proposition_evidence_record_with_changes(record, {"selection_reasons": ("reason with spaces",)}),
+            "whitespace",
+        ),
+        (
+            lambda record: proposition_evidence_record_with_changes(record, {"path": ("proposition:other",)}),
+            "singleton proposition_id",
+        ),
+        (lambda record: proposition_evidence_record_with_changes(record, {"path": ()}), "singleton proposition_id"),
+        (lambda record: proposition_evidence_record_with_changes(record, {"selection_reasons": ()}), "1 through 16"),
+        (lambda record: proposition_evidence_record_with_changes(record, {"selection_reasons": ("z", "a")}), "unique and sorted"),
+        (
+            lambda record: proposition_evidence_record_with_changes(
+                record, {"selection_reasons": tuple(f"r{i:02d}" for i in range(17))}
+            ),
+            "1 through 16",
+        ),
+        (lambda record: proposition_evidence_record_with_changes(record, {"source_contributions": ()}), "1 through 8"),
+        (
+            lambda record: proposition_evidence_record_with_changes(record, {"source_contributions": ("semantic_proposition",)}),
+            "must be present",
+        ),
+        (
+            lambda record: proposition_evidence_record_with_changes(
+                record,
+                {"validity": validate_proposition_validity_inputs({**record.get("validity", {}), "active": False})},
             ),
             "active conflicts with the disclosed invalidation boundary",
         ),
         (
-            lambda: change_record(
-                internal_record(),
-                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "system_current": False}),
+            lambda record: proposition_evidence_record_with_changes(
+                record,
+                {"validity": validate_proposition_validity_inputs({**record.get("validity", {}), "system_current": False})},
             ),
             "system_current conflicts with the disclosed system interval",
         ),
         (
-            lambda: change_record(
-                internal_record(),
-                validity=validate_proposition_validity_inputs({**internal_record()["validity"], "valid_time_current": False}),
+            lambda record: proposition_evidence_record_with_changes(
+                record,
+                {"validity": validate_proposition_validity_inputs({**record.get("validity", {}), "valid_time_current": False})},
             ),
             "conflicts with the disclosed",
         ),
         (
-            lambda: change_record(
-                internal_record(),
-                trust=proposition_trust_inputs(supplied_trust=0.5, supplied_trust_available=False),
+            lambda record: proposition_evidence_record_with_changes(
+                record,
+                {"trust": proposition_trust_inputs(supplied_trust=0.5, supplied_trust_available=False)},
             ),
             "must be zero when unavailable",
         ),
         (
-            lambda: change_record(
-                internal_record(),
-                disclosure=disclosure_decision(
-                    ownership=PropositionOwnership.COMPANY,
-                    basis=DisclosureBasis.PUBLIC_RULE,
-                    scope=scope_key(namespace="support"),
-                ),
+            lambda record: proposition_evidence_record_with_changes(
+                record,
+                {
+                    "disclosure": disclosure_decision(
+                        ownership=PropositionOwnership.COMPANY,
+                        basis=DisclosureBasis.PUBLIC_RULE,
+                        scope=scope_key(namespace="support"),
+                    )
+                },
             ),
             "trusted scope authority",
         ),
     ],
 )
-def test_proposition_evidence_rejects_malformed_or_ambiguous_values(factory, internal_message) -> None:
+def test_proposition_evidence_rejects_malformed_or_ambiguous_values(apply_invalid_change, internal_message) -> None:
     with pytest_raises(InvalidRequestError, match=internal_message):
-        factory()
+        apply_invalid_change(proposition_evidence_record(**STRUCTURED_RECORD_VALUES))
 
 
 def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
@@ -602,15 +654,17 @@ def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
         authority="visibility-authority-v3",
         authority_available=True,
     )
-    record = change_record(internal_record(), disclosure=disclosure)
+    record = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"disclosure": disclosure}
+    )
 
     assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(record)) == record
-    assert record["disclosure"]["scope"] == scope_key(namespace="support", context_fingerprint="tenant:acme")
+    assert record.get("disclosure", {}).get("scope", {}) == scope_key(namespace="support", context_fingerprint="tenant:acme")
 
 
 @pytest_mark.parametrize("field", ["raw_proposition", "passage", "proof", "credential", "cypher", "embedding", "properties"])
 def test_proposition_evidence_decoder_rejects_excluded_payload_fields(field: str) -> None:
-    payload = proposition_evidence_record_to_dict(internal_record())
+    payload = proposition_evidence_record_to_dict(proposition_evidence_record(**STRUCTURED_RECORD_VALUES))
     payload[field] = "secret"
 
     with pytest_raises(InvalidRequestError, match="invalid fields"):
@@ -618,8 +672,9 @@ def test_proposition_evidence_decoder_rejects_excluded_payload_fields(field: str
 
 
 def test_proposition_evidence_decoder_rejects_nested_unknown_fields() -> None:
-    unknown = proposition_evidence_record_to_dict(internal_record())
-    validity = unknown["validity"]
+    unknown = proposition_evidence_record_to_dict(proposition_evidence_record(**STRUCTURED_RECORD_VALUES))
+    assert "validity" in unknown
+    validity = unknown.get("validity", {})
     assert isinstance(validity, dict)
     validity["unexpected"] = "secret"
     with pytest_raises(InvalidRequestError, match="invalid fields"):
@@ -627,21 +682,21 @@ def test_proposition_evidence_decoder_rejects_nested_unknown_fields() -> None:
 
 
 def test_evidence_package_codec_canonicalizes_and_deduplicates() -> None:
-    first = internal_record()
-    second = change_record(
+    first = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
+    second = proposition_evidence_record_with_changes(
         first,
-        proposition_id="proposition:01J5M6Q9J9",
-        path=("proposition:01J5M6Q9J9",),
+        {"proposition_id": "proposition:01J5M6Q9J9", "path": ("proposition:01J5M6Q9J9",)},
     )
 
     package = build_evidence_package((second, first, first))
 
+    expected_ids = (first.get("proposition_id", ""), second.get("proposition_id", ""))
     assert package.__class__ is dict
-    assert tuple(record["proposition_id"] for record in package["records"]) == (first["proposition_id"], second["proposition_id"])
-    assert package["retained_count"] == 2
-    assert package["omitted_count"] == 1
-    assert package["truncated"] is True
-    assert package["truncation_reasons"] == (EvidencePackageTruncationReason.DUPLICATE_PROPOSITION_ID,)
+    assert tuple(record.get("proposition_id", "") for record in package.get("records", ())) == expected_ids
+    assert package.get("retained_count", 0) == 2
+    assert package.get("omitted_count", 0) == 1
+    assert package.get("truncated", False) is True
+    assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.DUPLICATE_PROPOSITION_ID,)
     serialized = evidence_package_to_dict(package)
     encoded = evidence_package_to_json(package)
     assert evidence_package_from_dict(serialized) == package
@@ -651,70 +706,82 @@ def test_evidence_package_codec_canonicalizes_and_deduplicates() -> None:
     copied = validate_evidence_package(package)
     assert copied == package
     assert copied is not package
-    assert copied["records"][0] is not package["records"][0]
+    assert copied.get("records", ())[0] is not package.get("records", ())[0]
 
 
 def test_evidence_package_rejects_conflicting_same_id_projections() -> None:
-    conflict = change_record(internal_record(), features=feature_set(values={"structured_match": 0.5}))
+    conflict = proposition_evidence_record_with_changes(
+        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"features": feature_set(values={"structured_match": 0.5})}
+    )
 
     with pytest_raises(InvalidRequestError, match="conflicting Proposition evidence projections"):
-        build_evidence_package((internal_record(), conflict))
+        build_evidence_package((proposition_evidence_record(**STRUCTURED_RECORD_VALUES), conflict))
 
 
 def test_evidence_package_applies_count_limit_after_canonical_ordering() -> None:
     records = tuple(
-        change_record(internal_record(), proposition_id=f"proposition:{index:02d}", path=(f"proposition:{index:02d}",))
+        proposition_evidence_record_with_changes(
+            proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+            {"proposition_id": f"proposition:{index:02d}", "path": (f"proposition:{index:02d}",)},
+        )
         for index in reversed(range(12))
     )
 
     package = build_evidence_package(records)
 
-    assert package["retained_count"] == 10
-    assert package["omitted_count"] == 2
-    assert tuple(record["proposition_id"] for record in package["records"]) == tuple(
+    assert package.get("retained_count", 0) == 10
+    assert package.get("omitted_count", 0) == 2
+    assert tuple(record.get("proposition_id", "") for record in package.get("records", ())) == tuple(
         f"proposition:{index:02d}" for index in range(10)
     )
-    assert package["truncation_reasons"] == (EvidencePackageTruncationReason.RECORD_LIMIT,)
+    assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.RECORD_LIMIT,)
     assert len(evidence_package_to_json(package).encode("utf-8")) <= 65_536
 
 
 def test_evidence_package_applies_complete_serialized_byte_limit() -> None:
     records = tuple(
-        change_record(
-            internal_record(),
-            proposition_id=f"proposition:{index:02d}",
-            path=(f"proposition:{index:02d}",),
-            selection_reasons=tuple(f"reason_{reason:02d}_{'x' * 70}" for reason in range(16)),
+        proposition_evidence_record_with_changes(
+            proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+            {
+                "proposition_id": f"proposition:{index:02d}",
+                "path": (f"proposition:{index:02d}",),
+                "selection_reasons": tuple(f"reason_{reason:02d}_{'x' * 70}" for reason in range(16)),
+            },
         )
         for index in range(5)
     )
 
     package = build_evidence_package(records, max_bytes=5_000)
 
-    assert 0 < package["retained_count"] < len(records)
-    assert package["omitted_count"] == len(records) - package["retained_count"]
-    assert package["truncation_reasons"] == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
+    retained_count = package.get("retained_count", 0)
+    assert 0 < retained_count < len(records)
+    assert package.get("omitted_count", 0) == len(records) - retained_count
+    assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
     assert len(evidence_package_to_json(package).encode("utf-8")) <= 5_000
 
 
 def test_evidence_package_hard_byte_limit_truncates_before_construction() -> None:
     large_features = feature_set(values={f"feature_{index:02d}_{'x' * 75}": 1.0 for index in range(64)})
     records = tuple(
-        change_record(
-            internal_record(),
-            proposition_id=f"proposition:{index:02d}",
-            path=(f"proposition:{index:02d}",),
-            features=large_features,
-            selection_reasons=tuple(f"reason_{reason:02d}_{'x' * 70}" for reason in range(16)),
+        proposition_evidence_record_with_changes(
+            proposition_evidence_record(**STRUCTURED_RECORD_VALUES),
+            {
+                "proposition_id": f"proposition:{index:02d}",
+                "path": (f"proposition:{index:02d}",),
+                "features": large_features,
+                "selection_reasons": tuple(f"reason_{reason:02d}_{'x' * 70}" for reason in range(16)),
+            },
         )
         for index in range(10)
     )
 
     package = build_evidence_package(records)
 
-    assert package["retained_count"] < len(records)
-    assert package["omitted_count"] == len(records) - package["retained_count"]
-    assert package["truncation_reasons"] == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
+    assert "retained_count" in package
+    retained_count = package.get("retained_count", 0)
+    assert retained_count < len(records)
+    assert package.get("omitted_count", 0) == len(records) - retained_count
+    assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
     assert len(evidence_package_to_json(package).encode("utf-8")) <= 65_536
     with pytest_raises(InvalidRequestError, match="65536 UTF-8 bytes"):
         evidence_package(records, 10, 0, False, ())
@@ -723,8 +790,8 @@ def test_evidence_package_hard_byte_limit_truncates_before_construction() -> Non
 @pytest_mark.parametrize(
     ("changes", "message"),
     [
-        ({"records": (internal_record(),) * 11, "retained_count": 11}, "limit of 10"),
-        ({"records": (internal_record(),), "retained_count": 0}, "must equal"),
+        ({"records": (proposition_evidence_record(**STRUCTURED_RECORD_VALUES),) * 11, "retained_count": 11}, "limit of 10"),
+        ({"records": (proposition_evidence_record(**STRUCTURED_RECORD_VALUES),), "retained_count": 0}, "must equal"),
         ({"omitted_count": 1, "truncated": False}, "truncated must equal"),
         (
             {
@@ -754,12 +821,13 @@ def test_evidence_package_decoder_is_closed_and_rejects_unknown_reasons() -> Non
 
 
 def test_evidence_package_builder_validates_requested_limits() -> None:
+    record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
     with pytest_raises(InvalidRequestError, match="max_records"):
-        build_evidence_package((internal_record(),), max_records=11)
+        build_evidence_package((record,), max_records=11)
     with pytest_raises(InvalidRequestError, match="max_bytes"):
-        build_evidence_package((internal_record(),), max_bytes=255)
+        build_evidence_package((record,), max_bytes=255)
     with pytest_raises(InvalidRequestError, match="input exceeds the limit of 1000"):
-        build_evidence_package((internal_record(),) * 1_001)
+        build_evidence_package((record,) * 1_001)
 
 
 def test_evidence_package_json_decoder_rejects_oversized_input_before_parsing() -> None:

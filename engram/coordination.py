@@ -203,16 +203,16 @@ class AtomicMutationCoordinator:
             before = {"repository": before_repository, "mutation_receipts": before_receipts}
             before_artifacts = before_repository.get("artifacts", {})
             planned = self.repository.planned_changes(repository_candidate, before_repository)
-            if planned is None:
+            if not planned.get("planned", False):
                 try:
                     validated_repository_candidate = validate_repository_state(repository_candidate, before_artifacts)
                 except InvalidRequestError as error:
                     raise InvalidRequestError("repository_candidate must be a RepositoryState") from error
                 compared = set(before_artifacts) | set(validated_repository_candidate.get("artifacts", {}))
             else:
-                # Built by the repository from this live state; only ``planned`` can differ.
+                # Built by the repository from this live state; only the planned IDs can differ.
                 validated_repository_candidate = repository_candidate
-                compared = set(planned)
+                compared = planned.get("changed", set())
             changes = artifact_generation_changes(before_repository, validated_repository_candidate, compared)
             repository_changed = bool(changes)
             before_generation = before_repository.get("state_generation", 0)
@@ -292,7 +292,7 @@ class AtomicMutationCoordinator:
             repository_changed = bool(changed) if changed_known else live_artifacts != after_repository.get("artifacts", {})
             try:
                 if repository_changed and changed_known:
-                    self.repository.replace_trusted(after_repository, live_generation, changed)
+                    self.repository.replace_trusted(after_repository, live_generation, changed, changed_known=True)
                 elif repository_changed:
                     self.repository.replace_trusted(after_repository, live_generation)
                 self.publication_hook(after)
@@ -300,7 +300,7 @@ class AtomicMutationCoordinator:
             except Exception as error:
                 try:
                     if changed_known:
-                        self.repository.restore_trusted(live_repository, changed)
+                        self.repository.restore_trusted(live_repository, changed, changed_known=True)
                     else:
                         self.repository.restore_trusted(live_repository)
                     self.publication_hook(before)

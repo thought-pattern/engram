@@ -95,9 +95,6 @@ def internal_validated_settings(value: dict[str, object]) -> dict:
     return result
 
 
-SparseMatch = dict
-
-
 def normalized_text(value: str) -> str:
     result = unicodedata_normalize("NFKC", value).casefold().strip()
     return result
@@ -161,29 +158,36 @@ def sparse_tokens(value: str) -> tuple[str, ...]:
 
 
 def field_texts(artifact: dict, include_response_text: bool) -> dict[str, tuple[str, ...]]:
+    # The artifact is a validated CachedResponseArtifact, so every nested
+    # identity and retrieval field below is present with its concrete type.
     identity = artifact.get("query_identity", {})
+    retrieval = artifact.get("retrieval", {})
+    relation = identity.get("relation", {})
+    lexical_terms = identity.get("lexical_terms", ())
+    canonical = retrieval.get("canonical", "")
+    aliases = retrieval.get("aliases", ())
     entity_values = []
-    for entity in identity["entities"]:
-        entity_values.append(entity["surface"])
-        if entity["canonical_id"]:
-            entity_values.append(entity["canonical_id"])
-    relation_values = tuple(value for value in (identity["relation"]["surface"], identity["relation"]["canonical_id"]) if value)
+    for entity in identity.get("entities", ()):
+        entity_values.append(entity.get("surface", ""))
+        if entity.get("canonical_id", ""):
+            entity_values.append(entity.get("canonical_id", ""))
+    relation_values = tuple(value for value in (relation.get("surface", ""), relation.get("canonical_id", "")) if value)
     source_values = (
-        artifact.get("retrieval", {})["canonical"],
-        *artifact.get("retrieval", {})["aliases"],
+        canonical,
+        *aliases,
         *entity_values,
         *relation_values,
-        *identity["lexical_terms"],
+        *lexical_terms,
     )
     identifiers = []
     for value in source_values:
         identifiers.extend(technical_identifiers(value))
     fields = {
-        "canonical": (artifact.get("retrieval", {})["canonical"],),
-        "aliases": tuple(artifact.get("retrieval", {})["aliases"]),
+        "canonical": (canonical,),
+        "aliases": tuple(aliases),
         "entities": tuple(entity_values),
         "relation": relation_values,
-        "keywords": tuple(identity["lexical_terms"]),
+        "keywords": tuple(lexical_terms),
         "technical_identifiers": tuple(dict.fromkeys(identifiers))[:MAX_SPARSE_TECHNICAL_IDENTIFIERS],
         "response_text": (artifact.get("response", ""),) if include_response_text else (),
     }
@@ -211,7 +215,7 @@ def sparse_document_from_validated_artifact(
         "lifecycle": artifact.get("lifecycle", LifecycleState.RETIRED),
         "fields": dict(fields),
         "tokens": dict(tokens),
-        "technical_identifiers": fields["technical_identifiers"],
+        "technical_identifiers": fields.get("technical_identifiers", ()),
     }
     return result
 
@@ -322,12 +326,15 @@ class SparseIndex:
     content changed is re-indexed, and one whose only change is statistics is
     not. Searches read postings for the query's terms only, so their cost
     follows the query instead of the store. Results match a full per-request
-    build (``build_sparse_working_set`` and ``search_sparse_working_set``).
+    build (``index_sparse_artifacts`` and ``search_sparse_working_set``).
     """
 
     def __init__(self) -> None:
         self.internal_lock = threading_Lock()
-        self.internal_include_response_text: bool | None = None
+        # The mode the indexed documents were derived with. While the index is
+        # empty there is nothing to re-derive, so the first sync in either mode
+        # needs no clear.
+        self.internal_include_response_text = False
         # statement_id -> {"artifact", "content", "parts", "scope_key", "active"}
         self.internal_entries: dict[str, dict] = {}
         # scope key -> {"documents": {id: document}, "postings": {term: {id: posting}}, "field_totals": {name: int}}
@@ -348,34 +355,44 @@ class SparseIndex:
             "scope_key": scope_key,
             "active": active,
         }
-        if not active:
-            return
-        partition = self.internal_partitions.setdefault(
-            scope_key,
-            {"documents": {}, "postings": {}, "field_totals": dict.fromkeys(SPARSE_FIELD_NAMES, 0)},
-        )
-        partition["documents"][statement_id] = parts["document"]
-        for field_name in SPARSE_FIELD_NAMES:
-            partition["field_totals"][field_name] += parts["token_lengths"][field_name]
-        for term, posting in parts["postings"].items():
-            partition["postings"].setdefault(term, {})[statement_id] = posting
+        if active:
+            # Partitions are created here with all three maps, so the reads below
+            # always return the partition's own live maps.
+            partition = self.internal_partitions.setdefault(
+                scope_key,
+                {"documents": {}, "postings": {}, "field_totals": dict.fromkeys(SPARSE_FIELD_NAMES, 0)},
+            )
+            partition.get("documents", {})[statement_id] = parts.get("document", {})
+            field_totals = partition.get("field_totals", {})
+            token_lengths = parts.get("token_lengths", {})
+            for field_name in SPARSE_FIELD_NAMES:
+                field_totals[field_name] = field_totals.get(field_name, 0) + token_lengths.get(field_name, 0)
+            partition_postings = partition.get("postings", {})
+            for term, posting in parts.get("postings", {}).items():
+                partition_postings.setdefault(term, {})[statement_id] = posting
 
     def remove(self, statement_id: str) -> None:
         entry = self.internal_entries.pop(statement_id)
-        if not entry["active"]:
-            return
-        partition = self.internal_partitions[entry["scope_key"]]
-        del partition["documents"][statement_id]
-        parts = entry["parts"]
-        for field_name in SPARSE_FIELD_NAMES:
-            partition["field_totals"][field_name] -= parts["token_lengths"][field_name]
-        for term in parts["postings"]:
-            postings = partition["postings"][term]
-            del postings[statement_id]
-            if not postings:
-                del partition["postings"][term]
-        if not partition["documents"]:
-            del self.internal_partitions[entry["scope_key"]]
+        if entry.get("active", False):
+            scope_key = entry.get("scope_key", ())
+            # An active entry always has its partition and document; if either were
+            # missing, the deletion below would raise instead of skipping it.
+            partition = self.internal_partitions.get(scope_key, {})
+            documents = partition.get("documents", {})
+            del documents[statement_id]
+            parts = entry.get("parts", {})
+            field_totals = partition.get("field_totals", {})
+            token_lengths = parts.get("token_lengths", {})
+            for field_name in SPARSE_FIELD_NAMES:
+                field_totals[field_name] = field_totals.get(field_name, 0) - token_lengths.get(field_name, 0)
+            partition_postings = partition.get("postings", {})
+            for term in parts.get("postings", {}):
+                postings = partition_postings.get(term, {})
+                del postings[statement_id]
+                if not postings:
+                    del partition_postings[term]
+            if not documents:
+                del self.internal_partitions[scope_key]
 
     def sync(self, artifacts: dict[str, dict], include_response_text: bool) -> None:
         """Index exactly ``artifacts``; the caller holds ``internal_lock``."""
@@ -385,14 +402,15 @@ class SparseIndex:
         for statement_id in [value for value in self.internal_entries if value not in artifacts]:
             self.remove(statement_id)
         for statement_id, artifact in artifacts.items():
-            entry = self.internal_entries.get(statement_id)
-            if entry is not None and entry["artifact"] is artifact:
+            # Entries are never empty, so {} means the statement is not indexed yet.
+            entry = self.internal_entries.get(statement_id, {})
+            if entry and entry.get("artifact", {}) is artifact:
                 continue
             content = sparse_content(artifact, include_response_text)
-            if entry is not None and entry["content"] == content:
+            if entry and entry.get("content", ()) == content:
                 entry["artifact"] = artifact
                 continue
-            if entry is not None:
+            if entry:
                 self.remove(statement_id)
             self.add(statement_id, artifact, content, include_response_text)
 
@@ -420,7 +438,7 @@ class SparseIndex:
         return result
 
 
-def build_sparse_working_set(
+def index_sparse_artifacts(
     artifacts: tuple[dict, ...],
     *,
     scope: dict,
@@ -428,11 +446,11 @@ def build_sparse_working_set(
     max_working_memory_bytes: int,
     trusted_artifacts: bool = False,
 ) -> dict:
-    """Build every sparse structure for one scope from scratch.
+    """Index one scope's active artifacts into a complete sparse working set from scratch.
 
     This is the reference for ``SparseIndex``: searching this state gives the
     same matches as an index-backed search. The budget charges the maps,
-    postings, and state the build creates.
+    postings, and state the indexing creates.
     """
     validated_settings = internal_validated_settings(settings)
     validated_scope = validate_scope_key(scope)
@@ -446,19 +464,15 @@ def build_sparse_working_set(
     term_postings: dict[str, dict[str, tuple]] = {}
     field_totals = dict.fromkeys(SPARSE_FIELD_NAMES, 0)
     working_memory_bytes = estimate_working_bytes((documents, term_postings, field_totals))
-
-    def exhausted() -> dict:
+    if working_memory_bytes > max_working_memory_bytes:
+        reported_memory = min(working_memory_bytes, max_working_memory_bytes)
         result = {
             "complete": False,
             "reason": "working_memory_budget",
-            "working_memory_bytes": min(working_memory_bytes, max_working_memory_bytes),
+            "working_memory_bytes": reported_memory,
             "state_working_memory_bytes": 0,
             "state": {},
         }
-        return result
-
-    if working_memory_bytes > max_working_memory_bytes:
-        result = exhausted()
         return result
     for artifact_value in artifacts:
         artifact = artifact_value if trusted_artifacts else validate_cached_response_artifact(artifact_value)
@@ -467,24 +481,40 @@ def build_sparse_working_set(
         if artifact.get("scope", {}) != validated_scope:
             continue
         parts = sparse_document_parts(artifact, include_response_text)
-        statement_id = parts["statement_id"]
+        statement_id = parts.get("statement_id", "")
+        postings = parts.get("postings", {})
         if statement_id in documents:
             raise InvalidRequestError(f"duplicate sparse statement_id: {statement_id}")
-        increment = SPARSE_DOCUMENT_REFERENCE_BYTES + SPARSE_POSTING_REFERENCE_BYTES * len(parts["postings"])
+        increment = SPARSE_DOCUMENT_REFERENCE_BYTES + SPARSE_POSTING_REFERENCE_BYTES * len(postings)
         if working_memory_bytes + increment > max_working_memory_bytes:
-            result = exhausted()
+            reported_memory = min(working_memory_bytes, max_working_memory_bytes)
+            result = {
+                "complete": False,
+                "reason": "working_memory_budget",
+                "working_memory_bytes": reported_memory,
+                "state_working_memory_bytes": 0,
+                "state": {},
+            }
             return result
         working_memory_bytes += increment
-        documents[statement_id] = parts["document"]
+        documents[statement_id] = parts.get("document", {})
+        token_lengths = parts.get("token_lengths", {})
         for field_name in SPARSE_FIELD_NAMES:
-            field_totals[field_name] = field_totals.get(field_name, 0) + parts["token_lengths"][field_name]
-        for term, posting in parts["postings"].items():
+            field_totals[field_name] = field_totals.get(field_name, 0) + token_lengths.get(field_name, 0)
+        for term, posting in postings.items():
             term_postings.setdefault(term, {})[statement_id] = posting
 
     count = len(documents)
     final_increment = 512 + count * 64 + len(term_postings) * SPARSE_TERM_WORKING_BYTES
     if working_memory_bytes + final_increment > max_working_memory_bytes:
-        result = exhausted()
+        reported_memory = min(working_memory_bytes, max_working_memory_bytes)
+        result = {
+            "complete": False,
+            "reason": "working_memory_budget",
+            "working_memory_bytes": reported_memory,
+            "state_working_memory_bytes": 0,
+            "state": {},
+        }
         return result
     working_memory_bytes += final_increment
     averages = {name: (field_totals.get(name, 0) / count if count else 0.0) for name in SPARSE_FIELD_NAMES}
@@ -591,6 +621,9 @@ def search_sparse_working_set(
             "working_memory_bytes": 0,
         }
         return result
+    # Every posting names a document of the same state, so the document lookups
+    # below always find one; an empty default could never match the scope.
+    documents = state.get("documents", {})
     descriptors = dict(base_descriptors)
     posting_visits = 0
     exact_identifier_sets = []
@@ -609,7 +642,7 @@ def search_sparse_working_set(
                     "working_memory_bytes": 256 + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES,
                 }
                 return result
-            if state.get("documents", ())[posting[0]]["scope"] != validated_scope:
+            if documents.get(posting[0], {}).get("scope", {}) != validated_scope:
                 continue
             projected_items = exact_identifier_item_count + 1
             projected_memory = (
@@ -659,7 +692,7 @@ def search_sparse_working_set(
 
     scores: dict[str, dict[str, float]] = {}
     matched_keys: dict[str, set[str]] = {}
-    document_count = max(1, len(state.get("documents", ())))
+    document_count = max(1, len(documents))
     candidate_pool: set[str] = set()
     populated_identifier_sets = [value for value in exact_identifier_sets if value]
     if populated_identifier_sets:
@@ -730,7 +763,7 @@ def search_sparse_working_set(
                     }
                     return result
                 statement_id = posting[0]
-                if state.get("documents", ())[statement_id]["scope"] != validated_scope or statement_id in candidate_pool:
+                if documents.get(statement_id, {}).get("scope", {}) != validated_scope or statement_id in candidate_pool:
                     continue
                 projected_memory = (
                     256
@@ -792,9 +825,10 @@ def search_sparse_working_set(
             if not posting or (candidates and posting[0] not in candidate_pool):
                 continue
             statement_id = posting[0]
-            document = state.get("documents", ())[statement_id]
-            if document["scope"] != validated_scope:
+            document = documents.get(statement_id, {})
+            if document.get("scope", {}) != validated_scope:
                 continue
+            document_tokens = document.get("tokens", {})
             if statement_id not in scores:
                 projected_memory = working_memory + SPARSE_SCORE_WORKING_BYTES
                 if projected_memory > max_working_memory_bytes:
@@ -811,21 +845,22 @@ def search_sparse_working_set(
             contributions = scores.setdefault(statement_id, dict.fromkeys(SPARSE_FIELD_NAMES, 0.0))
             matched_keys.setdefault(statement_id, set()).add(term)
             for field_name, frequency in posting[1]:
-                field_length = len(document["tokens"][field_name])
-                average_length = state.get("average_field_lengths", {})[field_name] or 1.0
+                field_length = len(document_tokens.get(field_name, ()))
+                average_length = state.get("average_field_lengths", {}).get(field_name, 0.0) or 1.0
                 denominator = frequency + 1.2 * (1.0 - 0.75 + 0.75 * field_length / average_length)
                 bm25 = inverse_frequency * (frequency * 2.2) / denominator
-                contributions[field_name] += bm25 * SPARSE_FIELD_WEIGHTS.get(field_name, 0.0) * multiplier
+                weighted = bm25 * SPARSE_FIELD_WEIGHTS.get(field_name, 0.0) * multiplier
+                contributions[field_name] = contributions.get(field_name, 0.0) + weighted
     query_ngrams = {f"g:{ngram}" for identifier in query_identifiers for ngram in character_ngrams(identifier)}
     retained = []
     for statement_id, raw_fields in scores.items():
-        document = state.get("documents", ())[statement_id]
+        document_tokens = documents.get(statement_id, {}).get("tokens", {})
         raw_total = sum(raw_fields.values())
         normalization = 2.0 * max(1, len(query_tokens))
         base_score = raw_total / (raw_total + normalization) if raw_total else 0.0
-        phrase_fields = tuple(name for name in SPARSE_FIELD_NAMES if phrase_present(document["tokens"][name], query_tokens))
-        proximity = {name: internal_minimum_proximity(document["tokens"][name], query_tokens) for name in SPARSE_FIELD_NAMES}
-        proximity_fields = tuple(name for name in SPARSE_FIELD_NAMES if proximity[name] and proximity[name] <= 8)
+        phrase_fields = tuple(name for name in SPARSE_FIELD_NAMES if phrase_present(document_tokens.get(name, ()), query_tokens))
+        proximity = {name: internal_minimum_proximity(document_tokens.get(name, ()), query_tokens) for name in SPARSE_FIELD_NAMES}
+        proximity_fields = tuple(name for name in SPARSE_FIELD_NAMES if 0 < proximity.get(name, 0) <= 8)
         minimum_proximity = min((value for value in proximity.values() if value), default=0)
         keys = matched_keys.get(statement_id, set())
         prefix_count = sum(key.startswith("p:") for key in keys)
@@ -847,9 +882,12 @@ def search_sparse_working_set(
         ranking_key = (-score, statement_id)
         worst_index = -1
         if len(retained) >= limit:
-            worst_index = max(range(len(retained)), key=lambda index: (-retained[index]["score"], retained[index]["statement_id"]))
+            worst_index = max(
+                range(len(retained)),
+                key=lambda index: (-retained[index].get("score", 0.0), retained[index].get("statement_id", "")),
+            )
             worst = retained[worst_index]
-            if ranking_key >= (-worst["score"], worst["statement_id"]):
+            if ranking_key >= (-worst.get("score", 0.0), worst.get("statement_id", "")):
                 continue
         if worst_index < 0:
             projected_memory = working_memory + SPARSE_MATCH_WORKING_BYTES
@@ -864,27 +902,28 @@ def search_sparse_working_set(
                 }
                 return result
             working_memory = projected_memory
-        field_contributions = {
-            name: raw_fields[name] / (raw_fields[name] + normalization) if raw_fields[name] else 0.0 for name in SPARSE_FIELD_NAMES
+        field_contributions = {}
+        for name in SPARSE_FIELD_NAMES:
+            raw_value = raw_fields.get(name, 0.0)
+            field_contributions[name] = raw_value / (raw_value + normalization) if raw_value else 0.0
+        match = {
+            "statement_id": statement_id,
+            "score": score,
+            "field_contributions": field_contributions,
+            "phrase_fields": phrase_fields,
+            "proximity_fields": proximity_fields,
+            "minimum_proximity": minimum_proximity,
+            "prefix_match_count": prefix_count,
+            "character_ngram_similarity": ngram_similarity,
+            "technical_exact_match": technical_exact,
+            "technical_exact_ratio": technical_exact_ratio,
+            "matched_term_count": len(keys),
         }
-        match = SparseMatch(
-            statement_id=statement_id,
-            score=score,
-            field_contributions=field_contributions,
-            phrase_fields=phrase_fields,
-            proximity_fields=proximity_fields,
-            minimum_proximity=minimum_proximity,
-            prefix_match_count=prefix_count,
-            character_ngram_similarity=ngram_similarity,
-            technical_exact_match=technical_exact,
-            technical_exact_ratio=technical_exact_ratio,
-            matched_term_count=len(keys),
-        )
         if worst_index < 0:
             retained.append(match)
         else:
             retained[worst_index] = match
-    retained.sort(key=lambda match: (-match["score"], match["statement_id"]))
+    retained.sort(key=lambda match: (-match.get("score", 0.0), match.get("statement_id", "")))
     retained_values = tuple(retained)
     result = {
         "matches": retained_values,
@@ -1030,7 +1069,7 @@ def search_sparse_artifacts(
             trusted_artifacts=trusted_artifacts,
         )
         return result
-    construction = build_sparse_working_set(
+    construction = index_sparse_artifacts(
         artifacts,
         scope=validated_scope,
         settings=validated_settings,

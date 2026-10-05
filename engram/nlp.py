@@ -46,7 +46,7 @@ def ensure_nltk_data() -> None:
         ensure_resource(path, package)
 
 
-_PROPER_NOUN_TAGS = {"NNP", "NNPS"}
+PROPER_NOUN_TAGS = {"NNP", "NNPS"}
 
 
 def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) -> bool:
@@ -69,26 +69,12 @@ def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) ->
     width = len(wanted)
     for start in range(0, len(tagged) - width + 1):
         window = tagged[start : start + width]
-        if [word for word, _pos in window] != wanted:
+        if [word for word, _ in window] != wanted:
             continue
-        result = all(pos in _PROPER_NOUN_TAGS for _word, pos in window)
+        result = all(pos in PROPER_NOUN_TAGS for _, pos in window)
         return result
     result = False
     return result
-
-
-def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:
-    """Build a fact dict extracted from natural language.
-
-    Keys: subject, predicate (copula verb), obj (complement), original sentence.
-    """
-    fact = {
-        "subject": subject,
-        "predicate": predicate,
-        "obj": obj,
-        "original": original,
-    }
-    return fact
 
 
 def fact_subject_upper(fact: dict) -> str:
@@ -263,7 +249,9 @@ def extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origin
             return result
 
     normalized_original = original.rstrip(".") + "."
-    fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
+    # An extracted fact carries the subject, the copula verb as predicate, the
+    # complement as obj, and the original sentence.
+    fact = {"subject": subject, "predicate": copula, "obj": obj, "original": normalized_original}
     return fact
 
 
@@ -274,7 +262,8 @@ def extract_fact(text: str) -> dict:
         text: Input text to analyze.
 
     Returns:
-        ExtractedFact if a fact was extracted, otherwise an empty dict.
+        The fact dict (subject, predicate, obj, original) if a fact was
+        extracted, otherwise an empty dict.
     """
     ensure_nltk_data()
 
@@ -300,17 +289,6 @@ def extract_fact(text: str) -> dict:
 
     fact = extract_copula_fact(tokens, tagged, text)
     return fact
-
-
-def extracted_entity(text: str, label: str, start: int, end: int) -> dict:
-    """Build a named-entity dict.
-
-    Keys: text (the entity's tokens joined by single spaces), label
-    (PERSON/ORGANIZATION/GPE/...), and the exact [start, end) character range
-    those tokens occupy in the original text.
-    """
-    entity = {"text": text, "label": label, "start": start, "end": end}
-    return entity
 
 
 def token_offsets(text: str, tokens: list[str]) -> list[tuple[int, int]]:
@@ -349,7 +327,9 @@ def extract_entities(text: str) -> list[dict]:
         text: Input text to analyze.
 
     Returns:
-        List of ExtractedEntity objects.
+        List of entity dicts: text (the entity's tokens joined by single
+        spaces), label (PERSON/ORGANIZATION/GPE/...), and the exact
+        [start, end) character range those tokens occupy in text.
     """
     ensure_nltk_data()
 
@@ -373,14 +353,13 @@ def extract_entities(text: str) -> list[dict]:
     for subtree in tree:
         if hasattr(subtree, "label"):
             words = [word for word, tag in subtree.leaves()]
-            entities.append(
-                extracted_entity(
-                    text=" ".join(words),
-                    label=subtree.label(),
-                    start=offsets[index][0],
-                    end=offsets[index + len(words) - 1][1],
-                )
-            )
+            entity = {
+                "text": " ".join(words),
+                "label": subtree.label(),
+                "start": offsets[index][0],
+                "end": offsets[index + len(words) - 1][1],
+            }
+            entities.append(entity)
             index += len(words)
         else:
             index += 1

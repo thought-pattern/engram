@@ -6,7 +6,7 @@ from engram.constants import MAX_FACT_SENTENCE_WORDS, MAX_PATTERN_WORDS, MAX_REQ
 from engram.conversation import ConversationRuntime
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.identity import build_standalone_identity
+from engram.identity import extract_standalone_identity
 from engram.pattern import PatternMatcher
 from engram.temporal import parse_temporal_query
 
@@ -22,14 +22,8 @@ LEARN_THAT = {
 }
 
 
-def teaching_engram(*extra_pairs: dict) -> Engram:
-    engram = Engram()
-    engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}, *extra_pairs])
-    return engram
-
-
 def learned_texts(engram: Engram, pattern: str) -> list[str]:
-    result = [statement["text"] for statement in engram.statements if statement["pattern"] == pattern]
+    result = [statement.get("text", "") for statement in engram.statements if statement.get("pattern", "") == pattern]
     return result
 
 
@@ -37,7 +31,8 @@ def learned_texts(engram: Engram, pattern: str) -> list[str]:
 
 
 def test_reteaching_a_subject_changes_the_answer_and_keeps_one_statement() -> None:
-    engram = teaching_engram()
+    engram = Engram()
+    engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
 
     engram.pattern_query("Learn that zorblax is blue")
     assert engram.pattern_query("zorblax")[2] == "Blue"
@@ -48,7 +43,10 @@ def test_reteaching_a_subject_changes_the_answer_and_keeps_one_statement() -> No
 
 
 def test_teaching_never_replaces_a_seed_answer() -> None:
-    engram = teaching_engram({"pattern": "ZORBLAX", "response": "A seed answer."})
+    engram = Engram()
+    engram.load_static_data(
+        [LEARN_THAT, {"pattern": "*", "response": "Go on."}, {"pattern": "ZORBLAX", "response": "A seed answer."}]
+    )
 
     engram.pattern_query("Learn that zorblax is blue")
 
@@ -81,12 +79,13 @@ def test_patterns_are_capped_so_the_walk_depth_is_bounded() -> None:
 
 
 def test_teaching_a_very_long_subject_is_skipped_and_matching_stays_safe() -> None:
-    engram = teaching_engram()
+    engram = Engram()
+    engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
     subject = " ".join(f"w{index}" for index in range(2_000))
 
     engram.pattern_query(f"Learn that {subject} is purple")
 
-    assert not [statement for statement in engram.statements if statement["text"] == "purple"]
+    assert not [statement for statement in engram.statements if statement.get("text", "") == "purple"]
     assert engram.pattern_query(subject)[2] == "Go on."
 
 
@@ -105,7 +104,8 @@ def test_a_sentence_too_long_to_be_a_fact_is_not_read_for_facts(monkeypatch) -> 
         raise AssertionError("a long sentence was read for facts")
 
     monkeypatch.setattr("engram.core.extract_fact", no_extraction)
-    engram = teaching_engram()
+    engram = Engram()
+    engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
     long_sentence = " ".join(f"w{index}" for index in range(MAX_FACT_SENTENCE_WORDS)) + " is purple."
 
     assert engram.pattern_query(long_sentence)[2] == "Go on."
@@ -146,8 +146,10 @@ def test_lemma_fallback_captures_the_original_words() -> None:
 )
 def test_numbers_with_units_or_out_of_range_are_not_years(text: str) -> None:
     parsed = parse_temporal_query(text)
-    assert parsed["operator"] == TemporalQueryOperator.UNSPECIFIED
-    assert parsed["source_text"] == ""
+    assert "operator" in parsed
+    assert parsed.get("operator", TemporalQueryOperator.UNSPECIFIED) == TemporalQueryOperator.UNSPECIFIED
+    assert "source_text" in parsed
+    assert parsed.get("source_text", "") == ""
 
 
 @pytest_mark.parametrize(
@@ -163,12 +165,12 @@ def test_numbers_with_units_or_out_of_range_are_not_years(text: str) -> None:
 )
 def test_real_years_are_still_years(text: str, operator: TemporalQueryOperator) -> None:
     parsed = parse_temporal_query(text)
-    assert parsed["operator"] == operator
-    assert parsed["resolved"] is True
+    assert parsed.get("operator", TemporalQueryOperator.UNSPECIFIED) == operator
+    assert parsed.get("resolved", False) is True
 
 
 def test_a_quantity_stays_a_lexical_term() -> None:
-    assert "1500" in build_standalone_identity("MTU limit in 1500 byte frames")["lexical_terms"]
+    assert "1500" in extract_standalone_identity("MTU limit in 1500 byte frames").get("lexical_terms", ())
 
 
 # R4.4 --------------------------------------------------------------------
@@ -184,7 +186,7 @@ def test_a_seeded_turn_uses_its_own_generator_and_replays_exactly(monkeypatch) -
         engram = Engram()
         engram.load_static_data([{"pattern": "PICK", "response": "", "template": {"random": list("abcdefgh")}}])
         runtime = ConversationRuntime(engram, user_id="alice", random_seed=7, random_seed_present=True)
-        replies.append([runtime.send("pick")["response"] for _ in range(6)])
+        replies.append([runtime.send("pick").get("response", "") for _ in range(6)])
 
     assert replies[0] == replies[1]
     assert len(set(replies[0])) > 1

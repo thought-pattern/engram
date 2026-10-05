@@ -77,9 +77,7 @@ from engram.feedback import (
     canonical_utc,
     constraint_fingerprint,
     empty_negative_resolution,
-    feedback_observation,
     negative_resolution_key,
-    trusted_feedback_observation,
     validate_feedback_observation,
 )
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority, fusion_policy, policy_fingerprint
@@ -132,13 +130,13 @@ LOGGER = logging_getLogger("engram.service")
 
 
 def feedback_target(observations: tuple[object, ...], statement_id: str) -> dict:
-    target: object = {}
+    target = {}
     for value in observations:
         try:
             observation = validate_feedback_observation(value)
         except InvalidRequestError:
             continue
-        if observation["statement_id"] == statement_id:
+        if observation.get("statement_id", "") == statement_id:
             target = observation
             break
     if target == {}:
@@ -172,7 +170,14 @@ def require_cache_request(request: str) -> None:
 
 
 def service_request_signature(**values) -> str:
-    """Return deterministic JSON for an idempotent service request."""
+    """Return the canonical retry identity of one idempotent service request.
+
+    The text is compared for equality with the identity retained for the same
+    request ID and is never parsed. Request values are JSON-shaped, so canonical
+    JSON gives the exact identity the request contract defines: lists and tuples
+    match, while Booleans, integers and floats stay distinct, which native
+    equality would merge. Its UTF-8 length bounds the retained identity.
+    """
     try:
         result = json_dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as error:
@@ -309,21 +314,20 @@ def no_cancellation_check() -> bool:
 def negative_resolution_admissible(value: dict, plan) -> bool:
     """Return whether a complete knowledge miss is safe to cache negatively."""
     current = value
-    if current["outcome"] != ResolutionOutcome.MISS or current["budget"]["exhausted_dimensions"]:
+    outcome = current.get("outcome", ResolutionOutcome.ANSWER)
+    resolver_results = current.get("resolver_results", ())
+    if outcome != ResolutionOutcome.MISS or current.get("budget", {}).get("exhausted_dimensions", ()):
         result = False
         return result
-    if "output_truncated" in current["reason_codes"]:
+    if "output_truncated" in current.get("reason_codes", ()):
         result = False
         return result
-    if any(
-        value.get("candidates", ()) or value.get("evidence", ()) or value.get("accounting", {})
-        for value in current["resolver_results"]
-    ):
+    if any(value.get("candidates", ()) or value.get("evidence", ()) or value.get("accounting", {}) for value in resolver_results):
         result = False
         return result
-    results = {item["resolver"]: item for item in current["resolver_results"]}
-    configured = [entry for entry in plan["entries"] if entry["configured"]]
-    if not configured or any(not entry["available"] for entry in configured):
+    results = {item.get("resolver", ""): item for item in resolver_results}
+    configured = [entry for entry in plan.get("entries", ()) if entry.get("configured", False)]
+    if not configured or any(not entry.get("available", False) for entry in configured):
         result = False
         return result
     knowledge_miss_reasons = {
@@ -335,18 +339,18 @@ def negative_resolution_admissible(value: dict, plan) -> bool:
         "support_semantic": "support_semantic_miss",
     }
     for entry in configured:
-        resolver_name, _, _, _ = resolver_contract(entry["resolver"])
-        resolver_result = results.get(resolver_name)
+        resolver_name, _, _, _ = resolver_contract(entry.get("resolver", {}))
+        resolver_result = results.get(resolver_name, {})
         if not resolver_result:
             result = False
             return result
         expected_reason = knowledge_miss_reasons.get(resolver_name, "")
-        if resolver_result["state"] != ResolverState.COMPLETED or resolver_result["reason_code"] != expected_reason:
+        state = resolver_result.get("state", ResolverState.FAILED)
+        if state != ResolverState.COMPLETED or resolver_result.get("reason_code", "") != expected_reason:
             result = False
             return result
-        if resolver_name == "exact" and (
-            resolver_result["diagnostics"].get("owner_count", 0) != 0 or resolver_result["diagnostics"].get("truncated", False)
-        ):
+        diagnostics = resolver_result.get("diagnostics", {})
+        if resolver_name == "exact" and (diagnostics.get("owner_count", 0) != 0 or diagnostics.get("truncated", False)):
             result = False
             return result
     result = True
@@ -362,6 +366,7 @@ def bounded_miss_result(
     """Build an exactly accounted resolver-free MISS result."""
     current_ns = time_monotonic_ns()
     elapsed_ns = max(0, current_ns - started_ns)
+    budget = frame.get("budget", {})
     exhausted = set()
     selected_diagnostics = {
         "diagnostic_id": frame.get("diagnostic_id", ""),
@@ -369,7 +374,7 @@ def bounded_miss_result(
         "accounting": {"candidate_count": 0, "accepted_present": False, "success_applied": False},
     }
     diagnostic_bytes = len(json_dumps(selected_diagnostics, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    if diagnostic_bytes > frame.get("budget", {})["max_diagnostic_bytes"]:
+    if diagnostic_bytes > budget.get("max_diagnostic_bytes", 0):
         selected_diagnostics = {}
         diagnostic_bytes = 0
         exhausted.add("diagnostic_bytes")
@@ -378,9 +383,8 @@ def bounded_miss_result(
         diagnostic_bytes=diagnostic_bytes,
         exhausted_dimensions=tuple(sorted(exhausted)),
     )
-
-    def build() -> dict:
-        value = resolution_result(
+    for _ in range(8):
+        result = resolution_result(
             outcome=ResolutionOutcome.MISS,
             selected_candidate=empty_candidate(),
             selected_candidate_available=False,
@@ -393,14 +397,10 @@ def bounded_miss_result(
             resolver_results=(),
             budget=consumption,
         )
-        return value
-
-    for _ in range(8):
-        result = build()
         size = len(resolution_result_to_json(result).encode("utf-8"))
-        if size > frame.get("budget", {})["max_output_bytes"]:
+        if size > budget.get("max_output_bytes", 0):
             raise InvalidRequestError("negative resolution result exceeds max_output_bytes")
-        if size > frame.get("budget", {})["max_working_memory_bytes"]:
+        if size > budget.get("max_working_memory_bytes", 0):
             raise MemoryError("negative resolution result exceeds max_working_memory_bytes")
         updated = budget_consumption_with_changes(consumption, {"output_bytes": size, "working_memory_bytes": size})
         if updated == consumption:
@@ -484,7 +484,7 @@ class EngramCore:
         self.response_removal = EngagementResponseRemoval(self.response_coordinator, self.engram.feedback_store)
         self.query_frame_builder = QueryFrameBuilder(self.engram, time_monotonic_ns, self.internal_clock)
         self.rewrite_engine: object = (
-            RewriteEngine(load_default_rewrite_corpus()) if self.engram.config["retrieval_rewrites_enabled"] else ()
+            RewriteEngine(load_default_rewrite_corpus()) if self.engram.config.get("retrieval_rewrites_enabled", False) else ()
         )
         graph_resolver = StructuredGraphResolver(self.engram, time_monotonic_ns)
         local_resolvers = (
@@ -494,7 +494,7 @@ class EngramCore:
             StandaloneSemanticResolver(self.engram, time_monotonic_ns),
             SupportSemanticResolver(self.engram, time_monotonic_ns),
         )
-        configured_graph = bool((self.engram.config.get("graph") or {}).get("enabled"))
+        configured_graph = bool(self.engram.config.get("graph", {}).get("enabled", False))
         registered_resolvers = (graph_resolver, *local_resolvers) if configured_graph else (*local_resolvers, graph_resolver)
         self.resolver_registry = ResolverRegistry(registered_resolvers)
         self.resolution_accounting = ResolutionAccountingFinalizer(
@@ -554,15 +554,13 @@ class EngramCore:
         reconnect succeeds. The core lock is not taken, so a response is never
         held behind other requests.
         """
-        if self.internal_state != CoreState.RUNNING:
-            return
-        reconnect = getattr(self.engram.graph_client, "reconnect_after_turn", ())
-        if not callable(reconnect):
-            return
-        try:
-            reconnect()
-        except Exception as error:
-            LOGGER.warning("graph reconnect could not start", exc_info=error)
+        if self.internal_state == CoreState.RUNNING:
+            reconnect = getattr(self.engram.graph_client, "reconnect_after_turn", ())
+            if callable(reconnect):
+                try:
+                    reconnect()
+                except Exception as error:
+                    LOGGER.warning("graph reconnect could not start", exc_info=error)
 
     @contextlib_contextmanager
     def graph_operation(self):
@@ -670,13 +668,13 @@ class EngramCore:
                 "evictions": self.engram.eviction_count,
             }
             result["regulated_cache"] = {
-                "proposals": self.regulated_metrics["proposals"],
-                "misses": self.regulated_metrics["misses"],
-                "accepted": self.regulated_metrics["accepted"],
-                "learned_created": self.regulated_metrics["learned_created"],
-                "retired": self.regulated_metrics["retired"],
-                "idempotent_retries": self.regulated_metrics["idempotent_retries"],
-                "pending_proposals": sum(1 for record in self.proposals.values() if not record["resolution"]),
+                "proposals": self.regulated_metrics.get("proposals", 0),
+                "misses": self.regulated_metrics.get("misses", 0),
+                "accepted": self.regulated_metrics.get("accepted", 0),
+                "learned_created": self.regulated_metrics.get("learned_created", 0),
+                "retired": self.regulated_metrics.get("retired", 0),
+                "idempotent_retries": self.regulated_metrics.get("idempotent_retries", 0),
+                "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
                 "retained_proposals": len(self.proposals),
             }
             return result
@@ -690,16 +688,16 @@ class EngramCore:
             record_regulator_outcome(self.engram.operational_metrics, outcome)
 
     def candidate_generation(self, statement_id: str, resolution: dict) -> tuple[int, bool]:
-        artifact = self.engram.response_repository.trusted_artifacts().get(statement_id)
+        artifact = self.engram.response_repository.trusted_artifacts().get(statement_id, {})
         if artifact:
-            result = artifact["generation"], True
+            result = artifact.get("generation", 0), True
             return result
         current = validate_resolution_result(resolution)
-        for resolver_result in current["resolver_results"]:
-            for candidate in resolver_result["candidates"]:
-                if candidate["statement_id"] != statement_id:
+        for resolver_result in current.get("resolver_results", ()):
+            for candidate in resolver_result.get("candidates", ()):
+                if candidate.get("statement_id", "") != statement_id:
                     continue
-                generation = candidate["provenance"].get("generation", 0)
+                generation = candidate.get("provenance", {}).get("generation", 0)
                 if isinstance(generation, int) and not isinstance(generation, bool) and generation > 0:
                     result = generation, True
                     return result
@@ -728,23 +726,22 @@ class EngramCore:
         observations = []
         for statement_id in statement_ids:
             generation, generation_available = self.candidate_generation(statement_id, resolution)
-            observations.append(
-                trusted_feedback_observation(
-                    reference_kind=reference_kind,
-                    reference_id=reference_id,
-                    kind=kind,
-                    outcome=outcome,
-                    query_identity=frame.get("identity", {}),
-                    scope=frame.get("scope", {}),
-                    constraint_fingerprint=constraint,
-                    statement_id=statement_id,
-                    generation=generation,
-                    generation_available=generation_available,
-                    policy_fingerprint=policy_value,
-                    observed_at=observed_at,
-                    reason=reason,
-                )
-            )
+            observation = {
+                "reference_kind": reference_kind,
+                "reference_id": reference_id,
+                "kind": kind,
+                "outcome": outcome,
+                "query_identity": frame.get("identity", {}),
+                "scope": frame.get("scope", {}),
+                "constraint_fingerprint": constraint,
+                "statement_id": statement_id,
+                "generation": generation,
+                "generation_available": generation_available,
+                "policy_fingerprint": policy_value,
+                "observed_at": observed_at,
+                "reason": reason,
+            }
+            observations.append(observation)
         result = tuple(observations)
         return result
 
@@ -755,16 +752,16 @@ class EngramCore:
         lifecycle_status: LifecycleHandoffStatus = LifecycleHandoffStatus.NOT_APPLICABLE,
     ) -> dict[str, object]:
         candidate = self.engram.feedback_store.apply_validated(request_id, observations, lifecycle_status)
-        receipt_value = mutation_receipt_to_dict(candidate["receipt"])
-        result = receipt_value["result"]
+        receipt_value = mutation_receipt_to_dict(candidate.get("receipt", {}))
+        result = receipt_value.get("result", False)
         if not isinstance(result, dict):
             raise LifecycleError("feedback mutation receipt result is malformed")
         value = deepcopy(result)
         value.update(
             {
                 "request_id": request_id,
-                "result_code": candidate["receipt"]["result_code"].value,
-                "idempotent": candidate["replayed"],
+                "result_code": receipt_value.get("result_code", ""),
+                "idempotent": candidate.get("replayed", False),
                 "memory_only": True,
             }
         )
@@ -803,53 +800,55 @@ class EngramCore:
         )
         policy_value = policy_fingerprint(self.resolution_orchestrator.internal_fusion.policy)
         repository = self.engram.response_repository.trusted_artifacts()
+        observed_at = frame.get("eligibility_context", {}).get("evaluation_time", "")
         values = []
         for statement_id in statement_ids:
-            artifact = repository.get(statement_id)
-            values.append(
-                trusted_feedback_observation(
-                    reference_kind=FeedbackReferenceKind.REGULATED_PROPOSAL,
-                    reference_id=proposal_id,
-                    kind=FeedbackObservationKind.CANDIDACY,
-                    outcome=FeedbackOutcome.CANDIDATE,
-                    query_identity=frame.get("identity", {}),
-                    scope=frame.get("scope", {}),
-                    constraint_fingerprint=constraint,
-                    statement_id=statement_id,
-                    generation=artifact["generation"] if artifact else 0,
-                    generation_available=bool(artifact),
-                    policy_fingerprint=policy_value,
-                    observed_at=frame.get("eligibility_context", {})["evaluation_time"],
-                )
-            )
+            artifact = repository.get(statement_id, {})
+            observation = {
+                "reference_kind": FeedbackReferenceKind.REGULATED_PROPOSAL,
+                "reference_id": proposal_id,
+                "kind": FeedbackObservationKind.CANDIDACY,
+                "outcome": FeedbackOutcome.CANDIDATE,
+                "query_identity": frame.get("identity", {}),
+                "scope": frame.get("scope", {}),
+                "constraint_fingerprint": constraint,
+                "statement_id": statement_id,
+                "generation": artifact.get("generation", 0),
+                "generation_available": bool(artifact),
+                "policy_fingerprint": policy_value,
+                "observed_at": observed_at,
+                "reason": "",
+            }
+            values.append(observation)
         result = tuple(values)
         return result
 
     def internal_negative_key(self, frame: dict, plan) -> tuple[dict, bool]:
         context = frame.get("eligibility_context", {})
-        if not (context["evaluation_time_available"] and context["artifact_repository_available"]):
-            result = empty_negative_resolution()["key"], False
+        if not (context.get("evaluation_time_available", False) and context.get("artifact_repository_available", False)):
+            result = empty_negative_resolution().get("key", {}), False
             return result
-        configured = tuple(resolver_contract(entry["resolver"])[0] for entry in plan["entries"] if entry["configured"])
-        serialized_entries = trusted_resolution_plan_to_dict(plan)["entries"]
-        if not isinstance(serialized_entries, list):
+        configured = tuple(
+            resolver_contract(entry.get("resolver", {}))[0] for entry in plan.get("entries", ()) if entry.get("configured", False)
+        )
+        plan_entries = trusted_resolution_plan_to_dict(plan).get("entries", False)
+        if not isinstance(plan_entries, list):
             raise LifecycleError("resolution plan entries are malformed")
-        plan_entries = serialized_entries
         resolver_plan = [
             {
-                "resolver": value["resolver"],
-                "cost_class": value["cost_class"],
-                "order": value["order"],
-                "configured": value["configured"],
+                "resolver": value.get("resolver", ""),
+                "cost_class": value.get("cost_class", ""),
+                "order": value.get("order", 0),
+                "configured": value.get("configured", False),
             }
             for value in plan_entries
         ]
         readiness = [
             {
-                "resolver": value["resolver"],
-                "configured": value["configured"],
-                "available": value["available"],
-                "reason_code": value["reason_code"],
+                "resolver": value.get("resolver", ""),
+                "configured": value.get("configured", False),
+                "available": value.get("available", False),
+                "reason_code": value.get("reason_code", ""),
             }
             for value in plan_entries
         ]
@@ -932,13 +931,13 @@ class EngramCore:
                 raise InvalidRequestError("accept_exact must be a boolean")
             check_cancellation()
             rollout = select_rollout(self.engram.config, namespace)
-            rollout_mode = rollout["mode"]
+            rollout_mode = rollout.get("mode", RolloutMode.DISABLED)
             selected_resolvers = ("exact",) if rollout_mode == RolloutMode.ROLLBACK else configured_resolvers
-            graph_enabled = bool((self.engram.config.get("graph") or {}).get("enabled"))
+            graph_enabled = bool(self.engram.config.get("graph", {}).get("enabled", False))
             if graph_enabled and selected_resolvers and "structured_graph" not in selected_resolvers:
                 selected_resolvers = (*selected_resolvers, "structured_graph")
             signature_budget = resolution_budget_to_dict(selected_budget if budget else resolution_budget())
-            signature_budget.pop("started_ns")
+            signature_budget.pop("started_ns", 0)
             signature = service_request_signature(
                 request=request,
                 user_id=normalized_user_id,
@@ -954,12 +953,12 @@ class EngramCore:
             )
             if request_id in self.resolution_requests:
                 check_cancellation()
-                prior = self.resolution_requests[request_id]
-                prior_signature = prior["signature"]
+                prior = self.resolution_requests.get(request_id, {})
+                prior_signature = prior.get("signature", "")
                 if prior_signature != signature:
                     raise ConflictError("resolution request_id is associated with different input")
                 self.ensure_resolution_candidacy(request_id, prior)
-                prior_result = prior["result"]
+                prior_result = prior.get("result", {})
                 try:
                     prior_result = validate_resolution_result(prior_result)
                 except InvalidRequestError as error:
@@ -1014,9 +1013,10 @@ class EngramCore:
                     session["query_frame_turn"] = current_turn
                     session["last_active"] = self.internal_clock()
 
+            evaluation_time = frame.get("eligibility_context", {}).get("evaluation_time", "")
             negative_started_ns = time_monotonic_ns()
             plan = self.resolver_registry.plan(frame, selected_resolvers)
-            negative_key = empty_negative_resolution()["key"]
+            negative_key = empty_negative_resolution().get("key", {})
             negative_key_available = False
             negative_hit = False
             negative_result: object = {}
@@ -1026,11 +1026,8 @@ class EngramCore:
                 if rollout_mode == RolloutMode.SHADOW:
                     negative_key_available = False
                 if negative_key_available:
-                    negative_lookup = self.negative_resolutions.lookup(
-                        negative_key,
-                        frame["eligibility_context"]["evaluation_time"],
-                    )
-                    if negative_lookup["hit"]:
+                    negative_lookup = self.negative_resolutions.lookup(negative_key, evaluation_time)
+                    if negative_lookup.get("hit", False):
                         negative_result = negative_hit_result(frame, negative_started_ns)
                         negative_hit = True
             except ResolutionCancelledError:
@@ -1055,14 +1052,11 @@ class EngramCore:
             )
             if negative_key_available and negative_resolution_admissible(raw_result, plan):
                 try:
-                    self.negative_resolutions.admit(
-                        negative_key,
-                        frame["eligibility_context"]["evaluation_time"],
-                    )
+                    self.negative_resolutions.admit(negative_key, evaluation_time)
                 except Exception as error:
                     LOGGER.warning("negative-resolution admission failed", exc_info=error)
             result = apply_rollout(raw_result, rollout)
-            candidate_statement_ids = finalization["candidate_statement_ids"] if rollout_mode != RolloutMode.SHADOW else ()
+            candidate_statement_ids = finalization.get("candidate_statement_ids", ()) if rollout_mode != RolloutMode.SHADOW else ()
             candidacy_observations = self.feedback_observations(
                 frame,
                 result,
@@ -1071,7 +1065,7 @@ class EngramCore:
                 reference_id=request_id,
                 kind=FeedbackObservationKind.CANDIDACY,
                 outcome=FeedbackOutcome.CANDIDATE,
-                observed_at=frame["eligibility_context"]["evaluation_time"],
+                observed_at=evaluation_time,
             )
             public_result = self.cache_resolution(
                 request_id,
@@ -1108,48 +1102,42 @@ class EngramCore:
                 raise InvalidRequestError(f"feedback outcome must be one of: {supported}") from error
             if verdict == FeedbackOutcome.CANDIDATE:
                 raise InvalidRequestError("candidate is an internal observation, not an external feedback outcome")
-            record = self.resolution_requests.get(resolution_request_id)
+            record = self.resolution_requests.get(resolution_request_id, {})
             if not record:
                 raise ResourceNotFoundError("unknown or expired resolution_request_id")
             self.ensure_resolution_candidacy(resolution_request_id, record)
-            candidate_ids = record["candidate_statement_ids"]
+            candidate_ids = record.get("candidate_statement_ids", ())
             if not isinstance(candidate_ids, tuple) or statement_id not in candidate_ids:
                 raise InvalidRequestError("statement_id is not a candidate in this resolution request")
-            candidacy = record["candidacy_observations"]
+            candidacy = record.get("candidacy_observations", ())
             if not isinstance(candidacy, tuple):
                 raise LifecycleError("resolution candidacy observations are malformed")
             target = feedback_target(candidacy, statement_id)
             observed_at = canonical_utc(self.internal_clock())
-            observation = feedback_observation(
-                reference_kind=target["reference_kind"],
-                reference_id=target["reference_id"],
-                kind=FeedbackObservationKind.VERDICT,
-                outcome=verdict,
-                query_identity=target["query_identity"],
-                scope=target["scope"],
-                constraint_fingerprint=target["constraint_fingerprint"],
-                statement_id=target["statement_id"],
-                generation=target["generation"],
-                generation_available=target["generation_available"],
-                policy_fingerprint=target["policy_fingerprint"],
-                observed_at=observed_at,
-                reason=reason,
+            observation = validate_feedback_observation(
+                {
+                    **target,
+                    "kind": FeedbackObservationKind.VERDICT,
+                    "outcome": verdict,
+                    "observed_at": observed_at,
+                    "reason": reason,
+                }
             )
             lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
             if verdict == FeedbackOutcome.REJECTED_STALE:
                 probe = self.engram.feedback_store.prepare(feedback_request_id, (observation,))
-                if probe["replayed"]:
-                    probe_receipt = mutation_receipt_to_dict(probe["receipt"])
-                    probe_result = probe_receipt["result"]
+                if probe.get("replayed", False):
+                    probe_receipt = mutation_receipt_to_dict(probe.get("receipt", {}))
+                    probe_result = probe_receipt.get("result", False)
                     if not isinstance(probe_result, dict):
                         raise LifecycleError("feedback replay lifecycle result is malformed")
-                    lifecycle_status = LifecycleHandoffStatus(probe_result["lifecycle_status"])
-                elif target["generation_available"]:
+                    lifecycle_status = LifecycleHandoffStatus(probe_result.get("lifecycle_status", ""))
+                elif target.get("generation_available", False):
                     lifecycle_status = LifecycleHandoffStatus.PENDING
                     try:
                         self.response_mutations.invalidate_response(
                             statement_id,
-                            target["generation"],
+                            target.get("generation", 0),
                             LifecycleMutationReason.STALE,
                             "regulator-feedback",
                             feedback_mutation_request_id("stale-lifecycle", feedback_request_id),
@@ -1173,7 +1161,7 @@ class EngramCore:
                     "reason": reason,
                 }
             )
-            if not result["idempotent"]:
+            if not result.get("idempotent", False):
                 self.record_regulator_telemetry(verdict.value)
             return result
 
@@ -1204,7 +1192,7 @@ class EngramCore:
             if conversation_id == DEFAULT_USER_ID and conversation_id in self.conversations:
                 idle = time_monotonic() - self.conversation_activity.get(conversation_id, time_monotonic())
                 if idle >= ANONYMOUS_CONVERSATION_LEASE_SECONDS:
-                    self.release_conversation(self.conversations.get(conversation_id))
+                    self.release_conversation(self.conversations.get(conversation_id, ()))
             if conversation_id in self.conversations:
                 raise ConflictError(f"conversation already active for user_id: {conversation_id}")
             self.make_conversation_room()
@@ -1223,10 +1211,10 @@ class EngramCore:
             snapshot = runtime.inspect()
             result = {
                 "started": True,
-                "user_id": snapshot["user_id"],
-                "initial_bot_text": snapshot["initial_bot_text"],
-                "turn_count": snapshot["turn_count"],
-                "statement_count": snapshot["metrics"]["statement_count"],
+                "user_id": snapshot.get("user_id", ""),
+                "initial_bot_text": snapshot.get("initial_bot_text", ""),
+                "turn_count": snapshot.get("turn_count", 0),
+                "statement_count": snapshot.get("metrics", {}).get("statement_count", 0),
                 "memory_only": True,
             }
             if conversation_id == DEFAULT_USER_ID:
@@ -1273,17 +1261,16 @@ class EngramCore:
             ]
         for runtime in stale:
             self.release_conversation(runtime)
-        if len(self.conversations) < self.engram.config.get("max_sessions", 1):
-            return
-        overflow = self.engram.config.get("session_overflow", SessionOverflow.REJECT)
-        idle = [runtime for user_id, runtime in self.conversations.items() if user_id not in self.active_resolution_user_ids]
-        if overflow == SessionOverflow.REJECT or not idle:
-            raise sessions.SessionLimitExceededError("maximum active conversations reached")
-        if overflow == SessionOverflow.EXPIRE_OLDEST:
-            selected = min(idle, key=lambda runtime: runtime.started_at)
-        else:
-            selected = min(idle, key=lambda runtime: self.conversation_activity.get(runtime.user_id, 0.0))
-        self.release_conversation(selected)
+        if len(self.conversations) >= self.engram.config.get("max_sessions", 1):
+            overflow = self.engram.config.get("session_overflow", SessionOverflow.REJECT)
+            idle = [runtime for user_id, runtime in self.conversations.items() if user_id not in self.active_resolution_user_ids]
+            if overflow == SessionOverflow.REJECT or not idle:
+                raise sessions.SessionLimitExceededError("maximum active conversations reached")
+            if overflow == SessionOverflow.EXPIRE_OLDEST:
+                selected = min(idle, key=lambda runtime: runtime.started_at)
+            else:
+                selected = min(idle, key=lambda runtime: self.conversation_activity.get(runtime.user_id, 0.0))
+            self.release_conversation(selected)
 
     def get_conversation(self, user_id: str) -> ConversationRuntime:
         """Return an active user runtime or raise a lifecycle error."""
@@ -1344,8 +1331,8 @@ class EngramCore:
             self.release_conversation(runtime)
             result = {
                 "stopped": True,
-                "user_id": report["user_id"],
-                "summary": report["summary"],
+                "user_id": report.get("user_id", ""),
+                "summary": report.get("summary", {}),
             }
             return result
 
@@ -1358,7 +1345,9 @@ class EngramCore:
             normalized_user_id = normalize_service_user_id(user_id)
             session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
-                session["predicates"][name] = value
+                predicates = session.get("predicates", {})
+                predicates[name] = value
+                session["predicates"] = predicates
 
     def get_predicate(self, user_id: str, name: str, default=""):
         """Read one caller-owned predicate from a user context."""
@@ -1371,7 +1360,7 @@ class EngramCore:
             if not session:
                 return default
             with self.engram.session_lock:
-                result = session["predicates"].get(name, default)
+                result = session.get("predicates", {}).get(name, default)
                 return result
 
     def warm_vector_recall(self) -> bool:
@@ -1381,7 +1370,8 @@ class EngramCore:
             try:
                 self.internal_component_status = self.engram.preflight_components()
                 self.engram.component_status = deepcopy(self.internal_component_status)
-                result = self.internal_component_status["vector"]["ready"] and self.internal_component_status["vector"]["enabled"]
+                vector_status = self.internal_component_status.get("vector", {})
+                result = vector_status.get("ready", False) and vector_status.get("enabled", False)
                 return result
             except Exception as error:
                 LOGGER.error("Vector recall could not be initialized", exc_info=error)
@@ -1390,7 +1380,10 @@ class EngramCore:
     def maintain_engagement(self, value: dict) -> dict:
         """Trusted administrative pause, physical purge and explicit resumption."""
         command = validate_removal_command(value)
-        action = command.get("action")
+        action = command.get("action", "")
+        operation_id = command.get("operation_id", "")
+        visibility_scope = command.get("visibility_scope", {})
+        dependency_ids = command.get("dependency_ids", [])
         binding = {key: item for key, item in command.items() if key != "action"}
         with self.resolution_condition:
             if action == "resume" and self.internal_state == CoreState.RUNNING:
@@ -1401,15 +1394,14 @@ class EngramCore:
                     retained = self.engagement_maintenance
                     if (
                         self.internal_state not in {CoreState.QUIESCING, CoreState.MAINTENANCE}
-                        or retained.get("operation_id") != binding.get("operation_id")
-                        or retained.get("visibility_scope") != binding.get("visibility_scope")
-                        or (binding.get("dependency_ids") and retained.get("dependency_ids") != binding.get("dependency_ids"))
+                        or retained.get("operation_id", "") != operation_id
+                        or retained.get("visibility_scope", {}) != visibility_scope
+                        or (dependency_ids and retained.get("dependency_ids", []) != dependency_ids)
                     ):
                         raise LifecycleError("removal plan conflicts with the current maintenance owner")
-                report = self.response_removal.execute(
-                    command.get("visibility_scope"), retained.get("dependency_ids", command.get("dependency_ids"))
-                )
-                return {**report, "maintenance_binding": deepcopy(retained), "purged": self.engagement_purged}
+                report = self.response_removal.execute(visibility_scope, retained.get("dependency_ids", dependency_ids))
+                result = {**report, "maintenance_binding": deepcopy(retained), "purged": self.engagement_purged}
+                return result
             if action == "prepare":
                 if self.internal_state == CoreState.RUNNING:
                     self.engagement_maintenance = deepcopy(binding)
@@ -1428,9 +1420,7 @@ class EngramCore:
             if self.internal_state != CoreState.MAINTENANCE or self.engagement_maintenance != binding:
                 raise LifecycleError("engagement removal requires its exact drained maintenance owner")
             if action == "purge":
-                report = self.response_removal.execute(
-                    command.get("visibility_scope"), command.get("dependency_ids"), dry_run=False
-                )
+                report = self.response_removal.execute(visibility_scope, dependency_ids, dry_run=False)
                 # Context is intentionally unscoped transport state, not an
                 # accepted-response owner. Drop it after the drained purge.
                 for records in (
@@ -1449,7 +1439,8 @@ class EngramCore:
                 with self.engram.session_lock:
                     self.engram.sessions.clear()
                 self.engagement_purged = True
-                return {**report, "state": "maintenance", "purged": True}
+                result = {**report, "state": "maintenance", "purged": True}
+                return result
             if not self.engagement_purged:
                 raise LifecycleError("engagement maintenance cannot resume before a successful purge")
             self.engagement_maintenance = {}
@@ -1529,10 +1520,10 @@ class EngramCore:
                 required_source_label=required_source_label,
             )
 
-            existing_proposal_id = self.proposal_requests.get(request_id)
+            existing_proposal_id = self.proposal_requests.get(request_id, "")
             if existing_proposal_id:
-                existing = self.proposals[existing_proposal_id]
-                if existing["signature"] != signature:
+                existing = self.proposals.get(existing_proposal_id, {})
+                if existing.get("signature", "") != signature:
                     raise ConflictError("request_id is already associated with a different proposal request")
                 self.ensure_proposal_candidacy(existing_proposal_id, existing)
                 self.regulated_metrics["idempotent_retries"] += 1
@@ -1582,8 +1573,9 @@ class EngramCore:
                     scoped_retrieval_key_from_text(scope, request),
                     eligibility_context,
                 )
-                if exact["lookup"]["outcome"] == ExactLookupOutcome.FOUND:
-                    found = response_artifacts.get(exact["lookup"]["statement_id"], {})
+                lookup = exact.get("lookup", {})
+                if lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.FOUND:
+                    found = response_artifacts.get(lookup.get("statement_id", ""), {})
                     if found and artifact_matches_scope(found):
                         exact_artifact = found
             except InvalidRequestError:
@@ -1630,31 +1622,31 @@ class EngramCore:
                         },
                     )
                     score_field = "keyword_score" if source == "exact" else f"{source}_score"
-                    entry[score_field] = max(float(entry[score_field]), float(score))
+                    entry[score_field] = max(float(entry.get(score_field, 0.0)), float(score))
             ranked = sorted(
                 merged.values(),
                 key=lambda entry: (
-                    max(entry["keyword_score"], entry["vector_score"]),
-                    entry["artifact"].get("provenance", {}).get("accepted_at", ""),
-                    entry["artifact"].get("statement_id", ""),
+                    max(entry.get("keyword_score", 0.0), entry.get("vector_score", 0.0)),
+                    entry.get("artifact", {}).get("provenance", {}).get("accepted_at", ""),
+                    entry.get("artifact", {}).get("statement_id", ""),
                 ),
                 reverse=True,
             )[:limit]
             candidates = []
             queried_response_ids = []
             for entry in ranked:
-                artifact = entry["artifact"]
+                artifact = entry.get("artifact", {})
+                keyword_score = entry.get("keyword_score", 0.0)
+                vector_score = entry.get("vector_score", 0.0)
                 statement_id = artifact.get("statement_id", "")
-                selected_score = max(entry["keyword_score"], entry["vector_score"])
+                selected_score = max(keyword_score, vector_score)
                 queried_response_ids.append(statement_id)
                 candidate = artifact_candidate_result(artifact, selected_score)
-                candidate["query_count"] += 1
+                candidate["query_count"] = candidate.get("query_count", 0) + 1
                 candidate["retrieval"] = {
-                    "keyword_score": entry["keyword_score"],
-                    "vector_score": entry["vector_score"],
-                    "selected": (
-                        "exact" if exact_artifact else "vector" if entry["vector_score"] > entry["keyword_score"] else "keyword"
-                    ),
+                    "keyword_score": keyword_score,
+                    "vector_score": vector_score,
+                    "selected": "exact" if exact_artifact else "vector" if vector_score > keyword_score else "keyword",
                 }
                 candidates.append(candidate)
             proposal_id = f"proposal_{uuid4().hex[:16]}"
@@ -1664,15 +1656,16 @@ class EngramCore:
                 "user_id": normalized_user_id,
                 "namespace": namespace,
                 "context_fingerprint": context_fingerprint,
-                "resolved_request": feedback_frame["resolved_text"],
-                "keywords": list(feedback_frame["identity"]["lexical_terms"]),
+                "resolved_request": feedback_frame.get("resolved_text", ""),
+                "keywords": list(feedback_frame.get("identity", {}).get("lexical_terms", ())),
                 "candidates": candidates,
             }
-            self.proposals[proposal_id] = {
+            candidate_responses = {candidate.get("statement_id", ""): candidate.get("response", "") for candidate in candidates}
+            record = {
                 "created_at": time_monotonic(),
                 "signature": signature,
                 "proposal": proposal,
-                "candidate_responses": {candidate["statement_id"]: candidate["response"] for candidate in candidates},
+                "candidate_responses": candidate_responses,
                 "resolution": {},
                 "resolution_signature": "",
                 "pending_resolution": {},
@@ -1680,6 +1673,7 @@ class EngramCore:
                 "candidacy_observations": (),
                 "candidacy_applied": not candidates,
             }
+            self.proposals[proposal_id] = record
             self.proposal_requests[request_id] = proposal_id
             self.regulated_metrics["proposals"] += 1
             if not candidates:
@@ -1690,15 +1684,14 @@ class EngramCore:
                     tuple(sorted(queried_response_ids)),
                     accounting_request_id("response-query", request_id),
                 )
-            record = self.proposals[proposal_id]
             if candidates:
                 record["candidacy_observations"] = self.proposal_feedback_observations(
                     feedback_frame,
                     proposal_id,
-                    tuple(sorted(record["candidate_responses"])),
+                    tuple(sorted(candidate_responses)),
                 )
                 self.ensure_proposal_candidacy(proposal_id, record)
-            result = service_proposal_result(self.proposals[proposal_id], idempotent=False)
+            result = service_proposal_result(record, idempotent=False)
             return result
 
     def resolve(self, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
@@ -1729,36 +1722,31 @@ class EngramCore:
                     result = self.complete_proposal_resolution(proposal_id, record)
                     return result
                 self.regulated_metrics["idempotent_retries"] += 1
-                result = deepcopy(record["resolution"])
+                result = deepcopy(record.get("resolution", {}))
                 result["idempotent"] = True
                 return result
 
-            candidate_responses = record["candidate_responses"]
+            candidate_responses = record.get("candidate_responses", {})
             if not statement_id:
                 raise InvalidRequestError("Regulator outcomes require statement_id")
             if statement_id not in candidate_responses:
                 raise InvalidRequestError("statement_id is not a candidate in this proposal")
             if outcome == "accepted":
                 self.current_proposal_candidate(record, statement_id)
-            observations = record["candidacy_observations"]
+            observations = record.get("candidacy_observations", ())
             if not isinstance(observations, tuple):
                 raise LifecycleError("proposal candidacy observations are malformed")
             target = feedback_target(observations, statement_id)
             feedback_outcome = FeedbackOutcome(outcome)
-            verdict_observation = feedback_observation(
-                reference_kind=target["reference_kind"],
-                reference_id=target["reference_id"],
-                kind=FeedbackObservationKind.VERDICT,
-                outcome=feedback_outcome,
-                query_identity=target["query_identity"],
-                scope=target["scope"],
-                constraint_fingerprint=target["constraint_fingerprint"],
-                statement_id=target["statement_id"],
-                generation=target["generation"],
-                generation_available=target["generation_available"],
-                policy_fingerprint=target["policy_fingerprint"],
-                observed_at=canonical_utc(self.internal_clock()),
-                reason=reason,
+            observed_at = canonical_utc(self.internal_clock())
+            verdict_observation = validate_feedback_observation(
+                {
+                    **target,
+                    "kind": FeedbackObservationKind.VERDICT,
+                    "outcome": feedback_outcome,
+                    "observed_at": observed_at,
+                    "reason": reason,
+                }
             )
             verdict_feedback_request_id = feedback_mutation_request_id("proposal-verdict", proposal_id)
             lifecycle_status = LifecycleHandoffStatus.NOT_APPLICABLE
@@ -1816,7 +1804,8 @@ class EngramCore:
                 sessions.update_session_context(self.engram, proposal.get("user_id", ""), current_artifact.get("response", ""))
             self.regulated_metrics["accepted"] += 1
         else:
-            self.regulated_metrics["rejections"][outcome] += 1
+            rejections = self.regulated_metrics.get("rejections", Counter())
+            rejections[outcome] += 1
         self.record_regulator_telemetry(outcome)
         record["resolution"] = resolution
         record["pending_resolution"] = {}
@@ -1860,22 +1849,23 @@ class EngramCore:
                 source_label,
                 metadata,
             )
-            receipt = mutation["receipt"]
-            receipt_value = mutation_receipt_to_dict(receipt)
-            receipt_result = receipt_value["result"]
+            replayed = mutation.get("replayed", False)
+            receipt_value = mutation_receipt_to_dict(mutation.get("receipt", {}))
+            receipt_result = receipt_value.get("result", False)
             if not isinstance(receipt_result, dict):
                 raise LifecycleError("response mutation receipt result is not an object")
-            receipt_statement_id = receipt_result.get("statement_id")
-            evicted_statement_ids = receipt_result.get("evicted_statement_ids")
+            receipt_statement_id = receipt_result.get("statement_id", False)
+            evicted_statement_ids = receipt_result.get("evicted_statement_ids", False)
             if not isinstance(receipt_statement_id, str) or not isinstance(evicted_statement_ids, list):
                 raise LifecycleError("response mutation receipt result is malformed")
-            learned = receipt["result_code"].value != "REJECTED_CAPACITY"
-            if learned and not mutation["replayed"]:
+            result_code = receipt_value.get("result_code", "")
+            learned = result_code != "REJECTED_CAPACITY"
+            if learned and not replayed:
                 self.engram.eviction_count += len(evicted_statement_ids)
             if learned and normalized_user_id != DEFAULT_USER_ID:
                 sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 sessions.update_session_context(self.engram, normalized_user_id, response)
-            if mutation["replayed"]:
+            if replayed:
                 self.regulated_metrics["idempotent_retries"] += 1
             elif learned:
                 self.regulated_metrics["learned_created"] += 1
@@ -1888,8 +1878,8 @@ class EngramCore:
                 "namespace": namespace,
                 "context_fingerprint": context_fingerprint,
                 "source_label": source_label,
-                "idempotent": mutation["replayed"],
-                "result_code": receipt["result_code"].value,
+                "idempotent": replayed,
+                "result_code": result_code,
                 "evicted_statement_ids": evicted_statement_ids,
             }
             result = deepcopy(result)
@@ -2084,7 +2074,7 @@ class EngramCore:
             self.cleanup_transient()
             result = {
                 **deepcopy(self.regulated_metrics),
-                "pending_proposals": sum(1 for record in self.proposals.values() if not record["resolution"]),
+                "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
                 "retained_proposals": len(self.proposals),
             }
             return result
@@ -2111,11 +2101,13 @@ class EngramCore:
 
     def cleanup_transient(self) -> None:
         cutoff = time_monotonic() - PROPOSAL_TTL_SECONDS
-        expired_proposals = [proposal_id for proposal_id, record in self.proposals.items() if record["created_at"] < cutoff]
+        expired_proposals = [
+            proposal_id for proposal_id, record in self.proposals.items() if record.get("created_at", 0.0) < cutoff
+        ]
         for proposal_id in expired_proposals:
             self.remove_proposal(proposal_id)
         for records in (self.learn_requests, self.retire_requests):
-            expired_request_ids = [request_id for request_id, record in records.items() if record["created_at"] < cutoff]
+            expired_request_ids = [request_id for request_id, record in records.items() if record.get("created_at", 0.0) < cutoff]
             for request_id in expired_request_ids:
                 records.pop(request_id, {})
 
@@ -2130,7 +2122,7 @@ class EngramCore:
         record = self.proposals.pop(proposal_id, {})
         if not record:
             return False
-        request_id = record["proposal"]["request_id"]
-        if self.proposal_requests.get(request_id) == proposal_id:
+        request_id = record.get("proposal", {}).get("request_id", "")
+        if self.proposal_requests.get(request_id, "") == proposal_id:
             self.proposal_requests.pop(request_id, "")
         return True

@@ -19,11 +19,11 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import engram_config, graph_config
-from engram.constants import Tier
+from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
 from engram.core import Engram
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
@@ -38,6 +38,22 @@ PACKAGE_NAMES = (
     "sentence-transformers",
     "spacy",
 )
+# Every benchmark engine disables learning, polishing and lexical expansion so that only
+# the measured lookup work is timed; capacity is sized per corpus at each construction.
+BENCHMARK_CONFIG_OPTIONS = {
+    "learn_user_facts": False,
+    "polish_responses": False,
+    "use_lemmatization": False,
+    "use_spell_correction": False,
+    "use_stemming": False,
+    "use_synonyms": False,
+}
+# Read-only provenance shared by every synthetic artifact; artifact validation copies it.
+RUNTIME_BENCHMARK_PROVENANCE = {
+    "source_label": "runtime:benchmark",
+    "caller_id": "engineering",
+    "accepted_at": "2026-08-19T00:00:00Z",
+}
 
 
 class SyntheticVectorGraph:
@@ -71,19 +87,6 @@ class SyntheticEmbeddingModel(SentenceTransformer):
         pass
 
 
-def benchmark_config(capacity: int) -> dict:
-    result = engram_config(
-        capacity=max(capacity + 10, 100),
-        learn_user_facts=False,
-        polish_responses=False,
-        use_lemmatization=False,
-        use_spell_correction=False,
-        use_stemming=False,
-        use_synonyms=False,
-    )
-    return result
-
-
 def internal_percentile(samples: list[float], fraction: float) -> float:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * fraction))))
@@ -110,90 +113,74 @@ def internal_measure(operation: object, iterations: int) -> dict:
     return result
 
 
-def memory_build(builder):
-    if not callable(builder):
-        raise ValueError("benchmark builder must be callable")
+def artifact_result(corpus_size: int, iterations: int) -> dict:
+    # Corpus construction is traced in isolation: corpus_size - 1 unrelated artifacts and one target.
     gc_collect()
     tracemalloc_start()
-    value = builder()
-    current, peak = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
-    result = value, {"current_bytes": current, "peak_bytes": peak}
-    return result
-
-
-def prepare_artifact_benchmark(corpus_size: int) -> tuple[EngramCore, str, dict]:
-    def build() -> tuple[EngramCore, str]:
-        engram = Engram(config=benchmark_config(corpus_size))
-        selected_scope = scope_key()
-        artifacts = []
-        for index in range(max(0, corpus_size - 1)):
-            request = f"noise-token-{index} archive-entry-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-noise-{index}",
-                    generation=1,
-                    response=f"Synthetic response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        target_id = "runtime-target"
-        request = "What are the baseline support hours?"
+    engram = Engram(config=engram_config(capacity=max(corpus_size + 10, 100), **BENCHMARK_CONFIG_OPTIONS))
+    selected_scope = scope_key()
+    artifacts = []
+    for index in range(max(0, corpus_size - 1)):
+        noise_request = f"noise-token-{index} archive-entry-{index}"
         artifacts.append(
-            cached_response_artifact(
-                statement_id=target_id,
-                generation=1,
-                response="Baseline support is open from nine to five.",
-                query_identity=build_standalone_identity(request, selected_scope),
-                retrieval=build_retrieval_representation(request),
-                tier=Tier.STATIC,
-                lifecycle=LifecycleState.ACTIVE,
-                scope=selected_scope,
-                support_references=(),
-                valid_from="",
-                valid_from_available=False,
-                valid_until="",
-                valid_until_available=False,
-                superseded_by="",
-                provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                statistics=artifact_statistics(),
-                metadata={},
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-noise-{index}",
+                    "generation": 1,
+                    "response": f"Synthetic response {index}.",
+                    "query_identity": extract_standalone_identity(noise_request, selected_scope),
+                    "retrieval": retrieval_representation(noise_request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
             )
         )
-        engram.response_repository = ArtifactRepository(tuple(artifacts))
-        result = EngramCore(engram), target_id
-        return result
-
-    built, memory = memory_build(build)
-    if not isinstance(built, tuple) or len(built) != 2:
-        raise RuntimeError("artifact benchmark builder returned an invalid result")
-    core, target_id = built
-    if not isinstance(core, EngramCore) or not isinstance(target_id, str):
-        raise RuntimeError("artifact benchmark builder returned invalid values")
-    result = core, target_id, memory
-    return result
-
-
-def artifact_result(corpus_size: int, iterations: int) -> dict:
-    core, target_id, memory = prepare_artifact_benchmark(corpus_size)
+    target_id = "runtime-target"
     request = "What are the baseline support hours?"
+    artifacts.append(
+        validate_cached_response_artifact(
+            {
+                "statement_id": target_id,
+                "generation": 1,
+                "response": "Baseline support is open from nine to five.",
+                "query_identity": extract_standalone_identity(request, selected_scope),
+                "retrieval": retrieval_representation(request),
+                "tier": Tier.STATIC,
+                "lifecycle": LifecycleState.ACTIVE,
+                "scope": selected_scope,
+                "support_references": (),
+                "valid_from": "",
+                "valid_from_available": False,
+                "valid_until": "",
+                "valid_until_available": False,
+                "superseded_by": "",
+                "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                "statistics": INITIAL_ARTIFACT_STATISTICS,
+                "metadata": {},
+            }
+        )
+    )
+    engram.response_repository = ArtifactRepository(tuple(artifacts))
+    core = EngramCore(engram)
+    # The working list is not retained by the core; release it before reading current bytes.
+    del artifacts
+    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
+    memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_ids = []
 
-    def unique_proposal() -> object:
+    def unique_proposal() -> dict:
         request_id = f"artifact-{corpus_size}-{sequence[0]}"
         sequence[0] += 1
         proposal = core.propose(request, request_id=request_id)
@@ -220,97 +207,96 @@ def artifact_result(corpus_size: int, iterations: int) -> dict:
     return result
 
 
-def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[EngramCore, dict]:
-    proposition_id = "prp_" + "a" * 64
-
-    def build() -> EngramCore:
-        config = benchmark_config(corpus_size)
-        config["graph"] = graph_config(enabled=False, vector_enabled=False)
-        engram = Engram(config=config)
-        selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
-        # The current eight-field opaque support contract, as the Tapestry producer emits it.
-        support_reference = {
-            "schema_version": "tapestry-engram-support",
-            "record_kind": "proposition",
-            "id": proposition_id,
-            "state_revision": 0,
-            "support_revision": 0,
-            "representation_contract": "representation-v1",
-            "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
-            "dependency_state_digest": "dep_" + "a" * 64,
-        }
-        artifacts = []
-        noise_count = max(0, corpus_size - support_fanout)
-        for index in range(noise_count):
-            request = f"unrelated-token-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-vector-noise-{index}",
-                    generation=1,
-                    response=f"Unrelated response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        for index in range(support_fanout):
-            request = f"supported-artifact-token-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-vector-supported-{index}",
-                    generation=1,
-                    response=f"Supported response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(support_reference,),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        engram.response_repository = ArtifactRepository(tuple(artifacts))
-        graph_settings = engram.config.get("graph", {})
-        graph_settings["enabled"] = True
-        graph_settings["vector_enabled"] = True
-        benchmark_engram = engram
-        benchmark_engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
-        benchmark_engram.graph_embedding_model = SyntheticEmbeddingModel()
-        benchmark_engram.encode_graph_query = lambda text: [0.0] * 384
-        result = EngramCore(engram)
-        return result
-
-    core, memory = memory_build(build)
-    if not isinstance(core, EngramCore):
-        raise RuntimeError("vector benchmark builder returned an invalid core")
-    result = core, memory
-    return result
-
-
 def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dict:
-    core, memory = prepare_vector_benchmark(corpus_size, support_fanout)
+    proposition_id = "prp_" + "a" * 64
+    # Corpus construction is traced in isolation: unrelated artifacts plus support_fanout artifacts
+    # citing the one Proposition the synthetic vector graph returns.
+    gc_collect()
+    tracemalloc_start()
+    config = engram_config(capacity=max(corpus_size + 10, 100), **BENCHMARK_CONFIG_OPTIONS)
+    config["graph"] = graph_config(enabled=False, vector_enabled=False)
+    engram = Engram(config=config)
+    selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
+    # The current eight-field opaque support contract, as the Tapestry producer emits it.
+    support_reference = {
+        "schema_version": "tapestry-engram-support",
+        "record_kind": "proposition",
+        "id": proposition_id,
+        "state_revision": 0,
+        "support_revision": 0,
+        "representation_contract": "representation-v1",
+        "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
+        "dependency_state_digest": "dep_" + "a" * 64,
+    }
+    artifacts = []
+    noise_count = max(0, corpus_size - support_fanout)
+    for index in range(noise_count):
+        request = f"unrelated-token-{index}"
+        artifacts.append(
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-vector-noise-{index}",
+                    "generation": 1,
+                    "response": f"Unrelated response {index}.",
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
+            )
+        )
+    for index in range(support_fanout):
+        request = f"supported-artifact-token-{index}"
+        artifacts.append(
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-vector-supported-{index}",
+                    "generation": 1,
+                    "response": f"Supported response {index}.",
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (support_reference,),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
+            )
+        )
+    engram.response_repository = ArtifactRepository(tuple(artifacts))
+    graph_settings = engram.config.get("graph", {})
+    graph_settings["enabled"] = True
+    graph_settings["vector_enabled"] = True
+    engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
+    engram.graph_embedding_model = SyntheticEmbeddingModel()
+    engram.encode_graph_query = lambda text: [0.0] * 384
+    core = EngramCore(engram)
+    # The working list is not retained by the core; release it before reading current bytes.
+    del artifacts
+    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
+    memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_counts = []
 
-    def propose() -> object:
+    def propose() -> dict:
         request_id = f"vector-{corpus_size}-{support_fanout}-{sequence[0]}"
         sequence[0] += 1
         proposal = core.propose(
@@ -339,10 +325,11 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
 def startup_result(iterations: int) -> dict:
     warm_iterations = max(5, iterations)
     cold_iterations = max(3, min(5, iterations // 5))
-    warm = internal_measure(lambda: Engram(config=benchmark_config(100)), warm_iterations)
+    # Warm construction uses the 100-artifact benchmark profile (capacity 110).
+    warm = internal_measure(lambda: Engram(config=engram_config(capacity=110, **BENCHMARK_CONFIG_OPTIONS)), warm_iterations)
     command = [sys_executable, "-c", "from engram.core import Engram; Engram()"]
 
-    def cold_start() -> object:
+    def cold_start():
         result = subprocess_run(command, cwd=REPOSITORY, check=True, capture_output=True, text=True)
         return result
 

@@ -13,8 +13,9 @@ def test_query_runs_against_a_fresh_empty_process_cache(tmp_path, capsys) -> Non
     assert main(("--config", str(config), "query", "unknown question")) == 0
 
     payload = json_loads(capsys.readouterr().out)
-    assert payload.get("outcome") == "MISS"
-    assert payload.get("response_candidates") == []
+    assert payload.get("outcome", "") == "MISS"
+    assert "response_candidates" in payload
+    assert payload.get("response_candidates", []) == []
 
 
 def test_cli_no_longer_accepts_disk_state_or_transcript_options() -> None:
@@ -44,7 +45,9 @@ def test_interactive_chat_uses_only_the_owned_core() -> None:
 
     proposal = core.propose("When is support open?", "cli-proposal")
     assert response != "Support is open from nine to five."
-    assert proposal["candidates"][0]["statement_id"] == learned["statement_id"]
+    learned_statement_id = learned.get("statement_id", "")
+    assert learned_statement_id
+    assert proposal.get("candidates", [])[0].get("statement_id", "") == learned_statement_id
     assert chat.handle_command("/quit") is True
 
 
@@ -53,7 +56,9 @@ def test_new_cli_core_does_not_inherit_prior_process_memory() -> None:
     first.learn_response("Question?", "Answer.", "learn-1", user_id="regulator")
     restarted = EngramCore()
 
-    assert first.engram.response_repository.snapshot()["artifacts"]
+    assert first.engram.response_repository.snapshot().get("artifacts", {})
     assert first.engram.statements == []
     assert restarted.engram.statements == []
-    assert restarted.engram.response_repository.snapshot()["artifacts"] == {}
+    restarted_snapshot = restarted.engram.response_repository.snapshot()
+    assert "artifacts" in restarted_snapshot
+    assert restarted_snapshot.get("artifacts", {}) == {}

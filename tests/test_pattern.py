@@ -1,5 +1,7 @@
 """Tests for AIML-style pattern matching."""
 
+from random import Random
+
 from engram.pattern import PatternMatcher, normalize_pattern
 
 
@@ -1089,26 +1091,26 @@ def test_stemming_false_positives_stemming_fallback_still_works_for_real_inflect
     assert pm.match("cats are great")
 
 
-def graph_size(node, seen=None) -> int:
-    """Count nodes reachable from a graphmaster root, including that and topic subtrees."""
-    seen = set() if seen is None else seen
+def graph_size(node, seen: set) -> int:
+    """Count nodes reachable from a graphmaster root, including that and topic subtrees.
+
+    ``seen`` holds the ids already counted in this traversal; callers pass a fresh set.
+    """
     if id(node) in seen:
         return 0
     seen.add(id(node))
     children = [*node.dollar.values(), *node.atoms.values(), *node.bots.values(), *node.sets.values()]
-    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.topic_root) if child]
+    children += [*node.wildcards.values(), *node.segments.values()]
     result = 1 + sum(graph_size(child, seen) for child in children)
     return result
 
 
 def matcher_graph_size(pm: PatternMatcher) -> int:
-    result = graph_size(pm.default_trie)
+    result = graph_size(pm.default_trie, set())
     return result
 
 
 def test_removal_in_place_matches_a_full_rebuild():
-    from random import Random
-
     random = Random(20260927)
     words = ["HELLO", "WORLD", "HOW", "ARE", "YOU", "*", "_", "#", "^", "$THERE"]
     thats = ["", "", "DO YOU AGREE", "WHAT DO YOU LIKE *"]
@@ -1133,8 +1135,13 @@ def test_removal_in_place_matches_a_full_rebuild():
             continue
         for pm, flags in ((stemming, {"use_stemming": True, "use_lemmatization": True}), (plain, {})):
             rebuilt = PatternMatcher(**flags)
-            for entry in pm.internal_patterns:
-                rebuilt.add_pattern(entry["pattern"], entry["response"], that=entry["that"], topic=entry["topic"])
+            for category in pm.internal_patterns:
+                rebuilt.add_pattern(
+                    category.get("pattern", ""),
+                    category.get("response", ""),
+                    that=category.get("that", ""),
+                    topic=category.get("topic", ""),
+                )
             for probe in probes:
                 for that_text, topic_text in contexts:
                     assert pm.match(probe, that=that_text, topic=topic_text) == rebuilt.match(

@@ -1,6 +1,6 @@
 """Explicitly provision the approved Section 13 model before runtime startup."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
+from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from shutil import rmtree as shutil_rmtree
@@ -36,7 +36,7 @@ NATIVE_ALLOW_PATTERNS = [
 ]
 
 
-def parse_args() -> argparse_Namespace:
+def parse_args():
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument(
         "--destination",
@@ -68,12 +68,14 @@ def main() -> int:
         if not manifest_path.is_file() or not (destination / "LICENSE").is_file():
             raise SystemExit(f"existing model destination is incomplete: {destination}")
         existing_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
+        # An identity field that is absent conflicts just as a different value does.
         if not isinstance(existing_manifest, dict) or any(
-            existing_manifest.get(name) != value for name, value in expected_identity.items()
+            name not in existing_manifest or existing_manifest.get(name, value) != value
+            for name, value in expected_identity.items()
         ):
             raise SystemExit(f"existing model manifest conflicts with the requested revision: {manifest_path}")
         checksum = model_artifact_sha256(destination)
-        if existing_manifest.get("artifact_sha256") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
+        if existing_manifest.get("artifact_sha256", "") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
             raise SystemExit(f"existing model artifact checksum mismatch: {destination}")
         manifest = {
             **expected_identity,

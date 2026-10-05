@@ -78,7 +78,8 @@ typeCheckingMode = "basic"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]
-ignore = ["E501"]
+# CODE-STYLE.md prohibits union types, so isinstance checks keep the tuple form UP038 would rewrite.
+ignore = ["E501", "UP038"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing".msg = "Use native Python types and runtime validation; do not import typing."

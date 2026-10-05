@@ -27,9 +27,15 @@ from engram.constants import (
 )
 from engram.lexical import select_lexical_terms
 from engram.nltk_data import ensure_resource
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 
 nltk_reader_lock = Lock()
+
+# Both are stateless after construction: the stemmer holds only its fixed
+# irregular-form table, and the lemmatizer reads WordNet, so callers run
+# initialize_nltk_readers before lemmatizing.
+PORTER_STEMMER = PorterStemmer()
+WORDNET_LEMMATIZER = WordNetLemmatizer()
 
 
 @lru_cache(maxsize=1)
@@ -192,7 +198,7 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
         result = []
         return result
 
-    nlp = get_nlp()
+    nlp = SPACY_PIPELINES.pipeline()
     if not nlp:
         fallback = extract_keywords(text, stopwords)
         return fallback
@@ -310,22 +316,6 @@ def expand_query(query: str, previous_response: str) -> str:
     return expanded
 
 
-@lru_cache(maxsize=1)
-def get_stemmer() -> PorterStemmer:
-    """Get or create the module-level Porter stemmer."""
-    stemmer = PorterStemmer()
-    return stemmer
-
-
-@lru_cache(maxsize=1)
-def get_lemmatizer() -> WordNetLemmatizer:
-    """Get or create the module-level WordNet lemmatizer."""
-
-    initialize_nltk_readers()
-    lemmatizer = WordNetLemmatizer()
-    return lemmatizer
-
-
 @lru_cache(maxsize=8192)
 def lemmatize_word(word: str, pos: str = "n") -> str:
     """Apply WordNet lemmatization to a word.
@@ -340,7 +330,8 @@ def lemmatize_word(word: str, pos: str = "n") -> str:
     Returns:
         Lemmatized word.
     """
-    lemmatized = get_lemmatizer().lemmatize(word.lower(), pos=pos)
+    initialize_nltk_readers()
+    lemmatized = WORDNET_LEMMATIZER.lemmatize(word.lower(), pos=pos)
     return lemmatized
 
 
@@ -359,13 +350,12 @@ def stem_text(text: str) -> str:
     Returns:
         Text with all words stemmed.
     """
-    stemmer = get_stemmer()
     out = []
     for word in text.split():
         if len(word) < MIN_STEM_TOKEN_LENGTH:
             out.append(word.lower())
         else:
-            out.append(stemmer.stem(word))
+            out.append(PORTER_STEMMER.stem(word))
     stemmed = " ".join(out)
     return stemmed
 
@@ -385,13 +375,13 @@ def lemmatize_text(text: str) -> str:
     Returns:
         Text with all words lemmatized.
     """
-    lemmatizer = get_lemmatizer()
+    initialize_nltk_readers()
     out = []
     for word in text.split():
         lower = word.lower()
-        lemma = lemmatizer.lemmatize(lower, pos="v")
+        lemma = WORDNET_LEMMATIZER.lemmatize(lower, pos="v")
         if lemma == lower:
-            lemma = lemmatizer.lemmatize(lower, pos="n")
+            lemma = WORDNET_LEMMATIZER.lemmatize(lower, pos="n")
         out.append(lemma)
     lemmatized = " ".join(out)
     return lemmatized
@@ -413,7 +403,7 @@ def lemmatize_text_spacy(text: str) -> str:
         Text with all words lemmatized.
     """
 
-    nlp = get_nlp()
+    nlp = SPACY_PIPELINES.pipeline()
     if not nlp:
         lowered = text.lower()
         return lowered
@@ -495,7 +485,7 @@ def correct_spelling(text: str, vocabulary) -> str:
     queries to hit the store. The vocabulary is therefore the store's own
     indexed terms, so a typo is only ever corrected into a word that can
     actually match something ("abotu" -> "about" when a pattern carries
-    "about"). See _correct_token for the guardrails.
+    "about"). See correct_token for the guardrails.
 
     Args:
         text: Normalized (lowercase) input text.

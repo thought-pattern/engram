@@ -4,6 +4,16 @@ from pathlib import Path
 
 from yaml import safe_dump as yaml_safe_dump, safe_load as yaml_safe_load
 
+# The Tapestry memgraph connection fields an Engram graph config may carry, with their
+# concrete types; only fields present in the owner config are copied.
+CONNECTION_FIELD_DEFAULTS = {
+    "host": "",
+    "password": "",
+    "port": 0,
+    "username": "",
+    "visibility_scope": {},
+}
+
 
 def materialize_engram_graph_config(source: str, destination: Path) -> str:
     """Return an Engram config path, adapting a Tapestry owner config when needed."""
@@ -12,13 +22,15 @@ def materialize_engram_graph_config(source: str, destination: Path) -> str:
     if not isinstance(loaded, dict):
         raise ValueError("graph probe config must contain a YAML object")
     if "graph" in loaded:
-        return str(source_path)
+        selected_path = str(source_path)
+        return selected_path
 
     memgraph = loaded.get("memgraph", {})
     if not isinstance(memgraph, dict) or not memgraph:
         raise ValueError("graph probe config must contain graph or memgraph settings")
-    allowed = {"host", "port", "username", "password", "visibility_scope"}
-    connection = {name: memgraph[name] for name in sorted(allowed) if name in memgraph}
+    connection = {
+        name: memgraph.get(name, default) for name, default in sorted(CONNECTION_FIELD_DEFAULTS.items()) if name in memgraph
+    }
     graph = {
         **connection,
         "enabled": True,
@@ -26,4 +38,5 @@ def materialize_engram_graph_config(source: str, destination: Path) -> str:
         "vector_enabled": False,
     }
     destination.write_text(yaml_safe_dump({"graph": graph}, sort_keys=True), encoding="utf-8")
-    return str(destination)
+    selected_path = str(destination)
+    return selected_path

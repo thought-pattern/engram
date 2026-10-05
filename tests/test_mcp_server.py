@@ -19,26 +19,6 @@ from .test_relation import RelationGraph
 REPOSITORY = Path(__file__).resolve().parent.parent
 
 
-def complete_turn_event() -> dict:
-    return {
-        "turn": 1,
-        "input": "hello",
-        "response": "Hello!",
-        "user_id": "Protocol Agent",
-        "source": "pattern",
-        "score": 1.0,
-        "pattern": "HELLO",
-        "captured": [],
-        "dialogue_act": "greeting",
-        "active_topic": "",
-        "entities": [],
-        "fact_admissions": [],
-        "elapsed_seconds": 0.001,
-        "context_changes": {},
-        "learned_statements": [],
-    }
-
-
 def tool_json(result) -> dict:
     assert result.is_error is False
     assert len(result.content) == 1
@@ -79,11 +59,29 @@ def test_tool_failures_are_logged_in_full_and_clients_see_only_stable_messages(c
 
 
 def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:
-    evaluation = evaluate_turn(complete_turn_event(), 1, "hello", "Protocol Agent", 2.5)
+    event = {
+        "turn": 1,
+        "input": "hello",
+        "response": "Hello!",
+        "user_id": "Protocol Agent",
+        "source": "pattern",
+        "score": 1.0,
+        "pattern": "HELLO",
+        "captured": [],
+        "dialogue_act": "greeting",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
+        "elapsed_seconds": 0.001,
+        "context_changes": {},
+        "learned_statements": [],
+    }
+    evaluation = evaluate_turn(event, 1, "hello", "Protocol Agent", 2.5)
 
-    assert evaluation.get("passed") is True
-    assert evaluation.get("failed_checks") == []
-    assert evaluation.get("response_bytes") == 6
+    assert evaluation.get("passed", False) is True
+    assert "failed_checks" in evaluation
+    assert evaluation.get("failed_checks", []) == []
+    assert evaluation.get("response_bytes", 0) == 6
     assert "Hello!" not in str(evaluation)
 
 
@@ -120,9 +118,9 @@ def test_default_service_loads_a_conversational_corpus() -> None:
     stopped = service.stop()
 
     assert started.get("statement_count", 0) > 0
-    assert turn.get("response")
-    assert turn.get("source") == "pattern"
-    assert stopped.get("summary", {}).get("exchanges") == 1
+    assert turn.get("response", "")
+    assert turn.get("source", "") == "pattern"
+    assert stopped.get("summary", {}).get("exchanges", 0) == 1
 
 
 def test_empty_mcp_user_uses_unknown_user_zero_for_complete_lifecycle() -> None:
@@ -135,12 +133,12 @@ def test_empty_mcp_user_uses_unknown_user_zero_for_complete_lifecycle() -> None:
     finished = service.finish()
     stopped = service.stop()
 
-    assert started.get("user_id") == "0"
-    assert turn.get("user_id") == "0"
-    assert inspected.get("user_id") == "0"
-    assert fact.get("source_label") == "research"
-    assert finished.get("user_id") == "0"
-    assert stopped.get("user_id") == "0"
+    assert started.get("user_id", "") == "0"
+    assert turn.get("user_id", "") == "0"
+    assert inspected.get("user_id", "") == "0"
+    assert fact.get("source_label", "") == "research"
+    assert finished.get("user_id", "") == "0"
+    assert stopped.get("user_id", "") == "0"
     assert service.active_user_id == ""
     assert service.core == ()
 
@@ -155,7 +153,8 @@ def test_stop_discards_responses_conversations_and_receipts() -> None:
         user_id="Alice",
         namespace="support",
     )
-    assert learned.get("idempotent") is False
+    assert "idempotent" in learned
+    assert learned.get("idempotent", False) is False
 
     service.stop()
     service.start(user_id="Alice")
@@ -167,7 +166,8 @@ def test_stop_discards_responses_conversations_and_receipts() -> None:
     )
 
     core, _ = service.require_active()
-    assert proposal.get("candidates") == []
+    assert "candidates" in proposal
+    assert proposal.get("candidates", []) == []
     assert core.engram.mutation_receipts.next_sequence == 1
 
 
@@ -180,7 +180,7 @@ def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monk
     report = service.finish()
     service.stop()
 
-    assert report.get("summary", {}).get("exchanges") == 1
+    assert report.get("summary", {}).get("exchanges", 0) == 1
     assert list(tmp_path.iterdir()) == []
 
 
@@ -215,9 +215,9 @@ def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> 
         "retire-1",
     )
 
-    assert replay.get("idempotent") is True
-    assert resolved.get("resolved") is True
-    assert retired.get("retired") is True
+    assert replay.get("idempotent", False) is True
+    assert resolved.get("resolved", False) is True
+    assert retired.get("retired", False) is True
 
 
 def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
@@ -228,7 +228,7 @@ def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
     fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
     after = service.inspect().get("session", {})
 
-    assert fact.get("source_label") == "research"
+    assert fact.get("source_label", "") == "research"
     assert after == before
 
 
@@ -315,11 +315,12 @@ def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
             status = tool_json(await client.call_tool("engram_inspect", {}))
             stopped = tool_json(await client.call_tool("engram_stop", {}))
 
-            assert started.get("turn_count") == 0
-            assert queried.get("outcome") in {"ANSWER", "EVIDENCE", "MISS"}
-            assert resolved.get("resolved") is True
-            assert status.get("core_status", {}).get("memory_only") is True
-            assert stopped.get("stopped") is True
+            assert "turn_count" in started
+            assert started.get("turn_count", 0) == 0
+            assert queried.get("outcome", "") in {"ANSWER", "EVIDENCE", "MISS"}
+            assert resolved.get("resolved", False) is True
+            assert status.get("core_status", {}).get("memory_only", False) is True
+            assert stopped.get("stopped", False) is True
 
     asyncio_run(exercise())
 
@@ -352,16 +353,16 @@ def test_stdio_mcp_conversation_learns_recalls_finishes_and_stops() -> None:
             after_stop = await client.call_tool("engram_inspect", {})
 
             assert started.get("statement_count", 0) > 0
-            assert introduced.get("response")
-            assert [item.get("text") for item in introduced.get("learned_statements", [])] == [
+            assert introduced.get("response", "")
+            assert [item.get("text", "") for item in introduced.get("learned_statements", [])] == [
                 "Cobalt Harbor is a floating library."
             ]
-            assert recalled.get("response") == "Cobalt Harbor is a floating library."
-            assert report.get("summary", {}).get("exchanges") == 2
-            assert continued.get("turn") == 3
-            assert continued.get("response")
-            assert inspected.get("turn_count") == 3
-            assert stopped.get("summary", {}).get("exchanges") == 3
+            assert recalled.get("response", "") == "Cobalt Harbor is a floating library."
+            assert report.get("summary", {}).get("exchanges", 0) == 2
+            assert continued.get("turn", 0) == 3
+            assert continued.get("response", "")
+            assert inspected.get("turn_count", 0) == 3
+            assert stopped.get("summary", {}).get("exchanges", 0) == 3
             assert after_stop.is_error is True
 
     asyncio_run(exercise())
@@ -395,8 +396,8 @@ def test_mcp_query_uses_shared_graph_resolution(tmp_path, monkeypatch) -> None:
             )
             await client.call_tool("engram_stop", {})
 
-        assert result["outcome"] == "EVIDENCE"
-        assert result["response_candidates"][0]["response"] == "Ada Lovelace — birth place: London."
+        assert result.get("outcome", "") == "EVIDENCE"
+        assert result.get("response_candidates", [])[0].get("response", "") == "Ada Lovelace — birth place: London."
         assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
     asyncio_run(exercise())

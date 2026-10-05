@@ -193,9 +193,10 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
         if not all(isinstance(key, str) for key in value):
             raise InvalidRequestError(f"{name} keys must be strings")
         frozen = {}
-        for key in sorted(value):
+        # Keys are unique strings, so ordering the items never compares their values.
+        for key, item in sorted(value.items()):
             require_any_text(key, f"{name} key", 128, allow_empty=False)
-            frozen[key] = freeze_json(value[key], name, depth + 1, count)
+            frozen[key] = freeze_json(item, name, depth + 1, count)
         result = dict(frozen)
         return result
     if isinstance(value, (list, tuple)):
@@ -310,17 +311,17 @@ def resolution_budget(
 def validate_resolution_budget(value: object) -> dict:
     data = exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
     result = resolution_budget(
-        max_resolvers=data["max_resolvers"],
-        max_candidates=data["max_candidates"],
-        max_graph_rows=data["max_graph_rows"],
-        max_vector_results=data["max_vector_results"],
-        max_evidence=data["max_evidence"],
-        max_evidence_bytes=data["max_evidence_bytes"],
-        max_output_bytes=data["max_output_bytes"],
-        max_diagnostic_bytes=data["max_diagnostic_bytes"],
-        max_working_memory_bytes=data["max_working_memory_bytes"],
-        allowed_cost_classes=data["allowed_cost_classes"],
-        started_ns=data["started_ns"],
+        max_resolvers=data.get("max_resolvers", 0),
+        max_candidates=data.get("max_candidates", 0),
+        max_graph_rows=data.get("max_graph_rows", 0),
+        max_vector_results=data.get("max_vector_results", 0),
+        max_evidence=data.get("max_evidence", 0),
+        max_evidence_bytes=data.get("max_evidence_bytes", 0),
+        max_output_bytes=data.get("max_output_bytes", 0),
+        max_diagnostic_bytes=data.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=data.get("max_working_memory_bytes", 0),
+        allowed_cost_classes=data.get("allowed_cost_classes", ()),
+        started_ns=data.get("started_ns", 0),
     )
     return result
 
@@ -344,16 +345,16 @@ def recapture_resolution_budget(value: object, clock_ns: object) -> dict:
     budget = validate_resolution_budget(value)
     result = capture_resolution_budget(
         clock_ns,
-        max_resolvers=budget["max_resolvers"],
-        max_candidates=budget["max_candidates"],
-        max_graph_rows=budget["max_graph_rows"],
-        max_vector_results=budget["max_vector_results"],
-        max_evidence=budget["max_evidence"],
-        max_evidence_bytes=budget["max_evidence_bytes"],
-        max_output_bytes=budget["max_output_bytes"],
-        max_diagnostic_bytes=budget["max_diagnostic_bytes"],
-        max_working_memory_bytes=budget["max_working_memory_bytes"],
-        allowed_cost_classes=budget["allowed_cost_classes"],
+        max_resolvers=budget.get("max_resolvers", 0),
+        max_candidates=budget.get("max_candidates", 0),
+        max_graph_rows=budget.get("max_graph_rows", 0),
+        max_vector_results=budget.get("max_vector_results", 0),
+        max_evidence=budget.get("max_evidence", 0),
+        max_evidence_bytes=budget.get("max_evidence_bytes", 0),
+        max_output_bytes=budget.get("max_output_bytes", 0),
+        max_diagnostic_bytes=budget.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+        allowed_cost_classes=budget.get("allowed_cost_classes", ()),
     )
     return result
 
@@ -361,40 +362,40 @@ def recapture_resolution_budget(value: object, clock_ns: object) -> dict:
 def resolution_budget_to_dict(value: object) -> dict[str, object]:
     budget = validate_resolution_budget(value)
     result = {
-        "max_resolvers": budget["max_resolvers"],
-        "max_candidates": budget["max_candidates"],
-        "max_graph_rows": budget["max_graph_rows"],
-        "max_vector_results": budget["max_vector_results"],
-        "max_evidence": budget["max_evidence"],
-        "max_evidence_bytes": budget["max_evidence_bytes"],
-        "max_output_bytes": budget["max_output_bytes"],
-        "max_diagnostic_bytes": budget["max_diagnostic_bytes"],
-        "max_working_memory_bytes": budget["max_working_memory_bytes"],
-        "allowed_cost_classes": [cost.value for cost in budget["allowed_cost_classes"]],
-        "started_ns": budget["started_ns"],
+        "max_resolvers": budget.get("max_resolvers", 0),
+        "max_candidates": budget.get("max_candidates", 0),
+        "max_graph_rows": budget.get("max_graph_rows", 0),
+        "max_vector_results": budget.get("max_vector_results", 0),
+        "max_evidence": budget.get("max_evidence", 0),
+        "max_evidence_bytes": budget.get("max_evidence_bytes", 0),
+        "max_output_bytes": budget.get("max_output_bytes", 0),
+        "max_diagnostic_bytes": budget.get("max_diagnostic_bytes", 0),
+        "max_working_memory_bytes": budget.get("max_working_memory_bytes", 0),
+        "allowed_cost_classes": [cost.value for cost in budget.get("allowed_cost_classes", ())],
+        "started_ns": budget.get("started_ns", 0),
     }
     return result
 
 
 def resolution_budget_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
-    raw_costs = require_list(data["allowed_cost_classes"], "allowed_cost_classes")
+    raw_costs = require_list(data.get("allowed_cost_classes", []), "allowed_cost_classes")
     try:
         costs = tuple(CostClass(require_any_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
     except ValueError as error:
         raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from error
     result = resolution_budget(
-        max_resolvers=data["max_resolvers"],
-        max_candidates=data["max_candidates"],
-        max_graph_rows=data["max_graph_rows"],
-        max_vector_results=data["max_vector_results"],
-        max_evidence=data["max_evidence"],
-        max_evidence_bytes=data["max_evidence_bytes"],
-        max_output_bytes=data["max_output_bytes"],
-        max_diagnostic_bytes=data["max_diagnostic_bytes"],
-        max_working_memory_bytes=data["max_working_memory_bytes"],
+        max_resolvers=data.get("max_resolvers", 0),
+        max_candidates=data.get("max_candidates", 0),
+        max_graph_rows=data.get("max_graph_rows", 0),
+        max_vector_results=data.get("max_vector_results", 0),
+        max_evidence=data.get("max_evidence", 0),
+        max_evidence_bytes=data.get("max_evidence_bytes", 0),
+        max_output_bytes=data.get("max_output_bytes", 0),
+        max_diagnostic_bytes=data.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=data.get("max_working_memory_bytes", 0),
         allowed_cost_classes=costs,
-        started_ns=data["started_ns"],
+        started_ns=data.get("started_ns", 0),
     )
     return result
 
@@ -442,16 +443,16 @@ def budget_consumption(
     if not isinstance(measurement_available, bool):
         raise InvalidRequestError("measurement_available must be a boolean")
     result: dict = {
-        "elapsed_ns": normalized_numbers["elapsed_ns"],
-        "resolvers": normalized_numbers["resolvers"],
-        "candidates": normalized_numbers["candidates"],
-        "graph_rows": normalized_numbers["graph_rows"],
-        "vector_results": normalized_numbers["vector_results"],
-        "evidence": normalized_numbers["evidence"],
-        "evidence_bytes": normalized_numbers["evidence_bytes"],
-        "output_bytes": normalized_numbers["output_bytes"],
-        "diagnostic_bytes": normalized_numbers["diagnostic_bytes"],
-        "working_memory_bytes": normalized_numbers["working_memory_bytes"],
+        "elapsed_ns": normalized_numbers.get("elapsed_ns", 0),
+        "resolvers": normalized_numbers.get("resolvers", 0),
+        "candidates": normalized_numbers.get("candidates", 0),
+        "graph_rows": normalized_numbers.get("graph_rows", 0),
+        "vector_results": normalized_numbers.get("vector_results", 0),
+        "evidence": normalized_numbers.get("evidence", 0),
+        "evidence_bytes": normalized_numbers.get("evidence_bytes", 0),
+        "output_bytes": normalized_numbers.get("output_bytes", 0),
+        "diagnostic_bytes": normalized_numbers.get("diagnostic_bytes", 0),
+        "working_memory_bytes": normalized_numbers.get("working_memory_bytes", 0),
         "exhausted_dimensions": normalized_exhausted,
         "measurement_available": measurement_available,
     }
@@ -461,18 +462,18 @@ def budget_consumption(
 def validate_budget_consumption(value: object) -> dict:
     data = exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
     result = budget_consumption(
-        elapsed_ns=data["elapsed_ns"],
-        resolvers=data["resolvers"],
-        candidates=data["candidates"],
-        graph_rows=data["graph_rows"],
-        vector_results=data["vector_results"],
-        evidence=data["evidence"],
-        evidence_bytes=data["evidence_bytes"],
-        output_bytes=data["output_bytes"],
-        diagnostic_bytes=data["diagnostic_bytes"],
-        working_memory_bytes=data["working_memory_bytes"],
-        exhausted_dimensions=data["exhausted_dimensions"],
-        measurement_available=data["measurement_available"],
+        elapsed_ns=data.get("elapsed_ns", 0),
+        resolvers=data.get("resolvers", 0),
+        candidates=data.get("candidates", 0),
+        graph_rows=data.get("graph_rows", 0),
+        vector_results=data.get("vector_results", 0),
+        evidence=data.get("evidence", 0),
+        evidence_bytes=data.get("evidence_bytes", 0),
+        output_bytes=data.get("output_bytes", 0),
+        diagnostic_bytes=data.get("diagnostic_bytes", 0),
+        working_memory_bytes=data.get("working_memory_bytes", 0),
+        exhausted_dimensions=data.get("exhausted_dimensions", ()),
+        measurement_available=data.get("measurement_available", False),
     )
     return result
 
@@ -503,38 +504,38 @@ def trusted_budget_consumption_with_changes(
 def budget_consumption_to_dict(value: object) -> dict[str, object]:
     consumption = validate_budget_consumption(value)
     result = {
-        "elapsed_ns": consumption["elapsed_ns"],
-        "resolvers": consumption["resolvers"],
-        "candidates": consumption["candidates"],
-        "graph_rows": consumption["graph_rows"],
-        "vector_results": consumption["vector_results"],
-        "evidence": consumption["evidence"],
-        "evidence_bytes": consumption["evidence_bytes"],
-        "output_bytes": consumption["output_bytes"],
-        "diagnostic_bytes": consumption["diagnostic_bytes"],
-        "working_memory_bytes": consumption["working_memory_bytes"],
-        "exhausted_dimensions": list(consumption["exhausted_dimensions"]),
-        "measurement_available": consumption["measurement_available"],
+        "elapsed_ns": consumption.get("elapsed_ns", 0),
+        "resolvers": consumption.get("resolvers", 0),
+        "candidates": consumption.get("candidates", 0),
+        "graph_rows": consumption.get("graph_rows", 0),
+        "vector_results": consumption.get("vector_results", 0),
+        "evidence": consumption.get("evidence", 0),
+        "evidence_bytes": consumption.get("evidence_bytes", 0),
+        "output_bytes": consumption.get("output_bytes", 0),
+        "diagnostic_bytes": consumption.get("diagnostic_bytes", 0),
+        "working_memory_bytes": consumption.get("working_memory_bytes", 0),
+        "exhausted_dimensions": list(consumption.get("exhausted_dimensions", ())),
+        "measurement_available": consumption.get("measurement_available", False),
     }
     return result
 
 
 def budget_consumption_from_dict(value: object) -> dict:
     data = exact_mapping(value, "BudgetConsumption", BUDGET_CONSUMPTION_FIELDS)
-    exhausted = require_list(data["exhausted_dimensions"], "exhausted_dimensions")
+    exhausted = require_list(data.get("exhausted_dimensions", []), "exhausted_dimensions")
     result = budget_consumption(
-        elapsed_ns=data["elapsed_ns"],
-        resolvers=data["resolvers"],
-        candidates=data["candidates"],
-        graph_rows=data["graph_rows"],
-        vector_results=data["vector_results"],
-        evidence=data["evidence"],
-        evidence_bytes=data["evidence_bytes"],
-        output_bytes=data["output_bytes"],
-        diagnostic_bytes=data["diagnostic_bytes"],
-        working_memory_bytes=data["working_memory_bytes"],
+        elapsed_ns=data.get("elapsed_ns", 0),
+        resolvers=data.get("resolvers", 0),
+        candidates=data.get("candidates", 0),
+        graph_rows=data.get("graph_rows", 0),
+        vector_results=data.get("vector_results", 0),
+        evidence=data.get("evidence", 0),
+        evidence_bytes=data.get("evidence_bytes", 0),
+        output_bytes=data.get("output_bytes", 0),
+        diagnostic_bytes=data.get("diagnostic_bytes", 0),
+        working_memory_bytes=data.get("working_memory_bytes", 0),
         exhausted_dimensions=tuple(exhausted),
-        measurement_available=data["measurement_available"],
+        measurement_available=data.get("measurement_available", False),
     )
     return result
 
@@ -550,13 +551,13 @@ def inheritance_provenance(field_name: object, source_turn: object) -> dict:
 
 def validate_inheritance_provenance(value: object) -> dict:
     data = exact_mapping(value, "InheritanceProvenance", INHERITANCE_PROVENANCE_FIELDS)
-    result = inheritance_provenance(data["field_name"], data["source_turn"])
+    result = inheritance_provenance(data.get("field_name", ""), data.get("source_turn", 0))
     return result
 
 
 def inheritance_provenance_signature(value: object) -> tuple[str, int]:
     provenance = validate_inheritance_provenance(value)
-    result = (provenance["field_name"], provenance["source_turn"])
+    result = (provenance.get("field_name", ""), provenance.get("source_turn", 0))
     return result
 
 
@@ -583,7 +584,7 @@ def rewrite_trace_step(rule_id: object, input_text: object, output_text: object)
 
 def validate_rewrite_trace_step(value: object) -> dict:
     data = exact_mapping(value, "RewriteTraceStep", REWRITE_TRACE_STEP_FIELDS)
-    result = rewrite_trace_step(data["rule_id"], data["input_text"], data["output_text"])
+    result = rewrite_trace_step(data.get("rule_id", ""), data.get("input_text", ""), data.get("output_text", ""))
     return result
 
 
@@ -647,7 +648,7 @@ def query_frame(
         validated_scope = validate_scope_key(scope)
     except IdentityValidationError as error:
         raise InvalidRequestError("frame scope must match identity scope") from error
-    if validated_identity["scope"] != validated_scope:
+    if validated_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("frame scope must match identity scope")
     frozen_metadata = freeze_mapping(required_metadata, "frame required_metadata")
     source_label = require_any_text(
@@ -664,7 +665,7 @@ def query_frame(
         validated_context = validate_eligibility_context(eligibility_context)
     except InvalidRequestError as error:
         raise InvalidRequestError("frame eligibility_context must be an EligibilityContext") from error
-    if validated_context["namespace"] != validated_scope["namespace"]:
+    if validated_context.get("namespace", "") != validated_scope.get("namespace", ""):
         raise InvalidRequestError("frame eligibility context namespace must match scope")
     validated_diagnostic_id = require_any_text(
         diagnostic_id,
@@ -693,19 +694,19 @@ def query_frame(
 def validate_query_frame(value: object) -> dict:
     data = exact_mapping(value, "QueryFrame", QUERY_FRAME_FIELDS)
     result = query_frame(
-        data["original_text"],
-        data["resolved_text"],
-        data["identity"],
-        data["expected_object_type"],
-        data["inheritance"],
-        data["rewrite_chain"],
-        data["scope"],
-        data["required_metadata"],
-        data["required_source_label"],
-        data["budget"],
-        data["eligibility_context"],
-        data["diagnostic_id"],
-        data["temporal_query"],
+        data.get("original_text", ""),
+        data.get("resolved_text", ""),
+        data.get("identity", {}),
+        data.get("expected_object_type", ExpectedObjectType.UNKNOWN),
+        data.get("inheritance", ()),
+        data.get("rewrite_chain", ()),
+        data.get("scope", {}),
+        data.get("required_metadata", {}),
+        data.get("required_source_label", ""),
+        data.get("budget", {}),
+        data.get("eligibility_context", {}),
+        data.get("diagnostic_id", ""),
+        data.get("temporal_query", {}),
     )
     return result
 
@@ -723,53 +724,55 @@ def query_frame_with_changes(value: object, changes: object) -> dict:
 def query_frame_to_dict(value: object) -> dict[str, object]:
     frame = validate_query_frame(value)
     result = {
-        "original_text": frame["original_text"],
-        "resolved_text": frame["resolved_text"],
-        "identity": query_identity_to_dict(frame["identity"]),
-        "expected_object_type": frame["expected_object_type"].value,
-        "temporal_query": temporal_query_to_dict(frame["temporal_query"]),
-        "inheritance": [inheritance_provenance_to_dict(item) for item in frame["inheritance"]],
-        "rewrite_chain": [rewrite_trace_step_to_dict(item) for item in frame["rewrite_chain"]],
-        "scope": scope_key_to_dict(frame["scope"]),
-        "required_metadata": thaw_json(frame["required_metadata"]),
-        "required_source_label": frame["required_source_label"],
-        "budget": resolution_budget_to_dict(frame["budget"]),
-        "eligibility_context": eligibility_context_to_dict(frame["eligibility_context"]),
-        "diagnostic_id": frame["diagnostic_id"],
+        "original_text": frame.get("original_text", ""),
+        "resolved_text": frame.get("resolved_text", ""),
+        "identity": query_identity_to_dict(frame.get("identity", {})),
+        "expected_object_type": frame.get("expected_object_type", ExpectedObjectType.UNKNOWN).value,
+        "temporal_query": temporal_query_to_dict(frame.get("temporal_query", {})),
+        "inheritance": [inheritance_provenance_to_dict(item) for item in frame.get("inheritance", ())],
+        "rewrite_chain": [rewrite_trace_step_to_dict(item) for item in frame.get("rewrite_chain", ())],
+        "scope": scope_key_to_dict(frame.get("scope", {})),
+        "required_metadata": thaw_json(frame.get("required_metadata", {})),
+        "required_source_label": frame.get("required_source_label", ""),
+        "budget": resolution_budget_to_dict(frame.get("budget", {})),
+        "eligibility_context": eligibility_context_to_dict(frame.get("eligibility_context", {})),
+        "diagnostic_id": frame.get("diagnostic_id", ""),
     }
     return result
 
 
 def query_frame_from_dict(value: object) -> dict:
     data = exact_mapping(value, "QueryFrame", QUERY_FRAME_FIELDS)
-    inheritance = require_list(data["inheritance"], "frame inheritance")
-    rewrites = require_list(data["rewrite_chain"], "frame rewrite_chain")
+    inheritance = require_list(data.get("inheritance", []), "frame inheritance")
+    rewrites = require_list(data.get("rewrite_chain", []), "frame rewrite_chain")
     try:
         expected_type = ExpectedObjectType(
-            require_any_text(data["expected_object_type"], "expected_object_type", 32, allow_empty=False)
+            require_any_text(data.get("expected_object_type", ""), "expected_object_type", 32, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("unsupported expected_object_type") from error
     result = query_frame(
-        original_text=require_any_text(data["original_text"], "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
-        resolved_text=require_any_text(data["resolved_text"], "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
-        identity=query_identity_from_dict(thaw_json(freeze_mapping(data["identity"], "frame identity"))),
+        original_text=require_any_text(data.get("original_text", ""), "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
+        resolved_text=require_any_text(data.get("resolved_text", ""), "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
+        identity=query_identity_from_dict(thaw_json(freeze_mapping(data.get("identity", {}), "frame identity"))),
         expected_object_type=expected_type,
-        temporal_query_value=temporal_query_from_dict(freeze_mapping(data["temporal_query"], "frame temporal_query")),
+        temporal_query_value=temporal_query_from_dict(freeze_mapping(data.get("temporal_query", {}), "frame temporal_query")),
         inheritance=tuple(inheritance_provenance_from_dict(freeze_mapping(item, "inheritance item")) for item in inheritance),
         rewrite_chain=tuple(rewrite_trace_step_from_dict(freeze_mapping(item, "rewrite item")) for item in rewrites),
-        scope=scope_key_from_dict(freeze_mapping(data["scope"], "frame scope")),
-        required_metadata=freeze_mapping(data["required_metadata"], "frame required_metadata"),
+        scope=scope_key_from_dict(freeze_mapping(data.get("scope", {}), "frame scope")),
+        required_metadata=freeze_mapping(data.get("required_metadata", {}), "frame required_metadata"),
         required_source_label=require_any_text(
-            data["required_source_label"],
+            data.get("required_source_label", ""),
             "frame required_source_label",
             MAX_REQUIRED_SOURCE_LABEL_BYTES,
             allow_empty=True,
         ),
-        budget=resolution_budget_from_dict(freeze_mapping(data["budget"], "frame budget")),
-        eligibility_context=eligibility_context_from_dict(freeze_mapping(data["eligibility_context"], "frame eligibility_context")),
+        budget=resolution_budget_from_dict(freeze_mapping(data.get("budget", {}), "frame budget")),
+        eligibility_context=eligibility_context_from_dict(
+            freeze_mapping(data.get("eligibility_context", {}), "frame eligibility_context")
+        ),
         diagnostic_id=require_any_text(
-            data["diagnostic_id"],
+            data.get("diagnostic_id", ""),
             "frame diagnostic_id",
             MAX_DIAGNOSTIC_ID_BYTES,
             allow_empty=False,
@@ -789,9 +792,10 @@ def feature_set(
     if not all(isinstance(name, str) for name in values):
         raise InvalidRequestError("feature names must be strings")
     validated_values = {}
-    for name in sorted(values):
+    # Names are unique strings, so ordering the items never compares their values.
+    for name, item in sorted(values.items()):
         key = require_any_text(name, "feature name", 96, allow_empty=False)
-        validated_values[key] = require_float(values[name], f"feature {key}", -1_000_000.0, 1_000_000.0)
+        validated_values[key] = require_float(item, f"feature {key}", -1_000_000.0, 1_000_000.0)
     if len(validated_values) > MAX_FEATURES:
         raise InvalidRequestError(f"feature values exceed the limit of {MAX_FEATURES}")
     if not isinstance(unavailable, tuple):
@@ -813,16 +817,7 @@ def feature_set(
 def validate_feature_set(value: object) -> dict:
     """Revalidate and defensively copy one feature-set dictionary."""
     data = exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
-    result = feature_set(data["values"], data["unavailable"])
-    return result
-
-
-def trusted_feature_set(values: dict[str, float], unavailable: tuple[str, ...]) -> dict:
-    """Build features whose bounds and ordering the resolution engine established."""
-    result: dict = {
-        "values": dict(dict(values)),
-        "unavailable": unavailable,
-    }
+    result = feature_set(data.get("values", {}), data.get("unavailable", ()))
     return result
 
 
@@ -830,8 +825,8 @@ def feature_set_to_dict(value: object) -> dict[str, object]:
     """Serialize one feature set."""
     features = validate_feature_set(value)
     result = {
-        "values": dict(features["values"]),
-        "unavailable": list(features["unavailable"]),
+        "values": dict(features.get("values", {})),
+        "unavailable": list(features.get("unavailable", ())),
     }
     return result
 
@@ -839,8 +834,8 @@ def feature_set_to_dict(value: object) -> dict[str, object]:
 def feature_set_from_dict(value: object) -> dict:
     """Decode one feature set from its exact serialized form."""
     data = exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
-    unavailable = require_list(data["unavailable"], "unavailable features")
-    raw_values = freeze_mapping(data["values"], "feature values")
+    unavailable = require_list(data.get("unavailable", []), "unavailable features")
+    raw_values = freeze_mapping(data.get("values", {}), "feature values")
     values = {name: require_float(item, f"feature {name}", -1_000_000.0, 1_000_000.0) for name, item in raw_values.items()}
     normalized_unavailable = tuple(require_any_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable)
     result = feature_set(values, normalized_unavailable)
@@ -871,9 +866,9 @@ def validate_canonical_proposition_references(value: object) -> dict:
     """Revalidate and copy one canonical Proposition-reference dictionary."""
     data = exact_mapping(value, "CanonicalPropositionReferences", CANONICAL_PROPOSITION_REFERENCES_FIELDS)
     result = canonical_proposition_references(
-        data["subject_entity_id"],
-        data["predicate_id"],
-        data["object_entity_id"],
+        data.get("subject_entity_id", ""),
+        data.get("predicate_id", ""),
+        data.get("object_entity_id", ""),
     )
     return result
 
@@ -1030,30 +1025,30 @@ def validate_proposition_validity_inputs(value: object) -> dict:
     """Revalidate and copy one Proposition-validity input dictionary."""
     data = exact_mapping(value, "PropositionValidityInputs", PROPOSITION_VALIDITY_INPUTS_FIELDS)
     result = proposition_validity_inputs(
-        data["evaluation_time"],
-        data["active"],
-        data["system_current"],
-        data["valid_time_current"],
-        data["valid_from"],
-        data["valid_from_available"],
-        data["valid_to"],
-        data["valid_to_available"],
-        data["temporal_operator"],
-        data["temporal_axis"],
-        data["requested_start"],
-        data["requested_start_available"],
-        data["requested_end"],
-        data["requested_end_available"],
-        data["system_from"],
-        data["system_from_available"],
-        data["system_to"],
-        data["system_to_available"],
-        data["invalidated_at"],
-        data["invalidated_at_available"],
-        data["eligible_for_request"],
-        data["system_time_match"],
-        data["valid_time_match"],
-        data["valid_time_match_available"],
+        data.get("evaluation_time", ""),
+        data.get("active", False),
+        data.get("system_current", False),
+        data.get("valid_time_current", False),
+        data.get("valid_from", ""),
+        data.get("valid_from_available", False),
+        data.get("valid_to", ""),
+        data.get("valid_to_available", False),
+        data.get("temporal_operator", TemporalQueryOperator.UNSPECIFIED),
+        data.get("temporal_axis", TemporalAxis.VALID_TIME),
+        data.get("requested_start", ""),
+        data.get("requested_start_available", False),
+        data.get("requested_end", ""),
+        data.get("requested_end_available", False),
+        data.get("system_from", ""),
+        data.get("system_from_available", False),
+        data.get("system_to", ""),
+        data.get("system_to_available", False),
+        data.get("invalidated_at", ""),
+        data.get("invalidated_at_available", False),
+        data.get("eligible_for_request", False),
+        data.get("system_time_match", False),
+        data.get("valid_time_match", False),
+        data.get("valid_time_match_available", False),
     )
     return result
 
@@ -1061,8 +1056,8 @@ def validate_proposition_validity_inputs(value: object) -> dict:
 def trusted_proposition_validity_inputs_to_dict(validity: dict) -> dict[str, object]:
     """Serialize Proposition-validity inputs already validated inside a trusted record."""
     result: dict[str, object] = dict(validity)
-    result["temporal_operator"] = validity["temporal_operator"].value
-    result["temporal_axis"] = validity["temporal_axis"].value
+    result["temporal_operator"] = validity.get("temporal_operator", TemporalQueryOperator.UNSPECIFIED).value
+    result["temporal_axis"] = validity.get("temporal_axis", TemporalAxis.VALID_TIME).value
     return result
 
 
@@ -1113,10 +1108,10 @@ def validate_proposition_trust_inputs(value: object) -> dict:
     """Revalidate and copy one Proposition-trust input dictionary."""
     data = exact_mapping(value, "PropositionTrustInputs", PROPOSITION_TRUST_INPUTS_FIELDS)
     result = proposition_trust_inputs(
-        data["trust_category"],
-        data["trust_category_available"],
-        data["supplied_trust"],
-        data["supplied_trust_available"],
+        data.get("trust_category", ""),
+        data.get("trust_category_available", False),
+        data.get("supplied_trust", 0.0),
+        data.get("supplied_trust_available", False),
     )
     return result
 
@@ -1174,11 +1169,11 @@ def validate_disclosure_decision(value: object) -> dict:
     """Revalidate and copy one disclosure-decision dictionary."""
     data = exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
     result = disclosure_decision(
-        data["ownership"],
-        data["basis"],
-        data["scope"],
-        data["authority"],
-        data["authority_available"],
+        data.get("ownership", PropositionOwnership.PUBLIC),
+        data.get("basis", DisclosureBasis.PUBLIC_RULE),
+        data.get("scope", {}),
+        data.get("authority", ""),
+        data.get("authority_available", False),
     )
     return result
 
@@ -1188,17 +1183,19 @@ def disclosure_decision_from_dict(value: object) -> dict:
     data = exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
     try:
         ownership = PropositionOwnership(
-            require_any_text(data["ownership"], "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
+            require_any_text(data.get("ownership", ""), "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
         )
-        basis = DisclosureBasis(require_any_text(data["basis"], "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False))
+        basis = DisclosureBasis(
+            require_any_text(data.get("basis", ""), "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
+        )
     except ValueError as error:
         raise InvalidRequestError("unsupported disclosure ownership or basis") from error
     result = disclosure_decision(
         ownership,
         basis,
-        scope_key_from_dict(freeze_mapping(data["scope"], "disclosure scope")),
-        data["authority"],
-        data["authority_available"],
+        scope_key_from_dict(freeze_mapping(data.get("scope", {}), "disclosure scope")),
+        data.get("authority", ""),
+        data.get("authority_available", False),
     )
     return result
 
@@ -1280,16 +1277,16 @@ def proposition_evidence_path_step(
 def validate_proposition_evidence_path_step(value: object) -> dict:
     data = exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     result = proposition_evidence_path_step(
-        data["position"],
-        data["proposition_id"],
-        data["subject_entity_id"],
-        data["predicate_id"],
-        data["object_entity_id"],
-        data["operator"],
-        data["input_binding"],
-        data["output_binding"],
-        data["filters"],
-        data["aggregation_inputs"],
+        data.get("position", 0),
+        data.get("proposition_id", ""),
+        data.get("subject_entity_id", ""),
+        data.get("predicate_id", ""),
+        data.get("object_entity_id", ""),
+        data.get("operator", GraphCompositionOperator.LOOKUP),
+        data.get("input_binding", ""),
+        data.get("output_binding", ""),
+        data.get("filters", ()),
+        data.get("aggregation_inputs", ()),
     )
     return result
 
@@ -1297,16 +1294,16 @@ def validate_proposition_evidence_path_step(value: object) -> dict:
 def proposition_evidence_path_step_to_dict(value: object) -> dict[str, object]:
     step = validate_proposition_evidence_path_step(value)
     result = {
-        "position": step["position"],
-        "proposition_id": step["proposition_id"],
-        "subject_entity_id": step["subject_entity_id"],
-        "predicate_id": step["predicate_id"],
-        "object_entity_id": step["object_entity_id"],
-        "operator": step["operator"].value,
-        "input_binding": step["input_binding"],
-        "output_binding": step["output_binding"],
-        "filters": list(step["filters"]),
-        "aggregation_inputs": list(step["aggregation_inputs"]),
+        "position": step.get("position", 0),
+        "proposition_id": step.get("proposition_id", ""),
+        "subject_entity_id": step.get("subject_entity_id", ""),
+        "predicate_id": step.get("predicate_id", ""),
+        "object_entity_id": step.get("object_entity_id", ""),
+        "operator": step.get("operator", GraphCompositionOperator.LOOKUP).value,
+        "input_binding": step.get("input_binding", ""),
+        "output_binding": step.get("output_binding", ""),
+        "filters": list(step.get("filters", ())),
+        "aggregation_inputs": list(step.get("aggregation_inputs", ())),
     }
     return result
 
@@ -1315,21 +1312,21 @@ def proposition_evidence_path_step_from_dict(value: object) -> dict:
     data = exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     try:
         operator = GraphCompositionOperator(
-            require_any_text(data["operator"], "Proposition evidence path operator", 16, allow_empty=False)
+            require_any_text(data.get("operator", ""), "Proposition evidence path operator", 16, allow_empty=False)
         )
     except ValueError as error:
         raise InvalidRequestError("Proposition evidence path operator is unsupported") from error
-    raw_filters = require_list(data["filters"], "Proposition evidence path filters")
-    raw_aggregation = require_list(data["aggregation_inputs"], "Proposition evidence path aggregation_inputs")
+    raw_filters = require_list(data.get("filters", []), "Proposition evidence path filters")
+    raw_aggregation = require_list(data.get("aggregation_inputs", []), "Proposition evidence path aggregation_inputs")
     result = proposition_evidence_path_step(
-        data["position"],
-        data["proposition_id"],
-        data["subject_entity_id"],
-        data["predicate_id"],
-        data["object_entity_id"],
+        data.get("position", 0),
+        data.get("proposition_id", ""),
+        data.get("subject_entity_id", ""),
+        data.get("predicate_id", ""),
+        data.get("object_entity_id", ""),
         operator,
-        data["input_binding"],
-        data["output_binding"],
+        data.get("input_binding", ""),
+        data.get("output_binding", ""),
         tuple(raw_filters),
         tuple(raw_aggregation),
     )
@@ -1419,19 +1416,19 @@ def proposition_evidence_record(
                 f"composed Proposition evidence path must contain 1 through {MAX_COMPOSITION_PATH_PROPOSITIONS} steps"
             )
         steps = normalized_path
-        if tuple(step["position"] for step in steps) != tuple(range(len(steps))):
+        if tuple(step.get("position", 0) for step in steps) != tuple(range(len(steps))):
             raise InvalidRequestError("composed Proposition evidence path positions must be contiguous and ordered")
-        proposition_ids = tuple(step["proposition_id"] for step in steps)
+        proposition_ids = tuple(step.get("proposition_id", "") for step in steps)
         if len(set(proposition_ids)) != len(proposition_ids) or normalized_proposition_id not in proposition_ids:
             raise InvalidRequestError(
                 "composed Proposition evidence path must contain unique Propositions including proposition_id"
             )
-        entity_ids = [steps[0]["subject_entity_id"]]
+        entity_ids = [steps[0].get("subject_entity_id", "")]
         for index, step in enumerate(steps):
-            entity_ids.append(step["object_entity_id"])
+            entity_ids.append(step.get("object_entity_id", ""))
             if index and (
-                steps[index - 1]["object_entity_id"] != step["subject_entity_id"]
-                or steps[index - 1]["output_binding"] != step["input_binding"]
+                steps[index - 1].get("object_entity_id", "") != step.get("subject_entity_id", "")
+                or steps[index - 1].get("output_binding", "") != step.get("input_binding", "")
             ):
                 raise InvalidRequestError("composed Proposition evidence path bindings are not contiguous")
         if len(set(entity_ids)) != len(entity_ids):
@@ -1466,16 +1463,16 @@ def validate_proposition_evidence_record(value: object) -> dict:
     """Revalidate and defensively copy one full-Proposition evidence dictionary."""
     data = exact_mapping(value, "PropositionEvidenceRecord", PROPOSITION_EVIDENCE_RECORD_FIELDS)
     result = proposition_evidence_record(
-        data["proposition_id"],
-        data["source_resolver"],
-        data["source_contributions"],
-        data["features"],
-        data["canonical_references"],
-        data["validity"],
-        data["trust"],
-        data["disclosure"],
-        data["path"],
-        data["selection_reasons"],
+        data.get("proposition_id", ""),
+        data.get("source_resolver", ""),
+        data.get("source_contributions", ()),
+        data.get("features", {}),
+        data.get("canonical_references", {}),
+        data.get("validity", {}),
+        data.get("trust", {}),
+        data.get("disclosure", {}),
+        data.get("path", ()),
+        data.get("selection_reasons", ()),
     )
     return result
 
@@ -1502,23 +1499,25 @@ def proposition_evidence_record_to_dict(value: object) -> dict[str, object]:
 
 def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, object]:
     """Serialize a Proposition-evidence record already validated at a public boundary."""
+    features = record.get("features", {})
+    disclosure = record.get("disclosure", {})
     result = {
         "proposition_id": record.get("proposition_id", ""),
         "source_resolver": record.get("source_resolver", ""),
         "source_contributions": list(record.get("source_contributions", ())),
         "features": {
-            "values": dict(record.get("features", {})["values"]),
-            "unavailable": list(record.get("features", {})["unavailable"]),
+            "values": dict(features.get("values", {})),
+            "unavailable": list(features.get("unavailable", ())),
         },
         "canonical_references": dict(record.get("canonical_references", {})),
         "validity": trusted_proposition_validity_inputs_to_dict(record.get("validity", {})),
         "trust": dict(record.get("trust", {})),
         "disclosure": {
-            "ownership": record.get("disclosure", {})["ownership"].value,
-            "basis": record.get("disclosure", {})["basis"].value,
-            "scope": dict(record.get("disclosure", {})["scope"]),
-            "authority": record.get("disclosure", {})["authority"],
-            "authority_available": record.get("disclosure", {})["authority_available"],
+            "ownership": disclosure.get("ownership", PropositionOwnership.PUBLIC).value,
+            "basis": disclosure.get("basis", DisclosureBasis.PUBLIC_RULE).value,
+            "scope": dict(disclosure.get("scope", {})),
+            "authority": disclosure.get("authority", ""),
+            "authority_available": disclosure.get("authority_available", False),
         },
         "path": (
             list(record.get("path", ()))
@@ -1533,9 +1532,9 @@ def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, objec
 def proposition_evidence_record_from_dict(value: object) -> dict:
     """Decode one full-Proposition evidence record from its exact serialized form."""
     data = exact_mapping(value, "PropositionEvidenceRecord", PROPOSITION_EVIDENCE_RECORD_FIELDS)
-    contributions = require_list(data["source_contributions"], "Proposition evidence source_contributions")
-    path = require_list(data["path"], "Proposition evidence path")
-    reasons = require_list(data["selection_reasons"], "Proposition evidence selection_reasons")
+    contributions = require_list(data.get("source_contributions", []), "Proposition evidence source_contributions")
+    path = require_list(data.get("path", []), "Proposition evidence path")
+    reasons = require_list(data.get("selection_reasons", []), "Proposition evidence selection_reasons")
     normalized_contributions = tuple(
         require_identifier(item, "Proposition evidence source contribution", MAX_RESOLVER_NAME_BYTES) for item in contributions
     )
@@ -1552,16 +1551,20 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
     normalized_reasons = tuple(
         require_identifier(item, "Proposition evidence selection reason", MAX_REASON_CODE_BYTES) for item in reasons
     )
-    validated_features = feature_set_from_dict(freeze_mapping(data["features"], "Proposition evidence features"))
+    validated_features = feature_set_from_dict(freeze_mapping(data.get("features", {}), "Proposition evidence features"))
     validated_references = canonical_proposition_references_from_dict(
-        freeze_mapping(data["canonical_references"], "Proposition evidence canonical_references")
+        freeze_mapping(data.get("canonical_references", {}), "Proposition evidence canonical_references")
     )
-    validated_validity = proposition_validity_inputs_from_dict(freeze_mapping(data["validity"], "Proposition evidence validity"))
-    validated_trust = proposition_trust_inputs_from_dict(freeze_mapping(data["trust"], "Proposition evidence trust"))
-    validated_disclosure = disclosure_decision_from_dict(freeze_mapping(data["disclosure"], "Proposition evidence disclosure"))
+    validated_validity = proposition_validity_inputs_from_dict(
+        freeze_mapping(data.get("validity", {}), "Proposition evidence validity")
+    )
+    validated_trust = proposition_trust_inputs_from_dict(freeze_mapping(data.get("trust", {}), "Proposition evidence trust"))
+    validated_disclosure = disclosure_decision_from_dict(
+        freeze_mapping(data.get("disclosure", {}), "Proposition evidence disclosure")
+    )
     result = proposition_evidence_record(
-        data["proposition_id"],
-        data["source_resolver"],
+        data.get("proposition_id", ""),
+        data.get("source_resolver", ""),
         normalized_contributions,
         validated_features,
         validated_references,
@@ -1618,7 +1621,7 @@ def evidence_package(
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
     except InvalidRequestError as error:
         raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
-    identifiers = tuple(record["proposition_id"] for record in validated_records)
+    identifiers = tuple(record.get("proposition_id", "") for record in validated_records)
     if identifiers != tuple(sorted(identifiers)):
         raise InvalidRequestError("evidence package records must use canonical Proposition-ID order")
     if len(set(identifiers)) != len(identifiers):
@@ -1659,22 +1662,12 @@ def evidence_package(
 
 def empty_evidence_package() -> dict:
     """Return one isolated concrete empty evidence package."""
-    result = trusted_evidence_package((), 0, ())
-    return result
-
-
-def trusted_evidence_package(
-    records: tuple[dict, ...],
-    omitted_count: int,
-    truncation_reasons: tuple[EvidencePackageTruncationReason, ...],
-) -> dict:
-    """Build a package from canonical, validated, byte-bounded records."""
     result: dict = {
-        "records": records,
-        "retained_count": len(records),
-        "omitted_count": omitted_count,
-        "truncated": omitted_count > 0,
-        "truncation_reasons": truncation_reasons,
+        "records": (),
+        "retained_count": 0,
+        "omitted_count": 0,
+        "truncated": False,
+        "truncation_reasons": (),
     }
     return result
 
@@ -1683,11 +1676,11 @@ def validate_evidence_package(value: object) -> dict:
     """Revalidate and defensively copy one evidence-package dictionary."""
     data = exact_mapping(value, "EvidencePackage", EVIDENCE_PACKAGE_FIELDS)
     result = evidence_package(
-        data["records"],
-        data["retained_count"],
-        data["omitted_count"],
-        data["truncated"],
-        data["truncation_reasons"],
+        data.get("records", ()),
+        data.get("retained_count", 0),
+        data.get("omitted_count", 0),
+        data.get("truncated", False),
+        data.get("truncation_reasons", ()),
     )
     return result
 
@@ -1704,7 +1697,7 @@ def canonical_proposition_evidence_records(records: object) -> tuple[tuple[dict,
     by_proposition_id: dict[str, dict] = {}
     duplicate_count = 0
     for record in validated_records:
-        proposition_id = record["proposition_id"]
+        proposition_id = record.get("proposition_id", "")
         if proposition_id in by_proposition_id:
             previous = by_proposition_id.get(proposition_id, {})
             if previous != record:
@@ -1738,16 +1731,16 @@ def build_evidence_package(
 
     while True:
         ordered_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
-        candidate: dict = {
+        package: dict = {
             "records": retained,
             "retained_count": len(retained),
             "omitted_count": omitted,
             "truncated": omitted > 0,
             "truncation_reasons": ordered_reasons,
         }
-        payload = evidence_package_payload(candidate)
+        payload = evidence_package_payload(package)
         if len(json_text(payload).encode("utf-8")) <= byte_limit:
-            result = trusted_evidence_package(retained, omitted, ordered_reasons)
+            result = package
             break
         if not retained:
             raise InvalidRequestError("evidence package max_bytes cannot contain the empty package envelope")
@@ -1767,10 +1760,10 @@ def evidence_package_to_dict(value: object) -> dict:
 def evidence_package_from_dict(value: object) -> dict:
     """Decode one evidence package from its exact serialized form."""
     data = exact_mapping(value, "EvidencePackage", EVIDENCE_PACKAGE_FIELDS)
-    records = require_list(data["records"], "evidence package records")
+    records = require_list(data.get("records", []), "evidence package records")
     if len(records) > MAX_EVIDENCE_PACKAGE_RECORDS:
         raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
-    raw_reasons = require_list(data["truncation_reasons"], "evidence package truncation_reasons")
+    raw_reasons = require_list(data.get("truncation_reasons", []), "evidence package truncation_reasons")
     reasons = []
     for reason_value in raw_reasons:
         try:
@@ -1790,9 +1783,9 @@ def evidence_package_from_dict(value: object) -> dict:
     )
     result = evidence_package(
         decoded_records,
-        data["retained_count"],
-        data["omitted_count"],
-        data["truncated"],
+        data.get("retained_count", 0),
+        data.get("omitted_count", 0),
+        data.get("truncated", False),
         tuple(reasons),
     )
     return result
@@ -1855,12 +1848,12 @@ def validate_evidence_reference(value: object) -> dict:
     """Revalidate and defensively copy one evidence-reference dictionary."""
     data = exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
     result = evidence_reference(
-        data["evidence_id"],
-        data["resolver"],
-        data["kind"],
-        data["scope"],
-        data["provenance"],
-        data["diagnostics"],
+        data.get("evidence_id", ""),
+        data.get("resolver", ""),
+        data.get("kind", EvidenceKind.PROPOSITION),
+        data.get("scope", {}),
+        data.get("provenance", {}),
+        data.get("diagnostics", {}),
     )
     return result
 
@@ -1876,7 +1869,7 @@ def trusted_evidence_reference_to_dict(reference: dict) -> dict[str, object]:
     """Serialize an evidence reference already validated at a public boundary."""
     result = {
         "evidence_id": reference.get("evidence_id", ""),
-        "resolver": reference.get("resolver", {}),
+        "resolver": reference.get("resolver", ""),
         "kind": reference.get("kind", EvidenceKind.PROPOSITION).value,
         "scope": scope_key_to_dict(reference.get("scope", {})),
         "provenance": thaw_json(reference.get("provenance", {})),
@@ -1889,16 +1882,16 @@ def evidence_reference_from_dict(value: object) -> dict:
     """Decode one evidence reference from its exact serialized form."""
     data = exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
     try:
-        kind = EvidenceKind(require_any_text(data["kind"], "evidence kind", 32, allow_empty=False))
+        kind = EvidenceKind(require_any_text(data.get("kind", ""), "evidence kind", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported evidence kind") from error
     result = evidence_reference(
-        data["evidence_id"],
-        data["resolver"],
+        data.get("evidence_id", ""),
+        data.get("resolver", ""),
         kind,
-        scope_key_from_dict(freeze_mapping(data["scope"], "evidence scope")),
-        freeze_mapping(data["provenance"], "evidence provenance"),
-        freeze_mapping(data["diagnostics"], "evidence diagnostics"),
+        scope_key_from_dict(freeze_mapping(data.get("scope", {}), "evidence scope")),
+        freeze_mapping(data.get("provenance", {}), "evidence provenance"),
+        freeze_mapping(data.get("diagnostics", {}), "evidence diagnostics"),
     )
     return result
 
@@ -1965,16 +1958,16 @@ def candidate(
 def validate_candidate(value: object) -> dict:
     data = exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
     result = candidate(
-        candidate_id=data["candidate_id"],
-        statement_id=data["statement_id"],
-        response=data["response"],
-        source=data["source"],
-        features=data["features"],
-        evidence=data["evidence"],
-        scope=data["scope"],
-        lifecycle=data["lifecycle"],
-        provenance=data["provenance"],
-        diagnostics=data["diagnostics"],
+        candidate_id=data.get("candidate_id", ""),
+        statement_id=data.get("statement_id", ""),
+        response=data.get("response", ""),
+        source=data.get("source", CandidateSource.EXACT),
+        features=data.get("features", {}),
+        evidence=data.get("evidence", ()),
+        scope=data.get("scope", {}),
+        lifecycle=data.get("lifecycle", LifecycleState.ACTIVE),
+        provenance=data.get("provenance", {}),
+        diagnostics=data.get("diagnostics", {}),
     )
     return result
 
@@ -2023,14 +2016,15 @@ def candidate_to_dict(value: object) -> dict[str, object]:
 
 def trusted_candidate_to_dict(current: dict) -> dict[str, object]:
     """Serialize a candidate already validated at a public boundary."""
+    features = current.get("features", {})
     result = {
         "candidate_id": current.get("candidate_id", ""),
         "statement_id": current.get("statement_id", ""),
         "response": current.get("response", ""),
         "source": current.get("source", CandidateSource.EXACT).value,
         "features": {
-            "values": dict(current.get("features", {})["values"]),
-            "unavailable": list(current.get("features", {})["unavailable"]),
+            "values": dict(features.get("values", {})),
+            "unavailable": list(features.get("unavailable", ())),
         },
         "evidence": [trusted_evidence_reference_to_dict(item) for item in current.get("evidence", ())],
         "scope": dict(current.get("scope", {})),
@@ -2044,22 +2038,22 @@ def trusted_candidate_to_dict(current: dict) -> dict[str, object]:
 def candidate_from_dict(value: object) -> dict:
     data = exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
     try:
-        source = CandidateSource(require_any_text(data["source"], "candidate source", 32, allow_empty=False))
-        lifecycle = LifecycleState(require_any_text(data["lifecycle"], "candidate lifecycle", 32, allow_empty=False))
+        source = CandidateSource(require_any_text(data.get("source", ""), "candidate source", 32, allow_empty=False))
+        lifecycle = LifecycleState(require_any_text(data.get("lifecycle", ""), "candidate lifecycle", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("candidate source or lifecycle is unsupported") from error
-    evidence = require_list(data["evidence"], "candidate evidence")
+    evidence = require_list(data.get("evidence", []), "candidate evidence")
     result = candidate(
-        candidate_id=data["candidate_id"],
-        statement_id=data["statement_id"],
-        response=data["response"],
+        candidate_id=data.get("candidate_id", ""),
+        statement_id=data.get("statement_id", ""),
+        response=data.get("response", ""),
         source=source,
-        features=feature_set_from_dict(freeze_mapping(data["features"], "candidate features")),
+        features=feature_set_from_dict(freeze_mapping(data.get("features", {}), "candidate features")),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "candidate evidence item")) for item in evidence),
-        scope=scope_key_from_dict(freeze_mapping(data["scope"], "candidate scope")),
+        scope=scope_key_from_dict(freeze_mapping(data.get("scope", {}), "candidate scope")),
         lifecycle=lifecycle,
-        provenance=freeze_mapping(data["provenance"], "candidate provenance"),
-        diagnostics=freeze_mapping(data["diagnostics"], "candidate diagnostics"),
+        provenance=freeze_mapping(data.get("provenance", {}), "candidate provenance"),
+        diagnostics=freeze_mapping(data.get("diagnostics", {}), "candidate diagnostics"),
     )
     return result
 
@@ -2072,6 +2066,7 @@ def trusted_candidate_to_json(value: dict) -> str:
 
 
 def empty_candidate() -> dict:
+    """Return one isolated concrete empty candidate, the null object for an unavailable selection."""
     result = candidate(
         candidate_id="empty",
         statement_id="empty",
@@ -2113,23 +2108,23 @@ def accounting_observation(
 
 def validate_accounting_observation(value: object) -> dict:
     data = exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
-    result = accounting_observation(data["statement_id"], data["keywords"])
+    result = accounting_observation(data.get("statement_id", ""), data.get("keywords", ()))
     return result
 
 
 def accounting_observation_to_dict(value: object) -> dict[str, object]:
     observation = validate_accounting_observation(value)
     result = {
-        "statement_id": observation["statement_id"],
-        "keywords": list(observation["keywords"]),
+        "statement_id": observation.get("statement_id", ""),
+        "keywords": list(observation.get("keywords", ())),
     }
     return result
 
 
 def accounting_observation_from_dict(value: object) -> dict:
     data = exact_mapping(value, "AccountingObservation", ACCOUNTING_OBSERVATION_FIELDS)
-    keywords = require_list(data["keywords"], "accounting keywords")
-    result = accounting_observation(data["statement_id"], tuple(keywords))
+    keywords = require_list(data.get("keywords", []), "accounting keywords")
+    result = accounting_observation(data.get("statement_id", ""), tuple(keywords))
     return result
 
 
@@ -2185,7 +2180,7 @@ def resolver_result(
     ):
         raise InvalidRequestError("non-completed resolver results cannot contain output or accounting")
     if any(
-        value["source_resolver"] != resolver_name or value["source_contributions"] != (resolver_name,)
+        value.get("source_resolver", "") != resolver_name or value.get("source_contributions", ()) != (resolver_name,)
         for value in validated_proposition_evidence
     ):
         raise InvalidRequestError("resolver proposition_evidence source must match its producing resolver")
@@ -2213,15 +2208,15 @@ def resolver_result(
 def validate_resolver_result(value: object) -> dict:
     data = exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
     result = resolver_result(
-        data["resolver"],
-        data["state"],
-        data["reason_code"],
-        data["candidates"],
-        data["evidence"],
-        data["proposition_evidence"],
-        data["accounting"],
-        data["diagnostics"],
-        data["consumption"],
+        data.get("resolver", ""),
+        data.get("state", ResolverState.FAILED),
+        data.get("reason_code", ""),
+        data.get("candidates", ()),
+        data.get("evidence", ()),
+        data.get("proposition_evidence", ()),
+        data.get("accounting", ()),
+        data.get("diagnostics", {}),
+        data.get("consumption", {}),
     )
     return result
 
@@ -2246,7 +2241,7 @@ def resolver_result_to_dict(value: object) -> dict[str, object]:
 def trusted_resolver_result_to_dict(current: dict) -> dict[str, object]:
     """Serialize a resolver result already validated by the executor."""
     result = {
-        "resolver": current.get("resolver", {}),
+        "resolver": current.get("resolver", ""),
         "state": current.get("state", ResolverState.FAILED).value,
         "reason_code": current.get("reason_code", ""),
         "candidates": [trusted_candidate_to_dict(item) for item in current.get("candidates", ())],
@@ -2254,7 +2249,7 @@ def trusted_resolver_result_to_dict(current: dict) -> dict[str, object]:
         "proposition_evidence": [
             trusted_proposition_evidence_record_to_dict(item) for item in current.get("proposition_evidence", ())
         ],
-        "accounting": [accounting_observation_to_dict(item) for item in current.get("accounting", {})],
+        "accounting": [accounting_observation_to_dict(item) for item in current.get("accounting", ())],
         "diagnostics": thaw_json(current.get("diagnostics", {})),
         "consumption": budget_consumption_to_dict(current.get("consumption", {})),
     }
@@ -2270,19 +2265,21 @@ def resolver_result_to_json(value: object) -> str:
 def resolver_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
     try:
-        state = ResolverState(require_any_text(data["state"], "resolver state", 32, allow_empty=False))
+        state = ResolverState(require_any_text(data.get("state", ""), "resolver state", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported resolver state") from error
-    candidates = require_list(data["candidates"], "resolver candidates")
-    evidence = require_list(data["evidence"], "resolver evidence")
-    proposition_evidence = require_list(data["proposition_evidence"], "resolver Proposition evidence")
-    accounting = require_list(data["accounting"], "resolver accounting")
+    candidates = require_list(data.get("candidates", []), "resolver candidates")
+    evidence = require_list(data.get("evidence", []), "resolver evidence")
+    proposition_evidence = require_list(data.get("proposition_evidence", []), "resolver Proposition evidence")
+    accounting = require_list(data.get("accounting", []), "resolver accounting")
     if max(len(candidates), len(evidence), len(proposition_evidence), len(accounting)) > MAX_RESOLUTION_VALUES:
         raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     result = resolver_result(
-        resolver=require_any_text(data["resolver"], "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
+        resolver=require_any_text(data.get("resolver", ""), "resolver result resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False),
         state=state,
-        reason_code=require_any_text(data["reason_code"], "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True),
+        reason_code=require_any_text(
+            data.get("reason_code", ""), "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True
+        ),
         candidates=tuple(candidate_from_dict(freeze_mapping(item, "resolver candidate")) for item in candidates),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolver evidence item")) for item in evidence),
         proposition_evidence=tuple(
@@ -2290,8 +2287,8 @@ def resolver_result_from_dict(value: object) -> dict:
             for item in proposition_evidence
         ),
         accounting=tuple(accounting_observation_from_dict(freeze_mapping(item, "resolver accounting item")) for item in accounting),
-        diagnostics=freeze_mapping(data["diagnostics"], "resolver diagnostics"),
-        consumption=budget_consumption_from_dict(freeze_mapping(data["consumption"], "resolver consumption")),
+        diagnostics=freeze_mapping(data.get("diagnostics", {}), "resolver diagnostics"),
+        consumption=budget_consumption_from_dict(freeze_mapping(data.get("consumption", {}), "resolver consumption")),
     )
     return result
 
@@ -2364,7 +2361,7 @@ def resolution_result(
         validated_resolver_results = tuple(validate_resolver_result(value) for value in resolver_results)
     except InvalidRequestError as error:
         raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values") from error
-    if any(value["proposition_evidence"] for value in validated_resolver_results):
+    if any(value.get("proposition_evidence", ()) for value in validated_resolver_results):
         raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Proposition evidence")
     try:
         validated_budget = validate_budget_consumption(budget)
@@ -2399,7 +2396,9 @@ def resolution_result(
             raise InvalidRequestError("an unavailable selected_candidate must be the concrete empty candidate")
         if confidence_available or validated_confidence != 0.0:
             raise InvalidRequestError("non-ANSWER confidence must be unavailable and zero")
-    retained_evidence_available = bool(validated_response_candidates or validated_evidence or validated_evidence_package["records"])
+    retained_evidence_available = bool(
+        validated_response_candidates or validated_evidence or validated_evidence_package.get("records", ())
+    )
     if outcome == ResolutionOutcome.EVIDENCE and not retained_evidence_available:
         raise InvalidRequestError("EVIDENCE requires response candidates, evidence references, or package records")
     if outcome == ResolutionOutcome.MISS and retained_evidence_available:
@@ -2459,19 +2458,19 @@ def trusted_resolution_result(
 def validate_resolution_result(value: object) -> dict:
     data = exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
     result = resolution_result(
-        data["outcome"],
-        data["selected_candidate"],
-        data["selected_candidate_available"],
-        data["response_candidates"],
-        data["evidence"],
-        data["confidence"],
-        data["confidence_available"],
-        data["reason_codes"],
-        data["frame_diagnostics"],
-        data["resolver_results"],
-        data["budget"],
-        data["evidence_package_available"],
-        data["evidence_package"],
+        data.get("outcome", ResolutionOutcome.MISS),
+        data.get("selected_candidate", {}),
+        data.get("selected_candidate_available", False),
+        data.get("response_candidates", ()),
+        data.get("evidence", ()),
+        data.get("confidence", 0.0),
+        data.get("confidence_available", False),
+        data.get("reason_codes", ()),
+        data.get("frame_diagnostics", {}),
+        data.get("resolver_results", ()),
+        data.get("budget", {}),
+        data.get("evidence_package_available", False),
+        data.get("evidence_package", {}),
     )
     return result
 
@@ -2533,27 +2532,29 @@ def trusted_resolution_result_to_json(value: dict) -> str:
 def resolution_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
     try:
-        outcome = ResolutionOutcome(require_any_text(data["outcome"], "resolution outcome", 32, allow_empty=False))
+        outcome = ResolutionOutcome(require_any_text(data.get("outcome", ""), "resolution outcome", 32, allow_empty=False))
     except ValueError as error:
         raise InvalidRequestError("unsupported resolution outcome") from error
-    if not isinstance(data["selected_candidate_available"], bool):
+    selected_available = data.get("selected_candidate_available", False)
+    if not isinstance(selected_available, bool):
         raise InvalidRequestError("selected_candidate_available must be a boolean")
-    selected_available = data["selected_candidate_available"]
-    selected_mapping = freeze_mapping(data["selected_candidate"], "selected_candidate")
+    selected_mapping = freeze_mapping(data.get("selected_candidate", {}), "selected_candidate")
     selected = candidate_from_dict(selected_mapping) if selected_available else empty_candidate()
     if not selected_available and selected_mapping:
         raise InvalidRequestError("unavailable selected_candidate must be an empty object")
-    if not isinstance(data["confidence_available"], bool):
+    confidence_available = data.get("confidence_available", False)
+    if not isinstance(confidence_available, bool):
         raise InvalidRequestError("confidence_available must be a boolean")
-    response_candidates = require_list(data["response_candidates"], "response_candidates")
-    evidence = require_list(data["evidence"], "resolution evidence")
-    reasons = require_list(data["reason_codes"], "reason_codes")
-    resolver_results = require_list(data["resolver_results"], "resolver_results")
+    response_candidates = require_list(data.get("response_candidates", []), "response_candidates")
+    evidence = require_list(data.get("evidence", []), "resolution evidence")
+    reasons = require_list(data.get("reason_codes", []), "reason_codes")
+    resolver_results = require_list(data.get("resolver_results", []), "resolver_results")
     if len(response_candidates) > MAX_RESOLUTION_VALUES or len(evidence) > MAX_RESOLUTION_VALUES:
         raise InvalidRequestError(f"resolution output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     if len(reasons) > MAX_RESOLUTION_REASON_CODES or len(resolver_results) > MAX_RESOLUTION_REASON_CODES:
         raise InvalidRequestError(f"reason_codes and resolver_results are limited to {MAX_RESOLUTION_REASON_CODES} values")
-    if not isinstance(data["evidence_package_available"], bool):
+    package_available = data.get("evidence_package_available", False)
+    if not isinstance(package_available, bool):
         raise InvalidRequestError("evidence_package_available must be a boolean")
     result = resolution_result(
         outcome=outcome,
@@ -2561,14 +2562,14 @@ def resolution_result_from_dict(value: object) -> dict:
         selected_candidate_available=selected_available,
         response_candidates=tuple(candidate_from_dict(freeze_mapping(item, "response candidate")) for item in response_candidates),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolution evidence item")) for item in evidence),
-        confidence=require_float(data["confidence"], "resolution confidence", 0.0, 1.0),
-        confidence_available=data["confidence_available"],
+        confidence=require_float(data.get("confidence", 0.0), "resolution confidence", 0.0, 1.0),
+        confidence_available=confidence_available,
         reason_codes=tuple(require_any_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
-        frame_diagnostics=freeze_mapping(data["frame_diagnostics"], "frame diagnostics"),
+        frame_diagnostics=freeze_mapping(data.get("frame_diagnostics", {}), "frame diagnostics"),
         resolver_results=tuple(resolver_result_from_dict(freeze_mapping(item, "resolver result")) for item in resolver_results),
-        budget=budget_consumption_from_dict(freeze_mapping(data["budget"], "resolution budget")),
-        evidence_package_available=data["evidence_package_available"],
-        evidence_package=evidence_package_from_dict(freeze_mapping(data["evidence_package"], "evidence package")),
+        budget=budget_consumption_from_dict(freeze_mapping(data.get("budget", {}), "resolution budget")),
+        evidence_package_available=package_available,
+        evidence_package=evidence_package_from_dict(freeze_mapping(data.get("evidence_package", {}), "evidence package")),
     )
     return result
 
@@ -2610,7 +2611,7 @@ class QueryFrameBuilder:
             validate_authoritative_identity(selected_identity, retrieval_representation(original))
         else:
             selected_identity = extract_standalone_identity(original, scope)
-        if selected_identity["scope"] != scope:
+        if selected_identity.get("scope", {}) != scope:
             raise InvalidRequestError("identity scope must match frame scope")
         if budget:
             try:
@@ -2620,8 +2621,8 @@ class QueryFrameBuilder:
         else:
             selected_budget = capture_resolution_budget(self.internal_monotonic_clock_ns)
         resolved = original
-        if self.internal_engram.config["expand_contractions"]:
-            resolved = expand_contractions(original, self.internal_engram.substitution_maps["contractions"])
+        if self.internal_engram.config.get("expand_contractions", False):
+            resolved = expand_contractions(original, self.internal_engram.substitution_maps.get("contractions", {}))
         eligibility = EligibilityContextCapture(self.internal_utc_clock).capture_standalone(scope, True)
         seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
         require_any_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
@@ -2663,12 +2664,12 @@ class BudgetLedger:
 
     def remaining_candidates(self) -> int:
         with self.internal_lock:
-            result = max(0, self.internal_budget["max_candidates"] - self.totals["candidates"])
+            result = max(0, self.internal_budget.get("max_candidates", 0) - self.totals.get("candidates", 0))
             return result
 
     def remaining_evidence(self) -> int:
         with self.internal_lock:
-            result = max(0, self.internal_budget["max_evidence"] - self.totals["evidence"])
+            result = max(0, self.internal_budget.get("max_evidence", 0) - self.totals.get("evidence", 0))
             return result
 
     def add(self, consumption: dict) -> dict:
@@ -2690,26 +2691,27 @@ class BudgetLedger:
                 "diagnostic_bytes",
                 "working_memory_bytes",
             ):
-                values[name] = self.totals[name] + validated_consumption[name]
-            exhausted = set(self.totals["exhausted_dimensions"]).union(validated_consumption["exhausted_dimensions"])
+                values[name] = self.totals.get(name, 0) + validated_consumption.get(name, 0)
+            prior_exhausted = self.totals.get("exhausted_dimensions", ())
+            exhausted = set(prior_exhausted).union(validated_consumption.get("exhausted_dimensions", ()))
             limits = {
-                "resolvers": self.internal_budget["max_resolvers"],
-                "candidates": self.internal_budget["max_candidates"],
-                "graph_rows": self.internal_budget["max_graph_rows"],
-                "vector_results": self.internal_budget["max_vector_results"],
-                "evidence": self.internal_budget["max_evidence"],
-                "evidence_bytes": self.internal_budget["max_evidence_bytes"],
-                "output_bytes": self.internal_budget["max_output_bytes"],
-                "diagnostic_bytes": self.internal_budget["max_diagnostic_bytes"],
-                "working_memory_bytes": self.internal_budget["max_working_memory_bytes"],
+                "resolvers": self.internal_budget.get("max_resolvers", 0),
+                "candidates": self.internal_budget.get("max_candidates", 0),
+                "graph_rows": self.internal_budget.get("max_graph_rows", 0),
+                "vector_results": self.internal_budget.get("max_vector_results", 0),
+                "evidence": self.internal_budget.get("max_evidence", 0),
+                "evidence_bytes": self.internal_budget.get("max_evidence_bytes", 0),
+                "output_bytes": self.internal_budget.get("max_output_bytes", 0),
+                "diagnostic_bytes": self.internal_budget.get("max_diagnostic_bytes", 0),
+                "working_memory_bytes": self.internal_budget.get("max_working_memory_bytes", 0),
             }
             for name, limit in limits.items():
-                if values.get(name, 0.0) > limit:
+                if values.get(name, 0) > limit:
                     exhausted.add(name)
             values["exhausted_dimensions"] = tuple(sorted(exhausted))
-            values["measurement_available"] = (
-                self.totals["measurement_available"] and validated_consumption["measurement_available"]
-            )
+            totals_measured = self.totals.get("measurement_available", False)
+            consumption_measured = validated_consumption.get("measurement_available", False)
+            values["measurement_available"] = totals_measured and consumption_measured
             self.totals = budget_consumption(**values)
             result = validate_budget_consumption(self.totals)
             return result

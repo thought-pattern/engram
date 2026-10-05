@@ -70,6 +70,17 @@ PREFERENCE_CONTINUITY_EXPECTATIONS = {
     "Tell me which animals I dislike.": ("dog", "dislike"),
     "What preferences did I share?": ("sushi", "cat", "dog"),
 }
+# Provisioning-manifest fields copied into the ephemeral semantic config, with their
+# concrete types; every one is required before the copy.
+SEMANTIC_MANIFEST_FIELD_DEFAULTS = {
+    "artifact_sha256": "",
+    "backend": "",
+    "dimension": 0,
+    "license_id": "",
+    "model_id": "",
+    "model_path": "",
+    "model_version": "",
+}
 
 
 def tool_json(result) -> dict:
@@ -141,9 +152,9 @@ def run_length_encode_passes(evaluations: list[dict]) -> list[dict]:
     """Encode ordered per-turn pass/fail state without a transcription-prone bitmap."""
     runs = []
     for evaluation in evaluations:
-        bit = "1" if evaluation["passed"] else "0"
-        if runs and runs[-1]["bit"] == bit:
-            runs[-1]["turns"] += 1
+        bit = "1" if evaluation.get("passed", False) else "0"
+        if runs and runs[-1].get("bit", "") == bit:
+            runs[-1]["turns"] = runs[-1].get("turns", 0) + 1
         else:
             runs.append({"bit": bit, "turns": 1})
     encoded_runs = runs
@@ -163,7 +174,7 @@ async def internal_run(
         service = MCPConversationService(static_pairs=load_conversation_pairs(str(PREFERENCE_CONTINUITY_SEED)))
     server = EngramMCPServer(service=service)
     latencies_ms = []
-    sources: Counter[str] = Counter()
+    sources = Counter()
     response_count = 0
     evaluations = []
     started_at = datetime.now(UTC)
@@ -186,7 +197,7 @@ async def internal_run(
                 },
             )
         )
-        if started["turn_count"] != 0:
+        if "turn_count" not in started or started.get("turn_count", 0) != 0:
             raise RuntimeError("new MCP conversation did not start at turn zero")
 
         first_turn = {}
@@ -212,7 +223,7 @@ async def internal_run(
             profile_passed = True
             if graph_probe:
                 profile_check = "memgraph_source_when_asked"
-                profile_passed = result.get("source") == "graph"
+                profile_passed = result.get("source", "") == "graph"
             elif profile == "context-recall":
                 profile_check = "sushi_recall_when_asked"
                 profile_passed = isinstance(response, str) and "sushi" in response.casefold() if message == "What's good?" else True
@@ -220,15 +231,17 @@ async def internal_run(
                 expected_terms = PREFERENCE_CONTINUITY_EXPECTATIONS.get(message, ())
                 response_text = response.casefold() if isinstance(response, str) else ""
                 profile_check = "preference_continuity"
-                profile_passed = result.get("user_id") == user_id and all(term in response_text for term in expected_terms)
+                # An absent user_id never matches, even for an empty requested user.
+                user_matches = "user_id" in result and result.get("user_id", "") == user_id
+                profile_passed = user_matches and all(term in response_text for term in expected_terms)
             if profile_check:
                 evaluation["profile_check"] = profile_check
                 evaluation["profile_passed"] = profile_passed
             if not profile_passed:
                 evaluation["passed"] = False
-                evaluation["failed_checks"].append(profile_check)
+                evaluation["failed_checks"] = [*evaluation.get("failed_checks", []), profile_check]
             evaluations.append(evaluation)
-            if evaluation["passed"]:
+            if evaluation.get("passed", False):
                 response_count += 1
             sources[str(result.get("source", ""))] += 1
             bounded_turn = {
@@ -243,28 +256,30 @@ async def internal_run(
                 print(f"completed {expected_turn}/{turns} MCP conversation turns", flush=True)
 
         inspected = tool_json(await client.call_tool("engram_inspect", {}))
-        if inspected.get("turn_count") != turns:
-            raise RuntimeError(f"MCP inspection reported {inspected.get('turn_count')} turns instead of {turns}")
+        # Absent counts fail these checks exactly as mismatched counts do.
+        if "turn_count" not in inspected or inspected.get("turn_count", 0) != turns:
+            raise RuntimeError(f"MCP inspection reported {inspected.get('turn_count', 0)} turns instead of {turns}")
         stopped = tool_json(await client.call_tool("engram_stop", {}))
-        if stopped.get("summary", {}).get("exchanges") != turns:
+        stop_summary = stopped.get("summary", {})
+        if "exchanges" not in stop_summary or stop_summary.get("exchanges", 0) != turns:
             raise RuntimeError("MCP stop report did not preserve the complete exchange count")
 
     finished_at = datetime.now(UTC)
     duration_seconds = time_perf_counter() - started_clock
-    failure_counts: Counter[str] = Counter(failure for evaluation in evaluations for failure in evaluation["failed_checks"])
+    failure_counts = Counter(failure for evaluation in evaluations for failure in evaluation.get("failed_checks", []))
     # Reported checks are derived from the checks each turn actually applied.
-    additional_checks: Counter[str] = Counter(
+    additional_checks = Counter(
         evaluation.get("profile_check", "") for evaluation in evaluations if evaluation.get("profile_check", "")
     )
-    failed_turns = [evaluation["turn"] for evaluation in evaluations if not evaluation["passed"]]
+    failed_turns = [evaluation.get("turn", 0) for evaluation in evaluations if not evaluation.get("passed", False)]
     evaluation_bytes = json_dumps(evaluations, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    response_sequence = [evaluation["response_sha256"] for evaluation in evaluations]
+    response_sequence = [evaluation.get("response_sha256", "") for evaluation in evaluations]
     observation_sequence = [
         {
-            "turn": evaluation["turn"],
-            "source": evaluation["source"],
-            "response_bytes": evaluation["response_bytes"],
-            "response_sha256": evaluation["response_sha256"],
+            "turn": evaluation.get("turn", 0),
+            "source": evaluation.get("source", ""),
+            "response_bytes": evaluation.get("response_bytes", 0),
+            "response_sha256": evaluation.get("response_sha256", ""),
             "profile_passed": evaluation.get("profile_passed", True),
         }
         for evaluation in evaluations
@@ -277,19 +292,19 @@ async def internal_run(
     semantic_status = components.get("semantic", {}) if isinstance(components, dict) else {}
     reranker_status = components.get("reranker", {}) if isinstance(components, dict) else {}
     utility_status = components.get("utility", {}) if isinstance(components, dict) else {}
-    sparse_active = sparse_status.get("enabled") is True
-    semantic_active = semantic_status.get("enabled") is True
-    reranker_active = reranker_status.get("enabled") is True
-    utility_active = utility_status.get("enabled") is True
+    sparse_active = sparse_status.get("enabled", False) is True
+    semantic_active = semantic_status.get("enabled", False) is True
+    reranker_active = reranker_status.get("enabled", False) is True
+    utility_active = utility_status.get("enabled", False) is True
     configured_values = yaml_safe_load(Path(config_path).read_text(encoding="utf-8")) if config_path else {}
-    retrieval_rewrites_active = configured_values.get("retrieval_rewrites_enabled") is True
+    retrieval_rewrites_active = configured_values.get("retrieval_rewrites_enabled", False) is True
     optional_components_ready = (
-        (not sparse_active or sparse_status.get("ready") is True)
-        and (not semantic_active or semantic_status.get("ready") is True)
-        and (not reranker_active or reranker_status.get("ready") is True)
-        and (not utility_active or utility_status.get("ready") is True)
+        (not sparse_active or sparse_status.get("ready", False) is True)
+        and (not semantic_active or semantic_status.get("ready", False) is True)
+        and (not reranker_active or reranker_status.get("ready", False) is True)
+        and (not utility_active or utility_status.get("ready", False) is True)
         # Requested graph probes need a ready graph, whatever the profile.
-        and (not memgraph_probe_every or graph_status.get("ready") is True)
+        and (not memgraph_probe_every or graph_status.get("ready", False) is True)
     )
     run_result = {
         "gate": gate,
@@ -352,9 +367,9 @@ async def internal_run(
             "last_evaluation": evaluations[-1] if evaluations else {},
         },
         "inspect": {
-            "user_id": inspected.get("user_id"),
-            "turn_count": inspected.get("turn_count"),
-            "history_size": inspected.get("session", {}).get("history_size"),
+            "user_id": inspected.get("user_id", ""),
+            "turn_count": inspected.get("turn_count", 0),
+            "history_size": inspected.get("session", {}).get("history_size", 0),
             "telemetry": inspected.get("core_status", {}).get("telemetry", {}),
         },
         "profile_definition": ({"likes": ["sushi", "cats"], "dislikes": ["dogs"]} if profile == "preference-continuity" else {}),
@@ -435,20 +450,11 @@ def main(argv: tuple[str, ...] = ()) -> int:
                 raw_config["sparse"] = {"enabled": True}
             if args.enable_semantic:
                 manifest = json_loads(Path(args.semantic_manifest).read_text(encoding="utf-8"))
-                required_manifest_fields = {
-                    "model_path",
-                    "model_id",
-                    "model_version",
-                    "license_id",
-                    "artifact_sha256",
-                    "dimension",
-                    "backend",
-                }
-                if not isinstance(manifest, dict) or not required_manifest_fields.issubset(manifest):
+                if not isinstance(manifest, dict) or not SEMANTIC_MANIFEST_FIELD_DEFAULTS.keys() <= manifest.keys():
                     raise ValueError("--semantic-manifest is malformed")
                 raw_config["semantic"] = {
                     "enabled": True,
-                    **{name: manifest[name] for name in sorted(required_manifest_fields)},
+                    **{name: manifest.get(name, default) for name, default in sorted(SEMANTIC_MANIFEST_FIELD_DEFAULTS.items())},
                 }
             if args.enable_reranker:
                 raw_config["reranker"] = {"enabled": True}
@@ -474,7 +480,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(result_text, encoding="utf-8")
         print(args.output)
-    exit_code = 0 if result["passed"] else 1
+    exit_code = 0 if result.get("passed", False) else 1
     return exit_code
 
 

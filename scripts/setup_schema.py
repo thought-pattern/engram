@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check, install, or verify the Engram schema."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
@@ -31,19 +30,6 @@ def static_check() -> dict:
         "vector_indexes": len(catalog.get("vector_indexes", [])),
         "constraints": len(catalog.get("constraints", [])),
         "relationships": len(catalog.get("relationships", [])),
-    }
-    return result
-
-
-def connection_settings(config_path: str, host: str, port: int) -> dict:
-    """Resolve administrative connection settings after mode selection."""
-
-    configured = load_config(config_path).get("graph", {}) or {}
-    result = {
-        "host": host or configured.get("host", "localhost"),
-        "port": port or configured.get("port", 7687),
-        "username": configured.get("username", ""),
-        "password": configured.get("password", ""),
     }
     return result
 
@@ -87,10 +73,16 @@ def main() -> None:
             report = static_check()
         else:
             mode = "apply" if arguments.apply else "verify"
-            report = connected_operation(
-                mode,
-                connection_settings(arguments.config, arguments.host, arguments.port),
-            )
+            # Configuration is read only after a connected mode is selected; command-line
+            # overrides win over the configured graph endpoint.
+            configured = load_config(arguments.config).get("graph", {}) or {}
+            settings = {
+                "host": arguments.host or configured.get("host", "localhost"),
+                "port": arguments.port or configured.get("port", 7687),
+                "username": configured.get("username", ""),
+                "password": configured.get("password", ""),
+            }
+            report = connected_operation(mode, settings)
         print(report)
         sys_exit(0 if report.get("valid", False) else 1)
     except Exception as error:

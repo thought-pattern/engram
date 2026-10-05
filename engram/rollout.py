@@ -44,7 +44,7 @@ def rollout_status(config: dict) -> dict:
     result = {
         "default_mode": default_mode.value,
         "namespace_override_count": len(namespaces),
-        "namespace_modes": {mode.value: counts[mode] for mode in RolloutMode},
+        "namespace_modes": {mode.value: counts.get(mode, 0) for mode in RolloutMode},
     }
     return result
 
@@ -69,11 +69,13 @@ def apply_rollout(result: dict, selection: dict) -> dict:
         "frame_diagnostics": {**current.get("frame_diagnostics", {}), "rollout": diagnostics},
     }
     if mode in {RolloutMode.DISABLED, RolloutMode.SHADOW}:
-        diagnostics["observed_outcome"] = current.get("outcome", ResolutionOutcome.MISS).value
-        diagnostics["observed_candidate_count"] = len(current.get("response_candidates", ()))
+        observed_outcome = current.get("outcome", ResolutionOutcome.MISS).value
+        observed_candidate_count = len(current.get("response_candidates", ()))
+        diagnostics["observed_outcome"] = observed_outcome
+        diagnostics["observed_candidate_count"] = observed_candidate_count
         if mode == RolloutMode.SHADOW:
-            diagnostics["shadow_outcome"] = diagnostics["observed_outcome"]
-            diagnostics["shadow_candidate_count"] = diagnostics["observed_candidate_count"]
+            diagnostics["shadow_outcome"] = observed_outcome
+            diagnostics["shadow_candidate_count"] = observed_candidate_count
         changes.update(
             {
                 "outcome": ResolutionOutcome.MISS,
@@ -103,14 +105,15 @@ def apply_rollout(result: dict, selection: dict) -> dict:
     updated = resolution_result_with_changes(current, changes)
     for _ in range(4):
         size = len(resolution_result_to_json(updated).encode("utf-8"))
+        budget = updated.get("budget", {})
         consumption = budget_consumption_with_changes(
-            updated.get("budget", {}),
+            budget,
             {
                 "output_bytes": size,
-                "working_memory_bytes": max(updated.get("budget", {}).get("working_memory_bytes", 0), size),
+                "working_memory_bytes": max(budget.get("working_memory_bytes", 0), size),
             },
         )
-        if consumption == updated.get("budget", {}):
+        if consumption == budget:
             return updated
         updated = resolution_result_with_changes(updated, {"budget": consumption})
     raise InvalidRequestError("rollout budget accounting did not converge")

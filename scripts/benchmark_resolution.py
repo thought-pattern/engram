@@ -13,11 +13,11 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import Tier
+from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
 from engram.core import Engram
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution import (
     CostClass,
@@ -61,32 +61,6 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def accepted_artifact() -> dict:
-    """Build one exact artifact without external dependencies."""
-    scope = scope_key(namespace="benchmark")
-    request = "What is the Section 4 benchmark answer?"
-    artifact = cached_response_artifact(
-        statement_id="stmt-resolution-benchmark",
-        generation=1,
-        response="This is the exact Section 4 benchmark answer.",
-        query_identity=build_standalone_identity(request, scope),
-        retrieval=build_retrieval_representation(request, ("Explain the Section 4 benchmark answer",)),
-        tier=Tier.STATIC,
-        lifecycle=LifecycleState.ACTIVE,
-        scope=scope,
-        support_references=(),
-        valid_from="",
-        valid_from_available=False,
-        valid_until="",
-        valid_until_available=False,
-        superseded_by="",
-        provenance=artifact_provenance("benchmark", "section4", "2026-08-12T16:00:00Z"),
-        statistics=artifact_statistics(),
-        metadata={},
-    )
-    return artifact
-
-
 class BenchmarkResolver:
     """Configured benchmark resolver that records invocations across calls."""
 
@@ -117,27 +91,48 @@ class BenchmarkResolver:
         return result
 
 
-def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
+def run_benchmark(samples: int, corpus_size: int) -> dict:
     """Report operation lengths and evaluate the retained memory bound."""
-    exact_engine = Engram()
-    exact_engine.response_repository = ArtifactRepository((accepted_artifact(),))
-    builder = QueryFrameBuilder(exact_engine, lambda: START_NS, lambda: NOW)
     scope = scope_key(namespace="benchmark")
+    # One exact accepted artifact, built without external dependencies.
+    exact_request = "What is the Section 4 benchmark answer?"
+    exact_artifact = validate_cached_response_artifact(
+        {
+            "statement_id": "stmt-resolution-benchmark",
+            "generation": 1,
+            "response": "This is the exact Section 4 benchmark answer.",
+            "query_identity": extract_standalone_identity(exact_request, scope),
+            "retrieval": retrieval_representation(exact_request, ("Explain the Section 4 benchmark answer",)),
+            "tier": Tier.STATIC,
+            "lifecycle": LifecycleState.ACTIVE,
+            "scope": scope,
+            "support_references": (),
+            "valid_from": "",
+            "valid_from_available": False,
+            "valid_until": "",
+            "valid_until_available": False,
+            "superseded_by": "",
+            "provenance": {"source_label": "benchmark", "caller_id": "section4", "accepted_at": "2026-08-12T16:00:00Z"},
+            "statistics": INITIAL_ARTIFACT_STATISTICS,
+            "metadata": {},
+        }
+    )
+    exact_engine = Engram()
+    exact_engine.response_repository = ArtifactRepository((exact_artifact,))
+    builder = QueryFrameBuilder(exact_engine, lambda: START_NS, lambda: NOW)
+    frame_request = "Explain the Section 4 benchmark answer"
 
-    def build_frame():
-        result = builder.build("Explain the Section 4 benchmark answer", scope, diagnostic_seed="benchmark")
-        return result
-
-    exact_frame = build_frame()
+    exact_frame = builder.build(frame_request, scope, diagnostic_seed="benchmark")
+    exact_limits = exact_frame.get("budget", {})
     exact_budget = resolver_budget(
-        max_candidates=exact_frame["budget"]["max_candidates"],
-        max_graph_rows=exact_frame["budget"]["max_graph_rows"],
-        max_vector_results=exact_frame["budget"]["max_vector_results"],
-        max_evidence=exact_frame["budget"]["max_evidence"],
-        max_evidence_bytes=exact_frame["budget"]["max_evidence_bytes"],
-        max_output_bytes=exact_frame["budget"]["max_output_bytes"],
-        max_diagnostic_bytes=exact_frame["budget"]["max_diagnostic_bytes"],
-        max_working_memory_bytes=exact_frame["budget"]["max_working_memory_bytes"],
+        max_candidates=exact_limits.get("max_candidates", 0),
+        max_graph_rows=exact_limits.get("max_graph_rows", 0),
+        max_vector_results=exact_limits.get("max_vector_results", 0),
+        max_evidence=exact_limits.get("max_evidence", 0),
+        max_evidence_bytes=exact_limits.get("max_evidence_bytes", 0),
+        max_output_bytes=exact_limits.get("max_output_bytes", 0),
+        max_diagnostic_bytes=exact_limits.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=exact_limits.get("max_working_memory_bytes", 0),
     )
     exact_resolver = ExactResolver(exact_engine, lambda: START_NS)
 
@@ -148,24 +143,26 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
     for index in range(corpus_size):
         request = f"section four benchmark topic {index} shared retrieval token"
         lexical_artifacts.append(
-            cached_response_artifact(
-                statement_id=f"stmt-sparse-benchmark-{index}",
-                generation=1,
-                response=f"Section 4 sparse benchmark response {index}",
-                query_identity=build_standalone_identity(request, scope),
-                retrieval=build_retrieval_representation(request),
-                tier=Tier.STATIC,
-                lifecycle=LifecycleState.ACTIVE,
-                scope=scope,
-                support_references=(),
-                valid_from="",
-                valid_from_available=False,
-                valid_until="",
-                valid_until_available=False,
-                superseded_by="",
-                provenance=artifact_provenance("benchmark", "section4", "2026-08-12T16:00:00Z"),
-                statistics=artifact_statistics(),
-                metadata={},
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"stmt-sparse-benchmark-{index}",
+                    "generation": 1,
+                    "response": f"Section 4 sparse benchmark response {index}",
+                    "query_identity": extract_standalone_identity(request, scope),
+                    "retrieval": retrieval_representation(request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": {"source_label": "benchmark", "caller_id": "section4", "accepted_at": "2026-08-12T16:00:00Z"},
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
             )
         )
     lexical_engine.response_repository = ArtifactRepository(tuple(lexical_artifacts))
@@ -175,15 +172,16 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         diagnostic_seed="lexical-benchmark",
     )
     lexical_resolver = SparseResolver(lexical_engine, lambda: START_NS)
+    lexical_limits = lexical_frame.get("budget", {})
     lexical_budget = resolver_budget(
         max_candidates=10,
         max_graph_rows=0,
         max_vector_results=0,
         max_evidence=0,
         max_evidence_bytes=0,
-        max_output_bytes=lexical_frame["budget"]["max_output_bytes"],
-        max_diagnostic_bytes=lexical_frame["budget"]["max_diagnostic_bytes"],
-        max_working_memory_bytes=lexical_frame["budget"]["max_working_memory_bytes"],
+        max_output_bytes=lexical_limits.get("max_output_bytes", 0),
+        max_diagnostic_bytes=lexical_limits.get("max_diagnostic_bytes", 0),
+        max_working_memory_bytes=lexical_limits.get("max_working_memory_bytes", 0),
     )
     completed_plan = ResolverRegistry((BenchmarkResolver("completed"),)).plan(lexical_frame)
     failed_plan = ResolverRegistry((BenchmarkResolver("failed", fail=True),)).plan(lexical_frame)
@@ -200,7 +198,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict[str, object]:
         return outcome
 
     measurements = {
-        "frame_build": measure(build_frame, samples),
+        "frame_build": measure(lambda: builder.build(frame_request, scope, diagnostic_seed="benchmark"), samples),
         "exact_adapter": measure(lambda: exact_resolver.resolve(exact_frame, exact_budget), samples),
         "sparse_adapter": measure(sparse_resolution, samples),
         "executor_completed": measure(lambda: executor.execute(lexical_frame, completed_plan), samples),
@@ -245,7 +243,7 @@ def main() -> int:
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json_dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json_dumps(result, indent=2, sort_keys=True))
-    result = 0 if result["passed"] else 1
+    result = 0 if result.get("passed", False) else 1
     return result
 
 

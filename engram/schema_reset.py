@@ -1,7 +1,5 @@
 """Exact, data-preserving reset of Engram's schema catalog."""
 
-from importlib.resources.abc import Traversable
-
 from engram.schema_admin import execute_admin_statement, read_graph_shape
 from engram.schema_catalog import (
     catalog_keys,
@@ -18,7 +16,7 @@ def prove_empty_graph(connection) -> dict:
     return shape
 
 
-def allowed_catalog_keys(schema_path: Traversable) -> dict:
+def allowed_catalog_keys(schema_path) -> dict:
     """Return the exact definitions in Engram's schema."""
     corrected = validate_schema_contract(schema_path.read_text(encoding="utf-8"))
     result = {
@@ -59,7 +57,7 @@ def catalog_drop_statements(catalog: dict) -> list[str]:
     return statements
 
 
-def resolve_schema_reset(connection, schema_path: Traversable) -> dict:
+def resolve_schema_reset(connection, schema_path) -> dict:
     """Resolve reset targets only when every live definition is recognized."""
     shape = prove_empty_graph(connection)
     catalog = read_live_catalog(connection)
@@ -75,7 +73,7 @@ def resolve_schema_reset(connection, schema_path: Traversable) -> dict:
     return result
 
 
-def apply_schema_reset(connection, schema_path: Traversable) -> dict:
+def apply_schema_reset(connection, schema_path) -> dict:
     """Apply exact drops and prove the complete catalog is empty."""
     report = resolve_schema_reset(connection, schema_path)
     for statement in report.get("statements", []):

@@ -4,71 +4,92 @@ from threading import Barrier as threading_Barrier, Thread as threading_Thread
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
-from engram.constants import ExactLookupOutcome, Tier
-from engram.eligibility import eligibility_context
-from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
-from engram.identity import build_retrieval_representation, build_scoped_retrieval_key, build_standalone_identity, scope_key
-from engram.repository import (
+from engram.artifacts import validate_cached_response_artifact
+from engram.constants import (
+    INITIAL_ARTIFACT_STATISTICS,
     AdmissionOutcome,
-    ArtifactRepository,
+    ExactLookupOutcome,
+    LifecycleState,
     RepositoryRemovalReason,
+    Tier,
+)
+from engram.eligibility import ContextualExactLookup, eligibility_context
+from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key, scoped_retrieval_key_from_text
+from engram.repository import (
+    ArtifactRepository,
     normalize_repository_state,
     repository_state,
     tier_admission_policy,
     validate_repository_state,
 )
+from tests.support_fixtures import ASSERTION_REFERENCE_A
 
-from .support_fixtures import ASSERTION_REFERENCE_A
-
-
-def accepted_artifact(statement_id="stmt-1", tier=Tier.DYNAMIC, **overrides) -> dict:
-    scope = overrides.pop("scope", scope_key(namespace="tenant-a"))
-    request = overrides.pop("request", f"Question for {statement_id}?")
-    values = {
-        "statement_id": statement_id,
-        "generation": 1,
-        "response": f"Exact response for {statement_id}.",
-        "query_identity": build_standalone_identity(request, scope),
-        "retrieval": build_retrieval_representation(request, (f"Alias for {statement_id}",)),
-        "tier": tier,
-        "lifecycle": LifecycleState.ACTIVE,
-        "scope": scope,
-        "support_references": (ASSERTION_REFERENCE_A,),
-        "valid_from": "",
-        "valid_from_available": False,
-        "valid_until": "",
-        "valid_until_available": False,
-        "superseded_by": "",
-        "provenance": artifact_provenance("test", "caller", "2026-08-12T16:00:00Z"),
-        "statistics": artifact_statistics(2, 3, "2026-08-12T17:00:00Z", True),
-        "metadata": {"approved": True},
-    }
-    values.update(overrides)
-    result = cached_response_artifact(**values)
-    return result
-
-
-def context() -> dict:
-    result = eligibility_context(
-        evaluation_time="2026-08-12T18:00:00Z",
-        evaluation_time_available=True,
-        namespace="tenant-a",
-        artifact_repository_available=True,
-    )
-    return result
+TENANT_A_SCOPE = scope_key(namespace="tenant-a")
+# Accepted DYNAMIC tenant-a artifact fields with prior use; each test adds the statement id, response, identity and
+# retrieval representation ("Question for <id>?" with alias "Alias for <id>" unless it shares a request).
+# validate_cached_response_artifact copies its input, so this constant stays read-only.
+REPOSITORY_ARTIFACT_FIELDS = {
+    "generation": 1,
+    "tier": Tier.DYNAMIC,
+    "lifecycle": LifecycleState.ACTIVE,
+    "scope": TENANT_A_SCOPE,
+    "support_references": (ASSERTION_REFERENCE_A,),
+    "valid_from": "",
+    "valid_from_available": False,
+    "valid_until": "",
+    "valid_until_available": False,
+    "superseded_by": "",
+    "provenance": {"source_label": "test", "caller_id": "caller", "accepted_at": "2026-08-12T16:00:00Z"},
+    "statistics": {"hit_count": 2, "query_count": 3, "last_hit": "2026-08-12T17:00:00Z", "last_hit_available": True},
+    "metadata": {"approved": True},
+}
+# eligibility_context arguments for an evaluation in tenant-a with the repository available.
+LOOKUP_CONTEXT_VALUES = {
+    "evaluation_time": "2026-08-12T18:00:00Z",
+    "evaluation_time_available": True,
+    "namespace": "tenant-a",
+    "artifact_repository_available": True,
+}
+PLAN_FIELDS = {"outcome", "candidate", "admitted_statement_id", "evicted_statement_ids", "residency_changed", "lifecycle_changed"}
 
 
 def test_repository_state_has_one_accepted_response_representation() -> None:
-    state = normalize_repository_state((accepted_artifact(),))
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
+    state = normalize_repository_state((artifact,))
 
     assert set(state) == {"state_generation", "artifacts"}
-    assert set(state["artifacts"]) == {"stmt-1"}
+    assert set(state.get("artifacts", {})) == {"stmt-1"}
 
 
 def test_repository_build_validates_the_authoritative_collection() -> None:
-    first = accepted_artifact("stmt-1")
-    second = accepted_artifact("stmt-2", tier=Tier.STATIC)
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-2",
+            "response": "Exact response for stmt-2.",
+            "query_identity": extract_standalone_identity("Question for stmt-2?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-2?", ("Alias for stmt-2",)),
+            "tier": Tier.STATIC,
+        }
+    )
     state = normalize_repository_state((second, first))
 
     assert state.__class__ is dict
@@ -81,105 +102,202 @@ def test_repository_build_validates_the_authoritative_collection() -> None:
 
 
 def test_repository_lookup_does_not_expose_mutable_authority() -> None:
-    artifact = accepted_artifact()
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
     repository = ArtifactRepository((artifact,))
 
     artifact["response"] = "caller artifact rewrite"
 
-    retained_artifact = repository.get_artifact(artifact["statement_id"])
-    assert retained_artifact["response"] == "Exact response for stmt-1."
+    retained_artifact = repository.get_artifact("stmt-1")
+    assert retained_artifact.get("response", "") == "Exact response for stmt-1."
     assert retained_artifact is not artifact
     retained_artifact["response"] = "returned artifact rewrite"
-    retained_artifact["statistics"]["query_count"] = 99
-    fresh_artifact = repository.get_artifact(artifact["statement_id"])
-    assert fresh_artifact["response"] == "Exact response for stmt-1."
-    assert fresh_artifact["statistics"]["query_count"] == 3
+    assert "query_count" in retained_artifact.get("statistics", {})
+    retained_statistics = retained_artifact.get("statistics", {})
+    retained_statistics["query_count"] = 99
+    fresh_artifact = repository.get_artifact("stmt-1")
+    assert fresh_artifact.get("response", "") == "Exact response for stmt-1."
+    assert fresh_artifact.get("statistics", {}).get("query_count", 0) == 3
     snapshot = repository.snapshot()
     snapshot["state_generation"] = 99
-    assert repository.snapshot()["state_generation"] == 1
+    assert repository.snapshot().get("state_generation", 0) == 1
 
 
 def test_candidate_add_and_atomic_swap_publish_artifacts_atomically() -> None:
-    repository = ArtifactRepository((accepted_artifact("stmt-1"),))
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-2",
+            "response": "Exact response for stmt-2.",
+            "query_identity": extract_standalone_identity("Question for stmt-2?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-2?", ("Alias for stmt-2",)),
+        }
+    )
+    repository = ArtifactRepository((first,))
     before = repository.snapshot()
-    candidate = repository.candidate_with_artifact(accepted_artifact("stmt-2"))
+    candidate = repository.candidate_with_artifact(second)
 
-    assert set(repository.snapshot()["artifacts"]) == {"stmt-1"}
-    published = repository.atomic_replace(candidate, before["state_generation"])
+    assert set(repository.snapshot().get("artifacts", {})) == {"stmt-1"}
+    published = repository.atomic_replace(candidate, before.get("state_generation", 0))
 
-    assert set(published["artifacts"]) == {"stmt-1", "stmt-2"}
+    assert set(published.get("artifacts", {})) == {"stmt-1", "stmt-2"}
 
 
 def test_atomic_swap_rejects_stale_generation_and_non_next_candidate() -> None:
-    repository = ArtifactRepository((accepted_artifact("stmt-1"),))
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-2",
+            "response": "Exact response for stmt-2.",
+            "query_identity": extract_standalone_identity("Question for stmt-2?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-2?", ("Alias for stmt-2",)),
+        }
+    )
+    repository = ArtifactRepository((first,))
     before = repository.snapshot()
-    candidate = repository.candidate_with_artifact(accepted_artifact("stmt-2"))
+    candidate = repository.candidate_with_artifact(second)
+    before_generation = before.get("state_generation", 0)
+    assert before_generation == 1
 
     with pytest_raises(ConflictError, match="state generation conflict"):
-        repository.atomic_replace(candidate, before["state_generation"] + 1)
+        repository.atomic_replace(candidate, before_generation + 1)
     malformed_generation = repository_state(
-        state_generation=before["state_generation"] + 2,
-        artifacts=candidate["artifacts"],
+        state_generation=before_generation + 2,
+        artifacts=candidate.get("artifacts", {}),
     )
     with pytest_raises(ConflictError, match="advance by exactly one"):
-        repository.atomic_replace(malformed_generation, before["state_generation"])
+        repository.atomic_replace(malformed_generation, before_generation)
 
 
 def test_capacity_eviction_removes_only_dynamic_without_lifecycle_mutation() -> None:
-    dynamic = accepted_artifact("stmt-dynamic", lifecycle=LifecycleState.RETIRED)
-    static = accepted_artifact("stmt-static", tier=Tier.STATIC)
+    dynamic = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-dynamic",
+            "response": "Exact response for stmt-dynamic.",
+            "query_identity": extract_standalone_identity("Question for stmt-dynamic?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-dynamic?", ("Alias for stmt-dynamic",)),
+            "lifecycle": LifecycleState.RETIRED,
+        }
+    )
+    static = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-static",
+            "response": "Exact response for stmt-static.",
+            "query_identity": extract_standalone_identity("Question for stmt-static?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-static?", ("Alias for stmt-static",)),
+            "tier": Tier.STATIC,
+        }
+    )
     repository = ArtifactRepository((dynamic, static))
     before = repository.snapshot()
 
     candidate = repository.candidate_without_artifact(
-        dynamic["statement_id"],
-        dynamic["generation"],
+        "stmt-dynamic",
+        dynamic.get("generation", 0),
         RepositoryRemovalReason.CAPACITY_EVICTION,
     )
-    repository.atomic_replace(candidate, before["state_generation"])
+    repository.atomic_replace(candidate, before.get("state_generation", 0))
 
-    assert dynamic["lifecycle"] == LifecycleState.RETIRED
-    assert set(repository.snapshot()["artifacts"]) == {"stmt-static"}
+    assert "lifecycle" in dynamic
+    assert dynamic.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.RETIRED
+    assert set(repository.snapshot().get("artifacts", {})) == {"stmt-static"}
     with pytest_raises(ConflictError, match="cannot remove STATIC"):
         repository.candidate_without_artifact(
-            static["statement_id"],
-            static["generation"],
+            "stmt-static",
+            static.get("generation", 0),
             RepositoryRemovalReason.CAPACITY_EVICTION,
         )
 
 
 def test_explicit_delete_uses_expected_generation() -> None:
-    artifact = accepted_artifact()
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
     repository = ArtifactRepository((artifact,))
     with pytest_raises(ConflictError, match="generation conflict"):
-        repository.candidate_without_artifact(artifact["statement_id"], 2, RepositoryRemovalReason.EXPLICIT_DELETE)
+        repository.candidate_without_artifact("stmt-1", 2, RepositoryRemovalReason.EXPLICIT_DELETE)
 
     before = repository.snapshot()
     candidate = repository.candidate_without_artifact(
-        artifact["statement_id"],
-        artifact["generation"],
+        "stmt-1",
+        artifact.get("generation", 0),
         RepositoryRemovalReason.EXPLICIT_DELETE,
     )
-    empty = repository.atomic_replace(candidate, before["state_generation"])
+    empty = repository.atomic_replace(candidate, before.get("state_generation", 0))
 
-    assert empty["artifacts"] == {}
+    assert "artifacts" in empty
+    assert empty.get("artifacts", {}) == {}
 
 
 def test_repository_contextual_lookup_does_not_mutate_repository_state() -> None:
-    artifact = accepted_artifact(valid_until="2026-08-12T19:00:00Z", valid_until_available=True)
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+            "valid_until": "2026-08-12T19:00:00Z",
+            "valid_until_available": True,
+        }
+    )
     repository = ArtifactRepository((artifact,))
-    key = build_scoped_retrieval_key(artifact["scope"], artifact["retrieval"]["canonical"])
+    canonical = artifact.get("retrieval", {}).get("canonical", "")
+    assert canonical
+    key = scoped_retrieval_key_from_text(artifact.get("scope", {}), canonical)
     before = repository.snapshot()
 
-    found = repository.exact_lookup(key, context())
+    found = repository.exact_lookup(key, eligibility_context(**LOOKUP_CONTEXT_VALUES))
 
-    assert found["lookup"]["outcome"] == ExactLookupOutcome.FOUND
+    assert found.get("lookup", {}).get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.FOUND
     after = repository.snapshot()
-    assert after["state_generation"] == before["state_generation"]
+    assert "state_generation" in after
+    assert after.get("state_generation", 0) == before.get("state_generation", 0)
 
 
 def test_repository_state_rejects_secondary_representations() -> None:
-    artifact = accepted_artifact()
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
     state = normalize_repository_state((artifact,))
     extra = {**state, "statements": {}}
     with pytest_raises(InvalidRequestError, match="RepositoryState"):
@@ -187,11 +305,38 @@ def test_repository_state_rejects_secondary_representations() -> None:
 
 
 def test_repository_concurrent_swap_has_one_winner_and_never_partial_state() -> None:
-    repository = ArtifactRepository((accepted_artifact("stmt-base"),))
-    expected = repository.snapshot()["state_generation"]
+    base = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-base",
+            "response": "Exact response for stmt-base.",
+            "query_identity": extract_standalone_identity("Question for stmt-base?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-base?", ("Alias for stmt-base",)),
+        }
+    )
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-a",
+            "response": "Exact response for stmt-a.",
+            "query_identity": extract_standalone_identity("Question for stmt-a?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-a?", ("Alias for stmt-a",)),
+        }
+    )
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-b",
+            "response": "Exact response for stmt-b.",
+            "query_identity": extract_standalone_identity("Question for stmt-b?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-b?", ("Alias for stmt-b",)),
+        }
+    )
+    repository = ArtifactRepository((base,))
+    expected = repository.snapshot().get("state_generation", 0)
     candidates = [
-        repository.candidate_with_artifact(accepted_artifact("stmt-a")),
-        repository.candidate_with_artifact(accepted_artifact("stmt-b")),
+        repository.candidate_with_artifact(first),
+        repository.candidate_with_artifact(second),
     ]
     barrier = threading_Barrier(3)
     successes = []
@@ -214,12 +359,20 @@ def test_repository_concurrent_swap_has_one_winner_and_never_partial_state() -> 
     assert len(successes) == 1
     assert len(conflicts) == 1
     state = repository.snapshot()
-    assert set(state["artifacts"]) in ({"stmt-base", "stmt-a"}, {"stmt-base", "stmt-b"})
+    assert set(state.get("artifacts", {})) in ({"stmt-base", "stmt-a"}, {"stmt-base", "stmt-b"})
     assert set(state) == {"state_generation", "artifacts"}
 
 
 def test_repository_rejects_duplicate_wrong_and_missing_inputs() -> None:
-    artifact = accepted_artifact()
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
     with pytest_raises(ConflictError, match="duplicate"):
         normalize_repository_state((artifact, artifact))
     with pytest_raises(InvalidRequestError):
@@ -232,127 +385,276 @@ def test_repository_rejects_duplicate_wrong_and_missing_inputs() -> None:
 
 
 def test_dynamic_admission_below_capacity_changes_no_existing_residency() -> None:
-    existing = accepted_artifact("stmt-existing")
-    incoming = accepted_artifact("stmt-incoming")
+    existing = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-existing",
+            "response": "Exact response for stmt-existing.",
+            "query_identity": extract_standalone_identity("Question for stmt-existing?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-existing?", ("Alias for stmt-existing",)),
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-incoming",
+            "response": "Exact response for stmt-incoming.",
+            "query_identity": extract_standalone_identity("Question for stmt-incoming?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-incoming?", ("Alias for stmt-incoming",)),
+        }
+    )
     repository = ArtifactRepository((existing,))
     plan = repository.plan_admission(incoming, tier_admission_policy(2))
+    candidate = plan.get("candidate", {})
 
-    assert plan["outcome"] == AdmissionOutcome.ADMITTED
-    assert plan["candidate"]["state_generation"] == 2
-    assert plan["admitted_statement_id"] == "stmt-incoming"
-    assert plan["evicted_statement_ids"] == ()
-    assert plan["residency_changed"] is True
-    assert plan["lifecycle_changed"] is False
-    assert set(plan["candidate"]["artifacts"]) == {"stmt-existing", "stmt-incoming"}
-    assert existing["lifecycle"] == LifecycleState.ACTIVE
+    assert plan.keys() == PLAN_FIELDS
+    assert plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY) == AdmissionOutcome.ADMITTED
+    assert candidate.get("state_generation", 0) == 2
+    assert plan.get("admitted_statement_id", "") == "stmt-incoming"
+    assert plan.get("evicted_statement_ids", ()) == ()
+    assert plan.get("residency_changed", False) is True
+    assert plan.get("lifecycle_changed", False) is False
+    assert set(candidate.get("artifacts", {})) == {"stmt-existing", "stmt-incoming"}
+    assert existing.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
 
 
 def test_static_admission_never_consumes_or_evicts_dynamic_capacity() -> None:
-    dynamic = accepted_artifact("stmt-dynamic")
-    incoming = accepted_artifact("stmt-static", tier=Tier.STATIC)
+    dynamic = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-dynamic",
+            "response": "Exact response for stmt-dynamic.",
+            "query_identity": extract_standalone_identity("Question for stmt-dynamic?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-dynamic?", ("Alias for stmt-dynamic",)),
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-static",
+            "response": "Exact response for stmt-static.",
+            "query_identity": extract_standalone_identity("Question for stmt-static?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-static?", ("Alias for stmt-static",)),
+            "tier": Tier.STATIC,
+        }
+    )
     repository = ArtifactRepository((dynamic,))
 
     plan = repository.plan_admission(incoming, tier_admission_policy(1))
 
-    assert plan["outcome"] == AdmissionOutcome.ADMITTED
-    assert plan["evicted_statement_ids"] == ()
-    assert set(plan["candidate"]["artifacts"]) == {"stmt-dynamic", "stmt-static"}
+    assert plan.keys() == PLAN_FIELDS
+    assert plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY) == AdmissionOutcome.ADMITTED
+    assert plan.get("evicted_statement_ids", ()) == ()
+    assert set(plan.get("candidate", {}).get("artifacts", {})) == {"stmt-dynamic", "stmt-static"}
 
 
 def test_frequently_used_dynamic_artifact_remains_lru_evictable() -> None:
-    existing = accepted_artifact(
-        "stmt-existing",
-        statistics=artifact_statistics(10, 10, "2026-08-12T17:00:00Z", True),
+    existing = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-existing",
+            "response": "Exact response for stmt-existing.",
+            "query_identity": extract_standalone_identity("Question for stmt-existing?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-existing?", ("Alias for stmt-existing",)),
+            "statistics": {"hit_count": 10, "query_count": 10, "last_hit": "2026-08-12T17:00:00Z", "last_hit_available": True},
+        }
     )
-    incoming = accepted_artifact("stmt-incoming")
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-incoming",
+            "response": "Exact response for stmt-incoming.",
+            "query_identity": extract_standalone_identity("Question for stmt-incoming?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-incoming?", ("Alias for stmt-incoming",)),
+        }
+    )
     repository = ArtifactRepository((existing,))
 
     plan = repository.plan_admission(incoming, tier_admission_policy(1))
 
-    assert plan["outcome"] == AdmissionOutcome.ADMITTED_WITH_EVICTION
-    assert plan["evicted_statement_ids"] == ("stmt-existing",)
+    assert plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY) == AdmissionOutcome.ADMITTED_WITH_EVICTION
+    assert plan.get("evicted_statement_ids", ()) == ("stmt-existing",)
 
 
 def test_unqueried_default_hit_rate_never_protects_dynamic_artifact() -> None:
-    untouched = accepted_artifact("stmt-untouched", statistics=artifact_statistics())
+    untouched = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-untouched",
+            "response": "Exact response for stmt-untouched.",
+            "query_identity": extract_standalone_identity("Question for stmt-untouched?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-untouched?", ("Alias for stmt-untouched",)),
+            "statistics": INITIAL_ARTIFACT_STATISTICS,
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-incoming",
+            "response": "Exact response for stmt-incoming.",
+            "query_identity": extract_standalone_identity("Question for stmt-incoming?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-incoming?", ("Alias for stmt-incoming",)),
+        }
+    )
     repository = ArtifactRepository((untouched,))
 
-    plan = repository.plan_admission(
-        accepted_artifact("stmt-incoming"),
-        tier_admission_policy(1),
-    )
+    plan = repository.plan_admission(incoming, tier_admission_policy(1))
 
-    assert plan["outcome"] == AdmissionOutcome.ADMITTED_WITH_EVICTION
-    assert plan["evicted_statement_ids"] == ("stmt-untouched",)
+    assert plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY) == AdmissionOutcome.ADMITTED_WITH_EVICTION
+    assert plan.get("evicted_statement_ids", ()) == ("stmt-untouched",)
 
 
 @pytest_mark.parametrize(
     ("first_statistics", "second_statistics", "expected_victim"),
     [
         (
-            artifact_statistics(1, 1, "2026-08-12T18:00:00Z", True),
-            artifact_statistics(),
+            {"hit_count": 1, "query_count": 1, "last_hit": "2026-08-12T18:00:00Z", "last_hit_available": True},
+            INITIAL_ARTIFACT_STATISTICS,
             "stmt-second",
         ),
-        (artifact_statistics(), artifact_statistics(), "stmt-first"),
+        (INITIAL_ARTIFACT_STATISTICS, INITIAL_ARTIFACT_STATISTICS, "stmt-first"),
     ],
 )
 def test_dynamic_lru_selects_expected_victim(first_statistics, second_statistics, expected_victim) -> None:
-    first = accepted_artifact(
-        "stmt-first",
-        provenance=artifact_provenance("test", "caller", "2026-08-12T16:00:00Z"),
-        statistics=first_statistics,
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-first",
+            "response": "Exact response for stmt-first.",
+            "query_identity": extract_standalone_identity("Question for stmt-first?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-first?", ("Alias for stmt-first",)),
+            "provenance": {"source_label": "test", "caller_id": "caller", "accepted_at": "2026-08-12T16:00:00Z"},
+            "statistics": first_statistics,
+        }
     )
-    second = accepted_artifact(
-        "stmt-second",
-        provenance=artifact_provenance("test", "caller", "2026-08-12T17:00:00Z"),
-        statistics=second_statistics,
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-second",
+            "response": "Exact response for stmt-second.",
+            "query_identity": extract_standalone_identity("Question for stmt-second?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-second?", ("Alias for stmt-second",)),
+            "provenance": {"source_label": "test", "caller_id": "caller", "accepted_at": "2026-08-12T17:00:00Z"},
+            "statistics": second_statistics,
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-new",
+            "response": "Exact response for stmt-new.",
+            "query_identity": extract_standalone_identity("Question for stmt-new?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-new?", ("Alias for stmt-new",)),
+        }
     )
     repository = ArtifactRepository((first, second))
 
-    plan = repository.plan_admission(accepted_artifact("stmt-new"), tier_admission_policy(2))
+    plan = repository.plan_admission(incoming, tier_admission_policy(2))
+    candidate_artifacts = plan.get("candidate", {}).get("artifacts", {})
 
-    assert plan["outcome"] == AdmissionOutcome.ADMITTED_WITH_EVICTION
-    assert plan["evicted_statement_ids"] == (expected_victim,)
-    assert expected_victim not in plan["candidate"]["artifacts"]
-    assert set(plan["candidate"]["artifacts"]) == ({"stmt-first", "stmt-second", "stmt-new"} - {expected_victim})
+    assert plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY) == AdmissionOutcome.ADMITTED_WITH_EVICTION
+    assert plan.get("evicted_statement_ids", ()) == (expected_victim,)
+    assert expected_victim not in candidate_artifacts
+    assert set(candidate_artifacts) == ({"stmt-first", "stmt-second", "stmt-new"} - {expected_victim})
 
 
 def test_preloaded_over_capacity_state_evicts_enough_unprotected_victims() -> None:
-    artifacts = tuple(accepted_artifact(f"stmt-{position}") for position in range(4))
+    artifacts = tuple(
+        validate_cached_response_artifact(
+            {
+                **REPOSITORY_ARTIFACT_FIELDS,
+                "statement_id": f"stmt-{position}",
+                "response": f"Exact response for stmt-{position}.",
+                "query_identity": extract_standalone_identity(f"Question for stmt-{position}?", TENANT_A_SCOPE),
+                "retrieval": retrieval_representation(f"Question for stmt-{position}?", (f"Alias for stmt-{position}",)),
+            }
+        )
+        for position in range(4)
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-new",
+            "response": "Exact response for stmt-new.",
+            "query_identity": extract_standalone_identity("Question for stmt-new?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-new?", ("Alias for stmt-new",)),
+        }
+    )
     repository = ArtifactRepository(artifacts)
 
-    plan = repository.plan_admission(accepted_artifact("stmt-new"), tier_admission_policy(2))
+    plan = repository.plan_admission(incoming, tier_admission_policy(2))
+    candidate_artifacts = plan.get("candidate", {}).get("artifacts", {})
+    dynamic_ids = [
+        statement_id
+        for statement_id, artifact in candidate_artifacts.items()
+        if artifact.get("tier", Tier.STATIC) == Tier.DYNAMIC
+    ]
 
-    assert plan["evicted_statement_ids"] == ("stmt-0", "stmt-1", "stmt-2")
-    assert len([artifact for artifact in plan["candidate"]["artifacts"].values() if artifact["tier"] == Tier.DYNAMIC]) == 2
-    assert plan["candidate"]["artifacts"]["stmt-3"]["lifecycle"] == LifecycleState.ACTIVE
+    assert plan.get("evicted_statement_ids", ()) == ("stmt-0", "stmt-1", "stmt-2")
+    assert len(dynamic_ids) == 2
+    assert candidate_artifacts.get("stmt-3", {}).get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
 
 
 def test_admission_across_namespaces_does_not_change_lifecycle() -> None:
     old_scope = scope_key(namespace="tenant-old")
     new_scope = scope_key(namespace="tenant-new")
-    old = accepted_artifact("stmt-old", scope=old_scope)
-    incoming = accepted_artifact("stmt-new", scope=new_scope)
+    old = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-old",
+            "response": "Exact response for stmt-old.",
+            "query_identity": extract_standalone_identity("Question for stmt-old?", old_scope),
+            "retrieval": retrieval_representation("Question for stmt-old?", ("Alias for stmt-old",)),
+            "scope": old_scope,
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-new",
+            "response": "Exact response for stmt-new.",
+            "query_identity": extract_standalone_identity("Question for stmt-new?", new_scope),
+            "retrieval": retrieval_representation("Question for stmt-new?", ("Alias for stmt-new",)),
+            "scope": new_scope,
+        }
+    )
     repository = ArtifactRepository((old,))
 
     plan = repository.plan_admission(incoming, tier_admission_policy(1))
 
-    assert plan["lifecycle_changed"] is False
-    assert old["lifecycle"] == LifecycleState.ACTIVE
-    assert incoming["lifecycle"] == LifecycleState.ACTIVE
+    assert plan.keys() == PLAN_FIELDS
+    assert plan.get("lifecycle_changed", False) is False
+    assert old.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
+    assert incoming.get("lifecycle", LifecycleState.RETIRED) == LifecycleState.ACTIVE
 
 
 def test_admission_candidate_publishes_only_artifacts() -> None:
-    old = accepted_artifact("stmt-old")
+    old = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-old",
+            "response": "Exact response for stmt-old.",
+            "query_identity": extract_standalone_identity("Question for stmt-old?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-old?", ("Alias for stmt-old",)),
+        }
+    )
+    incoming = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-new",
+            "response": "Exact response for stmt-new.",
+            "query_identity": extract_standalone_identity("Question for stmt-new?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-new?", ("Alias for stmt-new",)),
+        }
+    )
     repository = ArtifactRepository((old,))
     before = repository.snapshot()
-    plan = repository.plan_admission(accepted_artifact("stmt-new"), tier_admission_policy(1))
+    plan = repository.plan_admission(incoming, tier_admission_policy(1))
 
-    repository.atomic_replace(plan["candidate"], before["state_generation"])
+    repository.atomic_replace(plan.get("candidate", {}), before.get("state_generation", 0))
 
     state = repository.snapshot()
-    assert set(state["artifacts"]) == {"stmt-new"}
+    assert set(state.get("artifacts", {})) == {"stmt-new"}
     assert set(state) == {"state_generation", "artifacts"}
 
 
@@ -364,9 +666,27 @@ def test_admission_candidate_publishes_only_artifacts() -> None:
     ],
 )
 def test_admission_rejects_collision_and_wrong_policy_type(policy, message) -> None:
-    artifact = accepted_artifact()
+    artifact = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
+    )
     repository = ArtifactRepository((artifact,))
-    incoming = artifact if isinstance(policy, dict) else accepted_artifact("stmt-new")
+    incoming = artifact
+    if not isinstance(policy, dict):
+        incoming = validate_cached_response_artifact(
+            {
+                **REPOSITORY_ARTIFACT_FIELDS,
+                "statement_id": "stmt-new",
+                "response": "Exact response for stmt-new.",
+                "query_identity": extract_standalone_identity("Question for stmt-new?", TENANT_A_SCOPE),
+                "retrieval": retrieval_representation("Question for stmt-new?", ("Alias for stmt-new",)),
+            }
+        )
     with pytest_raises((ConflictError, InvalidRequestError), match=message):
         repository.plan_admission(incoming, policy)
 
@@ -384,37 +704,78 @@ def test_tier_admission_policy_rejects_invalid_bounds(args, message) -> None:
 
 
 def test_exact_key_index_follows_every_state_change_and_matches_a_full_scan() -> None:
-    from engram.eligibility import ContextualExactLookup
-
     shared = "Shared question?"
-    repository = ArtifactRepository(
-        (
-            accepted_artifact("stmt-1"),
-            accepted_artifact("stmt-2", request=shared),
-            accepted_artifact("stmt-3"),
-        )
+    first = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("Alias for stmt-1",)),
+        }
     )
-    before = repository.snapshot()
-    added = repository.candidate_with_artifact(accepted_artifact("stmt-4", request=shared))
-    repository.atomic_replace(added, before["state_generation"])
-    updated = accepted_artifact("stmt-1", request="Question for stmt-1 changed?", generation=2)
-    repository.atomic_replace(repository.candidate_with_artifacts((updated,)), before["state_generation"] + 1)
+    second = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-2",
+            "response": "Exact response for stmt-2.",
+            "query_identity": extract_standalone_identity(shared, TENANT_A_SCOPE),
+            "retrieval": retrieval_representation(shared, ("Alias for stmt-2",)),
+        }
+    )
+    third = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-3",
+            "response": "Exact response for stmt-3.",
+            "query_identity": extract_standalone_identity("Question for stmt-3?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-3?", ("Alias for stmt-3",)),
+        }
+    )
+    fourth = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-4",
+            "response": "Exact response for stmt-4.",
+            "query_identity": extract_standalone_identity(shared, TENANT_A_SCOPE),
+            "retrieval": retrieval_representation(shared, ("Alias for stmt-4",)),
+        }
+    )
+    updated = validate_cached_response_artifact(
+        {
+            **REPOSITORY_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "response": "Exact response for stmt-1.",
+            "query_identity": extract_standalone_identity("Question for stmt-1 changed?", TENANT_A_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1 changed?", ("Alias for stmt-1",)),
+            "generation": 2,
+        }
+    )
+    repository = ArtifactRepository((first, second, third))
+    before_generation = repository.snapshot().get("state_generation", 0)
+    assert before_generation == 1
+    added = repository.candidate_with_artifact(fourth)
+    repository.atomic_replace(added, before_generation)
+    repository.atomic_replace(repository.candidate_with_artifacts((updated,)), before_generation + 1)
     removed = repository.candidate_without_artifact("stmt-3", 1, RepositoryRemovalReason.EXPLICIT_DELETE)
-    repository.atomic_replace(removed, before["state_generation"] + 2)
+    repository.atomic_replace(removed, before_generation + 2)
     rolled_back_to = repository.snapshot()
     repository.atomic_replace(
         repository.candidate_without_artifact("stmt-2", 1, RepositoryRemovalReason.EXPLICIT_DELETE),
-        rolled_back_to["state_generation"],
+        rolled_back_to.get("state_generation", 0),
     )
     repository.restore_state(rolled_back_to)
 
-    rebuilt = ArtifactRepository(tuple(repository.snapshot()["artifacts"].values()))
+    rebuilt = ArtifactRepository(tuple(repository.snapshot().get("artifacts", {}).values()))
     assert repository.internal_key_owners == rebuilt.internal_key_owners
     assert repository.internal_dynamic_ids == rebuilt.internal_dynamic_ids
     requests = (shared, "Question for stmt-1?", "Question for stmt-1 changed?", "Question for stmt-3?", "Alias for stmt-4")
     for request in requests:
-        key = build_scoped_retrieval_key(scope_key(namespace="tenant-a"), request)
-        scanned = ContextualExactLookup(repository.trusted_artifacts(), trusted_artifacts=True).exact_lookup(key, context())
-        assert repository.exact_lookup(key, context()) == scanned
-    shared_key = build_scoped_retrieval_key(scope_key(namespace="tenant-a"), shared)
-    assert repository.exact_lookup(shared_key, context())["lookup"]["outcome"] == ExactLookupOutcome.COLLISION
+        key = scoped_retrieval_key_from_text(TENANT_A_SCOPE, request)
+        scanned = ContextualExactLookup(repository.trusted_artifacts(), trusted_artifacts=True).exact_lookup(
+            key, eligibility_context(**LOOKUP_CONTEXT_VALUES)
+        )
+        assert repository.exact_lookup(key, eligibility_context(**LOOKUP_CONTEXT_VALUES)) == scanned
+    shared_key = scoped_retrieval_key_from_text(TENANT_A_SCOPE, shared)
+    shared_lookup = repository.exact_lookup(shared_key, eligibility_context(**LOOKUP_CONTEXT_VALUES)).get("lookup", {})
+    assert shared_lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.COLLISION

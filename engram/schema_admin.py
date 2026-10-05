@@ -1,7 +1,5 @@
 """Engram schema installation and graph compatibility checks."""
 
-from importlib.resources.abc import Traversable
-
 from engram.schema_catalog import (
     compare_catalogs,
     cypher_statements,
@@ -41,7 +39,7 @@ def read_graph_shape(connection) -> dict:
     return result
 
 
-def verify_schema(connection, schema_path: Traversable) -> dict:
+def verify_schema(connection, schema_path) -> dict:
     """Check that the graph has every definition Engram's schema needs.
 
     Extra definitions are fine: the graph may serve a larger schema.
@@ -55,7 +53,7 @@ def verify_schema(connection, schema_path: Traversable) -> dict:
     return result
 
 
-def install_schema(connection, schema_path: Traversable) -> dict:
+def install_schema(connection, schema_path) -> dict:
     """Install Engram's schema on an empty graph, or confirm a compatible one."""
     text = schema_path.read_text(encoding="utf-8")
     validate_schema_contract(text)

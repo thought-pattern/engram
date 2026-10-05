@@ -2,6 +2,7 @@
 
 from bisect import bisect_left
 from concurrent.futures import CancelledError
+from copy import deepcopy
 from datetime import UTC, datetime
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
@@ -16,6 +17,10 @@ from sentence_transformers import SentenceTransformer
 from engram import eviction as eviction_mod, sessions as sessions_mod
 from engram.config import engram_config
 from engram.constants import (
+    DEFAULT_CONTRACTIONS,
+    DEFAULT_GENDER,
+    DEFAULT_PERSON,
+    DEFAULT_PERSON2,
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_EMOTION,
     DIALOGUE_OPINION,
@@ -79,10 +84,10 @@ from engram.reranking import TransparentLogisticReranker
 from engram.resources import estimate_working_bytes, require_working_memory
 from engram.scoring import score_statement_components
 from engram.semantic import StandaloneSemanticRetriever
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 from engram.sparse import SparseIndex, search_sparse_artifacts
-from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences, substitution_maps
-from engram.telemetry import operational_telemetry, record_graph_recall, telemetry_snapshot
+from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences
+from engram.telemetry import EMPTY_OPERATIONAL_TELEMETRY, record_graph_recall, telemetry_snapshot
 from engram.template import TemplateProcessor, template_context
 from engram.text import (
     correct_spelling,
@@ -449,7 +454,14 @@ class Engram:
             use_lemmatization=self.config.get("use_lemmatization", False),
             use_spacy_lemmatization=self.config.get("use_spacy_lemmatization", False),
         )
-        self.substitution_maps = substitution_maps()
+        # Copies of the authored maps, so a loaded substitution file never edits the shared defaults.
+        self.substitution_maps = {
+            "contractions": dict(DEFAULT_CONTRACTIONS),
+            "person": dict(DEFAULT_PERSON),
+            "person2": dict(DEFAULT_PERSON2),
+            "gender": dict(DEFAULT_GENDER),
+            "custom": {},
+        }
         self.default_predicates: dict[str, str] = {}
 
         # Template processor
@@ -480,7 +492,7 @@ class Engram:
         self.query_count = 0
         self.hit_count = 0
         self.eviction_count = 0
-        self.operational_metrics = operational_telemetry()
+        self.operational_metrics = deepcopy(EMPTY_OPERATIONAL_TELEMETRY)
 
         # Reject a missing file or a repeated pattern before opening a graph
         # connection and before any statement is stored. Tables load first so
@@ -561,9 +573,9 @@ class Engram:
                 vector_ready = self.warm_vector_recall()
             except Exception as error:
                 logger.warning("Optional graph vector recall is unavailable", exc_info=error)
-        if spacy_full_enabled and not get_nlp():
+        if spacy_full_enabled and not SPACY_PIPELINES.pipeline():
             raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
-        spacy_ready = bool(get_nlp()) if spacy_full_enabled or spacy_phrasing_enabled else False
+        spacy_ready = bool(SPACY_PIPELINES.pipeline()) if spacy_full_enabled or spacy_phrasing_enabled else False
 
         result = {
             "nltk": {"enabled": True, "ready": True},
@@ -1211,10 +1223,10 @@ class Engram:
                 for registered_pattern in [pattern, *aliases]:
                     self.pattern_statements.setdefault(registered_pattern, []).append(stmt_id)
             for kw in keywords:
-                if kw not in self.keywords:
-                    self.keywords[kw] = {"keyword": kw, "statement_ids": set(), "query_count": 0, "hit_count": 0}
-                keyword_entry = self.keywords.get(kw, {})
-                keyword_entry.get("statement_ids", set()).add(stmt_id)
+                keyword_entry = self.keywords.setdefault(
+                    kw, {"keyword": kw, "statement_ids": set(), "query_count": 0, "hit_count": 0}
+                )
+                keyword_entry.setdefault("statement_ids", set()).add(stmt_id)
 
         result = stmt_id
         return result
@@ -1846,12 +1858,12 @@ class Engram:
                 diagnostic = {
                     "text": fact.get("original", sentence),
                     "subject": fact.get("subject", ""),
-                    "admitted": decision["admitted"],
-                    "reason": decision["reason"],
+                    "admitted": decision.get("admitted", False),
+                    "reason": decision.get("reason", ""),
                 }
                 fact_decisions.append((fact, decision))
                 turn_fact_admissions.append(diagnostic)
-            admitted_facts = [fact for fact, decision in fact_decisions if decision["admitted"]]
+            admitted_facts = [fact for fact, decision in fact_decisions if decision.get("admitted", False)]
 
             prior_topic = active_topic
             sentence_act = classify_dialogue_act(sentence, extracted_facts[0] if extracted_facts else {})
@@ -1894,8 +1906,8 @@ class Engram:
                 # it again would apply a custom substitution twice.
                 result = self.pattern_matcher.match(
                     sentence,
-                    that=self._expand_for_match(that),
-                    topic=self._expand_for_match(topic),
+                    that=self.expand_for_match(that),
+                    topic=self.expand_for_match(topic),
                 )
 
             # Fact admission belongs to the observed user turn, not to the
@@ -1924,7 +1936,7 @@ class Engram:
                 # Among duplicates the highest priority wins, ties going to
                 # the earliest stored.
                 with self.mutation_lock, self.statement_lock:
-                    selected = self._statement_for_match(matched_pattern, matched_topic, matched_that)
+                    selected = self.statement_for_match(matched_pattern, matched_topic, matched_that)
                     if selected:
                         # Pattern selection is a query and a hit in one step
                         # (there is no later confirmation on this path), so
@@ -1949,7 +1961,7 @@ class Engram:
                         # authored text. Text that rendered exactly as authored
                         # is kept, so code such as "s[1:4]" or "pop()" survives.
                         authored = selected.get("template", {}) or selected.get("text", "")
-                        if self.config["polish_responses"] and final_response != authored:
+                        if self.config.get("polish_responses", False) and final_response != authored:
                             final_response = polish_response(final_response)
                         responses.append(final_response)
                         candidates.append(
@@ -1977,12 +1989,13 @@ class Engram:
                 graph_result_tuple = ({}, [], graph_response)
                 return graph_result_tuple
 
-            if self.config["fallback_response"]:
+            fallback_response = self.config.get("fallback_response", "")
+            if fallback_response:
                 if session:
                     with self.session_lock:
                         session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
-                        session_update_context(session, self.config["fallback_response"], text)
-                fallback_tuple = ({}, [], self.config["fallback_response"])
+                        session_update_context(session, fallback_response, text)
+                fallback_tuple = ({}, [], fallback_response)
                 return fallback_tuple
             if session:
                 with self.session_lock:
@@ -1993,14 +2006,14 @@ class Engram:
 
         selected_candidate = select_turn_candidate(candidates)
         combined_response = " ".join(responses)
-        returned_stmt = candidates[-1]["statement"]
-        returned_captured = candidates[-1]["captured"]
+        returned_stmt = candidates[-1].get("statement", {})
+        returned_captured = candidates[-1].get("captured", [])
 
         # A successful learned-fact recall is direct evidence of the new
         # topic, even when the query used an inverse alias such as
         # "What is good?" -> Sushi.
-        if returned_stmt.get("pattern_aliases"):
-            recalled_topic = topic_from_statement_pattern(returned_stmt["pattern"], returned_stmt.get("text", ""))
+        if returned_stmt.get("pattern_aliases", []):
+            recalled_topic = topic_from_statement_pattern(returned_stmt.get("pattern", ""), returned_stmt.get("text", ""))
             if recalled_topic:
                 active_topic = recalled_topic
 
@@ -2008,7 +2021,7 @@ class Engram:
             with self.session_lock:
                 session_update_dialogue(
                     session,
-                    selected_candidate["dialogue_act"],
+                    selected_candidate.get("dialogue_act", ""),
                     active_topic,
                     turn_entities,
                     turn_fact_admissions,
@@ -2052,9 +2065,9 @@ class Engram:
             request_text=input_text,
             bot=self.bot_properties,
             maps=self.maps,
-            person_subs=self.substitution_maps["person"],
-            person2_subs=self.substitution_maps["person2"],
-            gender_subs=self.substitution_maps["gender"],
+            person_subs=self.substitution_maps.get("person", {}),
+            person2_subs=self.substitution_maps.get("person2", {}),
+            gender_subs=self.substitution_maps.get("gender", {}),
             category_count=len(self.statements),
             graph_fn=self.graph_read_fn,
             evaluation_time=evaluation_time,
@@ -2062,18 +2075,18 @@ class Engram:
 
         if session:
             with self.session_lock:
-                context["session_id"] = session["session_id"]
-                context["predicates"] = session["predicates"].copy()
-                context["input_history"] = session["input_history"].copy()
-                context["response_history"] = session["response_history"].copy()
-                context["that_history"] = [s.copy() for s in session["that_history"]]
+                context["session_id"] = session.get("session_id", "")
+                context["predicates"] = session.get("predicates", {}).copy()
+                context["input_history"] = session.get("input_history", []).copy()
+                context["response_history"] = session.get("response_history", []).copy()
+                context["that_history"] = [s.copy() for s in session.get("that_history", [])]
 
         def redirect_fn(pattern: str) -> str:
             with self.statement_lock:
                 result = self.pattern_matcher.match(
-                    self._expand_for_match(pattern),
-                    that=self._expand_for_match(that),
-                    topic=self._expand_for_match(topic),
+                    self.expand_for_match(pattern),
+                    that=self.expand_for_match(that),
+                    topic=self.expand_for_match(topic),
                 )
             if result:
                 (
@@ -2086,7 +2099,7 @@ class Engram:
                     matched_that,
                 ) = result
                 with self.mutation_lock, self.statement_lock:
-                    redirect_stmt = self._statement_for_match(matched_pattern, matched_topic, matched_that)
+                    redirect_stmt = self.statement_for_match(matched_pattern, matched_topic, matched_that)
                     if redirect_stmt:
                         new_context = template_context(
                             stars=new_captured,
@@ -2094,19 +2107,19 @@ class Engram:
                             topicstars=new_topicstars,
                             input_text=pattern,
                             request_text=input_text,
-                            bot=context["bot"],
-                            maps=context["maps"],
-                            person_subs=context["person_subs"],
-                            person2_subs=context["person2_subs"],
-                            gender_subs=context["gender_subs"],
-                            predicates=context["predicates"],
-                            input_history=context["input_history"],
-                            response_history=context["response_history"],
-                            that_history=context["that_history"],
-                            session_id=context["session_id"],
-                            category_count=context["category_count"],
+                            bot=context.get("bot", {}),
+                            maps=context.get("maps", {}),
+                            person_subs=context.get("person_subs", {}),
+                            person2_subs=context.get("person2_subs", {}),
+                            gender_subs=context.get("gender_subs", {}),
+                            predicates=context.get("predicates", {}),
+                            input_history=context.get("input_history", []),
+                            response_history=context.get("response_history", []),
+                            that_history=context.get("that_history", []),
+                            session_id=context.get("session_id", ""),
+                            category_count=context.get("category_count", 0),
                             redirect_fn=redirect_fn,
-                            learn_fn=context["learn_fn"],
+                            learn_fn=context.get("learn_fn", ()),
                             graph_fn=self.graph_read_fn,
                             evaluation_time=context.get("evaluation_time", ""),
                         )
@@ -2128,18 +2141,23 @@ class Engram:
             )
             if too_long:
                 logger.info("Not learning a pattern longer than %d words", MAX_PATTERN_WORDS)
-                return
-            if pattern:
+            elif pattern:
+                # A statement keeps plain text as its text and structure as a
+                # template object; a taught sequence becomes a sequence template.
                 text = ""
-                if isinstance(template, dict) and "text" in template:
-                    text = template["text"]
+                structured_template = {}
+                if isinstance(template, dict):
+                    text = template.get("text", "")
+                    structured_template = template
+                elif isinstance(template, list):
+                    structured_template = {"sequence": template}
                 elif isinstance(template, str):
                     text = template
                 # An explicit teaching replaces what was learned before on this path.
                 self.store(
                     text=text,
                     pattern=pattern,
-                    template=template,
+                    template=structured_template,
                     that=learn_data.get("that", ""),
                     topic=learn_data.get("topic", ""),
                     tier=Tier.DYNAMIC,
@@ -2154,12 +2172,13 @@ class Engram:
         # Synchronize public predicates and remove template-local scratch keys.
         if session:
             with self.session_lock:
-                for name, value in context["predicates"].items():
+                session_predicates = session.setdefault("predicates", {})
+                for name, value in context.get("predicates", {}).items():
                     if not name.startswith("_"):
-                        session["predicates"][name] = value
-                leaked_scratch = [name for name in session["predicates"] if name.startswith("_")]
+                        session_predicates[name] = value
+                leaked_scratch = [name for name in session_predicates if name.startswith("_")]
                 for name in leaked_scratch:
-                    del session["predicates"][name]
+                    del session_predicates[name]
 
         return response
 
@@ -2177,11 +2196,12 @@ class Engram:
         with self.keyword_lock:
             for kw in keywords:
                 if kw in self.keywords:
-                    self.keywords[kw]["hit_count"] += 1
+                    entry = self.keywords.get(kw, {})
+                    entry["hit_count"] = entry.get("hit_count", 0) + 1
         if statement_id:
             with self.statement_lock:
                 if statement_id in self.statement_by_id:
-                    record_statement_hit(self.statement_by_id[statement_id])
+                    record_statement_hit(self.statement_by_id.get(statement_id, {}))
 
     def learn_fact(
         self,
@@ -2222,15 +2242,15 @@ class Engram:
             return result
         with self.mutation_lock, self.statement_lock:
             for statement_id in self.pattern_statements.get(subject_pattern, ()):
-                existing = self.statement_by_id[statement_id]
-                if existing["pattern"] != subject_pattern:
+                existing = self.statement_by_id.get(statement_id, {})
+                if existing.get("pattern", "") != subject_pattern:
                     continue
                 # Restating a fact changes nothing, and only a learned fact about
                 # this subject is replaced: never a seed or hand-stored statement.
                 if (
-                    existing["tier"] != Tier.DYNAMIC
-                    or existing["text"] == fact.get("original", "")
-                    or subject_pattern not in self.fact_subject_patterns(existing["text"])
+                    existing.get("tier", Tier.STATIC) != Tier.DYNAMIC
+                    or existing.get("text", "") == fact.get("original", "")
+                    or subject_pattern not in self.fact_subject_patterns(existing.get("text", ""))
                 ):
                     result = False
                     return result
@@ -2271,7 +2291,7 @@ class Engram:
 
     def fact_subject_patterns(self, text: str) -> set[str]:
         """Return the subject patterns of the facts extracted from ``text``, as learning would."""
-        facts = extract_facts(text) if self.config["use_spacy_facts"] else []
+        facts = extract_facts(text) if self.config.get("use_spacy_facts", False) else []
         if not facts:
             fact = extract_fact(text)
             facts = [fact] if fact else []
@@ -2296,7 +2316,7 @@ class Engram:
             raise InvalidRequestError("source_label must be a string")
 
         fact_text = text.strip()
-        facts = extract_facts(fact_text) if self.config["use_spacy_facts"] else []
+        facts = extract_facts(fact_text) if self.config.get("use_spacy_facts", False) else []
         if not facts:
             fact = extract_fact(fact_text)
             facts = [fact] if fact else []
@@ -2317,8 +2337,8 @@ class Engram:
         normalized_text = normalize(fact_text)
         with self.statement_lock:
             for stmt in self.statements:
-                if not stmt["pattern"] and normalize(stmt["text"]) == normalized_text:
-                    result = stmt["id"]
+                if not stmt.get("pattern", "") and normalize(stmt.get("text", "")) == normalized_text:
+                    result = stmt.get("id", "")
                     return result
 
         result = self.store(
@@ -2339,10 +2359,7 @@ class Engram:
             Statement dict if found, {} otherwise.
         """
         with self.statement_lock:
-            if statement_id in self.statement_by_id:
-                result = self.statement_by_id[statement_id]
-                return result
-        result = {}
+            result = self.statement_by_id.get(statement_id, {})
         return result
 
     def retire_statement(self, statement_id: str) -> bool:

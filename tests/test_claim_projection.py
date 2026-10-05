@@ -17,42 +17,48 @@ from engram.graph import (
     validate_proposition_projection,
 )
 
+# Read-only graph rows: every use copies them before handing them to a fake driver or mutating them.
+STRUCTURED_PROPOSITION_ROW = {
+    "proposition_id": "proposition:01J5M6Q9J8",
+    "subject_entity_id": "entity:alan-turing",
+    "predicate_id": "predicate:birth-date",
+    "object_entity_id": "entity:1912-06-23",
+    "polarity": "positive",
+    "modality_family": "none",
+    "modality_operator": "none",
+    "argument_count": 2,
+    "qualification_count": 0,
+    "context_count": 0,
+    "applicability_count": 0,
+    "invalidated_at": "",
+    "invalidated_at_available": False,
+    "system_from": "2026-08-01T00:00:00Z",
+    "system_from_available": True,
+    "system_to": "",
+    "system_to_available": False,
+    "valid_from": "1912-06-23T00:00:00Z",
+    "valid_from_available": True,
+    "valid_to": "",
+    "valid_to_available": False,
+    "predicate_canonical": True,
+    "ownership_category": "PUBLIC",
+    "trust_category": "verified_public",
+    "trust_category_available": True,
+    "supplied_trust": 0.84,
+    "supplied_trust_available": True,
+    "structured_match": 1.0,
+    "structured_match_available": True,
+    "semantic_similarity": 0.0,
+    "semantic_similarity_available": False,
+}
 
-def internal_row(*, semantic: bool = False) -> dict[str, object]:
-    result = {
-        "proposition_id": "proposition:01J5M6Q9J8",
-        "subject_entity_id": "entity:alan-turing",
-        "predicate_id": "predicate:birth-date",
-        "object_entity_id": "entity:1912-06-23",
-        "polarity": "positive",
-        "modality_family": "none",
-        "modality_operator": "none",
-        "argument_count": 2,
-        "qualification_count": 0,
-        "context_count": 0,
-        "applicability_count": 0,
-        "invalidated_at": "",
-        "invalidated_at_available": False,
-        "system_from": "2026-08-01T00:00:00Z",
-        "system_from_available": True,
-        "system_to": "",
-        "system_to_available": False,
-        "valid_from": "1912-06-23T00:00:00Z",
-        "valid_from_available": True,
-        "valid_to": "",
-        "valid_to_available": False,
-        "predicate_canonical": True,
-        "ownership_category": "PUBLIC",
-        "trust_category": "verified_public",
-        "trust_category_available": True,
-        "supplied_trust": 0.84,
-        "supplied_trust_available": True,
-        "structured_match": 0.0 if semantic else 1.0,
-        "structured_match_available": not semantic,
-        "semantic_similarity": 0.81 if semantic else 0.0,
-        "semantic_similarity_available": semantic,
-    }
-    return result
+SEMANTIC_PROPOSITION_ROW = {
+    **STRUCTURED_PROPOSITION_ROW,
+    "structured_match": 0.0,
+    "structured_match_available": False,
+    "semantic_similarity": 0.81,
+    "semantic_similarity_available": True,
+}
 
 
 def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
@@ -61,7 +67,7 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
         captured.update({"query": query, "parameters": parameters})
-        result = [internal_row()]
+        result = [dict(STRUCTURED_PROPOSITION_ROW)]
         return result
 
     client.execute = execute
@@ -74,11 +80,13 @@ def test_structured_projection_uses_fixed_query_and_safe_exact_fields() -> None:
     assert len(projections) == 1
     projection = projections[0]
     assert type(projection) is dict
-    assert projection["projection_id"] == PropositionProjectionQuery.STRUCTURED_ENTITY
-    assert projection["vector_index_id_available"] is False
-    assert projection["structured_match"] == 1.0
-    assert projection["semantic_similarity_available"] is False
-    assert set(internal_row()) == PROPOSITION_PROJECTION_FIELDS
+    assert projection.get("projection_id", "") == PropositionProjectionQuery.STRUCTURED_ENTITY
+    assert "vector_index_id_available" in projection
+    assert projection.get("vector_index_id_available", False) is False
+    assert projection.get("structured_match", 0.0) == 1.0
+    assert "semantic_similarity_available" in projection
+    assert projection.get("semantic_similarity_available", False) is False
+    assert set(STRUCTURED_PROPOSITION_ROW) == PROPOSITION_PROJECTION_FIELDS
     assert captured.get("parameters", {}) == {"value": "Alan Turing", "limit": 3, **UNCONSTRAINED_ASSERTION_BASIS}
     assert "Alan Turing" not in captured.get("query", "")
     assert "subject.canonical_id AS subject_entity_id" in captured.get("query", "")
@@ -97,7 +105,7 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
         captured.update({"query": query, "parameters": parameters})
-        result = [internal_row(semantic=True)]
+        result = [dict(SEMANTIC_PROPOSITION_ROW)]
         return result
 
     client.execute = execute
@@ -117,11 +125,12 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
     )
 
     projection = projections[0]
-    assert projection["projection_id"] == PropositionProjectionQuery.VECTOR
-    assert projection["vector_index_id"] == "proposition_embeddings"
-    assert projection["vector_index_id_available"] is True
-    assert projection["semantic_similarity"] == pytest_approx(0.81)
-    assert projection["structured_match_available"] is False
+    assert projection.get("projection_id", "") == PropositionProjectionQuery.VECTOR
+    assert projection.get("vector_index_id", "") == "proposition_embeddings"
+    assert projection.get("vector_index_id_available", False) is True
+    assert projection.get("semantic_similarity", 0.0) == pytest_approx(0.81)
+    assert "structured_match_available" in projection
+    assert projection.get("structured_match_available", False) is False
     assert "CALL vector_search.search" in captured.get("query", "")
     assert captured.get("parameters", {}) == {
         "index_name": "proposition_embeddings",
@@ -156,7 +165,7 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
     ],
 )
 def test_projection_decoder_rejects_malformed_or_content_bearing_rows(mutate, message) -> None:
-    row = internal_row()
+    row = dict(STRUCTURED_PROPOSITION_ROW)
     mutate(row)
 
     with pytest_raises(InvalidRequestError, match=message):
@@ -164,7 +173,7 @@ def test_projection_decoder_rejects_malformed_or_content_bearing_rows(mutate, me
 
 
 def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
-    row = internal_row()
+    row = dict(STRUCTURED_PROPOSITION_ROW)
     external_null = json_loads("null")
     for field in ("invalidated_at", "system_to", "valid_to"):
         row[field] = external_null
@@ -179,21 +188,23 @@ def test_projection_decoder_normalizes_external_nulls_at_boundary() -> None:
 
     projection = proposition_projection_from_graph_row(row, PropositionProjectionQuery.STRUCTURED_ENTITY)
 
-    assert projection["invalidated_at"] == projection["system_to"] == projection["valid_to"] == ""
-    assert projection["trust_category"] == ""
-    assert projection["supplied_trust"] == 0.0
+    for field in ("invalidated_at", "system_to", "valid_to", "trust_category", "supplied_trust"):
+        assert field in projection
+    assert projection.get("invalidated_at", "") == projection.get("system_to", "") == projection.get("valid_to", "") == ""
+    assert projection.get("trust_category", "") == ""
+    assert projection.get("supplied_trust", 0.0) == 0.0
     assert "null" not in json_dumps(proposition_projection_to_dict(projection), sort_keys=True)
 
 
 def test_projection_validation_revalidates_and_copies_mutable_records() -> None:
-    source = proposition_projection_from_graph_row(internal_row(), PropositionProjectionQuery.STRUCTURED_ENTITY)
+    source = proposition_projection_from_graph_row(dict(STRUCTURED_PROPOSITION_ROW), PropositionProjectionQuery.STRUCTURED_ENTITY)
     validated = validate_proposition_projection(source)
 
     assert type(validated) is dict
     assert validated == source
     assert validated is not source
     source["proposition_id"] = "proposition:mutated"
-    assert validated["proposition_id"] == "proposition:01J5M6Q9J8"
+    assert validated.get("proposition_id", "") == "proposition:01J5M6Q9J8"
 
     malformed = dict(validated)
     malformed["unexpected"] = "value"
@@ -203,7 +214,7 @@ def test_projection_validation_revalidates_and_copies_mutable_records() -> None:
 
 def test_projection_boundary_deduplicates_identical_rows_and_rejects_conflicts() -> None:
     client = MemGraphConnection()
-    client.execute = lambda query, parameters=(): [internal_row(), deepcopy(internal_row())]
+    client.execute = lambda query, parameters=(): [dict(STRUCTURED_PROPOSITION_ROW), deepcopy(STRUCTURED_PROPOSITION_ROW)]
 
     assert (
         len(
@@ -214,16 +225,16 @@ def test_projection_boundary_deduplicates_identical_rows_and_rejects_conflicts()
         == 1
     )
 
-    conflict = internal_row()
+    conflict = dict(STRUCTURED_PROPOSITION_ROW)
     conflict["object_entity_id"] = "entity:conflict"
-    client.execute = lambda query, parameters=(): [internal_row(), conflict]
+    client.execute = lambda query, parameters=(): [dict(STRUCTURED_PROPOSITION_ROW), conflict]
     with pytest_raises(InvalidRequestError, match="conflicting Proposition projections"):
         client.structured_proposition_projections("Turing", projection_id=PropositionProjectionQuery.STRUCTURED_KEYWORD, limit=2)
 
 
 def test_projection_boundary_rejects_excess_rows_and_untrusted_identifiers() -> None:
     client = MemGraphConnection()
-    client.execute = lambda query, parameters=(): [internal_row(), deepcopy(internal_row())]
+    client.execute = lambda query, parameters=(): [dict(STRUCTURED_PROPOSITION_ROW), deepcopy(STRUCTURED_PROPOSITION_ROW)]
 
     with pytest_raises(InvalidRequestError, match="more rows than requested"):
         client.structured_proposition_projections("Turing", projection_id=PropositionProjectionQuery.STRUCTURED_KEYWORD, limit=1)
@@ -238,7 +249,9 @@ def test_projection_boundary_rejects_excess_rows_and_untrusted_identifiers() -> 
 
 
 def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch) -> None:
-    projection = proposition_projection_from_graph_row(internal_row(), PropositionProjectionQuery.STRUCTURED_ENTITY)
+    projection = proposition_projection_from_graph_row(
+        dict(STRUCTURED_PROPOSITION_ROW), PropositionProjectionQuery.STRUCTURED_ENTITY
+    )
 
     def structured_proposition_projections(value, *, projection_id, limit=10, basis_window=UNCONSTRAINED_ASSERTION_BASIS):
         assert basis_window == UNCONSTRAINED_ASSERTION_BASIS
@@ -302,7 +315,8 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_
     client = MemGraphConnection()
     monkeypatch.setattr(client, "vector_search_proposition_projections", broken_vector_search)
     engine.internal_graph_client = client
-    engine.config["graph"].update(
+    assert "graph" in engine.config
+    engine.config.get("graph", {}).update(
         {
             "enabled": True,
             "vector_enabled": True,
@@ -320,7 +334,7 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_
     assert sensitive_proposition_id in caplog.text
 
     projection = proposition_projection_from_graph_row(
-        internal_row(semantic=True),
+        dict(SEMANTIC_PROPOSITION_ROW),
         PropositionProjectionQuery.VECTOR,
         "proposition_premise_embeddings",
     )
@@ -339,7 +353,7 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_
 def test_fixed_by_id_projection_supports_publication_revalidation() -> None:
     client = MemGraphConnection()
     captured = {}
-    row = internal_row()
+    row = dict(STRUCTURED_PROPOSITION_ROW)
     row.update(
         {
             "structured_match": 0.0,
@@ -358,9 +372,12 @@ def test_fixed_by_id_projection_supports_publication_revalidation() -> None:
     projections = client.proposition_projection_by_id("proposition:01J5M6Q9J8")
 
     assert len(projections) == 1
-    assert projections[0]["projection_id"] == PropositionProjectionQuery.BY_ID
-    assert projections[0]["structured_match_available"] is False
-    assert projections[0]["semantic_similarity_available"] is False
+    by_id_projection = projections[0]
+    assert by_id_projection.get("projection_id", "") == PropositionProjectionQuery.BY_ID
+    assert "structured_match_available" in by_id_projection
+    assert by_id_projection.get("structured_match_available", False) is False
+    assert "semantic_similarity_available" in by_id_projection
+    assert by_id_projection.get("semantic_similarity_available", False) is False
     assert captured.get("parameters", {}) == {"proposition_id": "proposition:01J5M6Q9J8", **UNCONSTRAINED_ASSERTION_BASIS}
     assert "c.id = $proposition_id" in captured.get("query", "")
     assert "LIMIT 2" in captured.get("query", "")

@@ -4,11 +4,12 @@ Provides a coarse sentiment label (positive / negative / neutral) for a piece of
 text. This lets templates respond with an appropriate tone to open-ended input
 without enumerating every emotion word as its own pattern.
 
-The VADER lexicon is loaded lazily and cached. If the lexicon cannot be
+``VADER_ANALYZER`` owns the VADER analyzer for the process: the lexicon is
+checked and the analyzer built on first use, once. If the lexicon cannot be
 obtained, analysis degrades gracefully to a neutral verdict.
 """
 
-from functools import lru_cache
+from threading import Lock
 
 from nltk.sentiment import SentimentIntensityAnalyzer
 
@@ -23,14 +24,31 @@ from engram.constants import (
 from engram.nltk_data import ensure_resource
 
 
-@lru_cache(maxsize=1)
-def get_analyzer():
-    """Build and cache the VADER analyzer, or return falsy if unavailable."""
-    if not ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
-        result = ()
-        return result
-    analyzer = SentimentIntensityAnalyzer()
-    return analyzer
+class VaderAnalyzer:
+    """Own the lazily built VADER analyzer and the lexicon's availability.
+
+    ``resolved`` records that the lexicon check has run. ``analyzer`` is the
+    built analyzer, or ``()`` when the lexicon is unavailable; the absence is
+    retained, so the check is not repeated.
+    """
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.resolved = False
+        self.analyzer: object = ()
+
+    def current(self):
+        """Return the VADER analyzer, or falsy () when the lexicon is unavailable."""
+        with self.lock:
+            if not self.resolved:
+                if ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
+                    self.analyzer = SentimentIntensityAnalyzer()
+                self.resolved = True
+            analyzer = self.analyzer
+        return analyzer
+
+
+VADER_ANALYZER = VaderAnalyzer()
 
 
 def sentiment_scores(text: str) -> dict:
@@ -46,7 +64,7 @@ def sentiment_scores(text: str) -> dict:
     if not text or not text.strip():
         neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
-    analyzer = get_analyzer()
+    analyzer = VADER_ANALYZER.current()
     if not analyzer:
         neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
@@ -63,7 +81,7 @@ def sentiment_label(text: str) -> str:
     Returns:
         One of "positive", "negative", or "neutral".
     """
-    compound = sentiment_scores(text).get("compound", False)
+    compound = sentiment_scores(text).get("compound", 0.0)
     if compound >= POSITIVE_THRESHOLD:
         return POSITIVE
     if compound <= NEGATIVE_THRESHOLD:

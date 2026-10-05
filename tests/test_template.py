@@ -17,42 +17,47 @@ def test_template_context_get_star():
 def test_template_context_get_predicate():
     """Test predicate retrieval via direct access."""
     ctx = template_context(predicates={"name": "Alice", "mood": "happy"})
-    assert ctx["predicates"].get("name") == "Alice"
-    assert ctx["predicates"].get("mood") == "happy"
-    assert ctx["predicates"].get("missing", "") == ""
-    assert ctx["predicates"].get("missing", "default") == "default"
+    predicates = ctx.get("predicates", {})
+    assert predicates.get("name", "") == "Alice"
+    assert predicates.get("mood", "") == "happy"
+    assert predicates.get("missing", "") == ""
+    assert predicates.get("missing", "default") == "default"
 
 
 def test_template_context_set_predicate():
     """Test predicate setting via direct access."""
     ctx = template_context()
-    ctx["predicates"]["name"] = "Bob"
-    assert ctx["predicates"]["name"] == "Bob"
+    assert "predicates" in ctx
+    predicates = ctx.get("predicates", {})
+    predicates["name"] = "Bob"
+    assert ctx.get("predicates", {}).get("name", "") == "Bob"
 
 
 def test_template_context_topic_in_predicates():
     """Test topic from predicates."""
     ctx = template_context(predicates={"topic": "WEATHER"})
-    assert ctx["predicates"].get("topic", "") == "WEATHER"
+    assert ctx.get("predicates", {}).get("topic", "") == "WEATHER"
 
 
 def test_template_context_topic_empty():
     """Test topic when not set."""
     ctx = template_context()
-    assert ctx["predicates"].get("topic", "") == ""
+    assert "predicates" in ctx
+    assert ctx.get("predicates", {}).get("topic", "") == ""
 
 
 def test_template_context_that_from_history():
     """Test getting that from history."""
     ctx = template_context(that_history=[["HELLO", "HOW ARE YOU"], ["GOODBYE"]])
     # Most recent bot response is first sentence of first history entry
-    assert ctx["that_history"][0][0] == "HELLO"
+    assert ctx.get("that_history", [])[0][0] == "HELLO"
 
 
 def test_template_context_that_empty():
     """Test that when empty."""
     ctx = template_context()
-    assert len(ctx["that_history"]) == 0
+    assert "that_history" in ctx
+    assert len(ctx.get("that_history", [])) == 0
 
 
 def test_template_context_get_input():
@@ -75,9 +80,10 @@ def test_template_context_get_response():
 def test_template_context_get_bot():
     """Test bot property retrieval via direct access."""
     ctx = template_context(bot={"name": "TestBot", "version": "1.0"})
-    assert ctx["bot"].get("name") == "TestBot"
-    assert ctx["bot"].get("missing", "") == ""
-    assert ctx["bot"].get("missing", "default") == "default"
+    bot = ctx.get("bot", {})
+    assert bot.get("name", "") == "TestBot"
+    assert bot.get("missing", "") == ""
+    assert bot.get("missing", "default") == "default"
 
 
 def test_template_context_get_map():
@@ -306,7 +312,7 @@ def test_template_processor_sequence_sequence_basic():
     }
     result = processor.process(template, ctx)
     assert result == "Let's talk about weather!"
-    assert ctx["predicates"]["topic"] == "weather"
+    assert ctx.get("predicates", {}).get("topic", "") == "weather"
 
 
 def test_template_processor_sequence_sequence_multiple_text():
@@ -328,7 +334,7 @@ def test_template_processor_think_think_no_output():
     template = {"think": [{"set": {"name": "secret", "value": "hidden"}}]}
     result = processor.process(template, ctx)
     assert result == ""
-    assert ctx["predicates"]["secret"] == "hidden"
+    assert ctx.get("predicates", {}).get("secret", "") == "hidden"
 
 
 def test_template_processor_think_think_in_sequence():
@@ -606,8 +612,8 @@ def test_template_processor_learn_learn_callback():
     processor.process(template, ctx)
 
     assert len(learned) == 1
-    assert learned[0]["pattern"] == "THE SKY"
-    assert learned[0]["template"] == {"text": "blue"}
+    assert learned[0].get("pattern", "") == "THE SKY"
+    assert learned[0].get("template", {}) == {"text": "blue"}
 
 
 """Integration tests for templates."""
@@ -625,7 +631,7 @@ def test_template_integration_spec_example_my_name_is():
     }
     result = processor.process(template, ctx)
     assert result == "Nice to meet you, Alice!"
-    assert ctx["predicates"]["username"] == "Alice"
+    assert ctx.get("predicates", {}).get("username", "") == "Alice"
 
 
 def test_template_integration_spec_example_what_is_my_name():
@@ -671,7 +677,7 @@ def test_template_integration_nested_template():
     }
     result = processor.process(template, ctx)
     assert result == "Hello, Alice! You seem happy!"
-    assert ctx["predicates"]["greeted"] == "true"
+    assert ctx.get("predicates", {}).get("greeted", "") == "true"
 
 
 """Tests for system variables."""

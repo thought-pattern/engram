@@ -592,7 +592,8 @@ def proposition_projection_to_dict(value: object) -> dict[str, object]:
     """Serialize one projection to a concrete dictionary."""
     projection = validate_proposition_projection(value)
     result: dict[str, object] = dict(projection)
-    result["projection_id"] = projection["projection_id"].value
+    # PropositionProjectionQuery is a StrEnum, so its string form is its value.
+    result["projection_id"] = str(projection.get("projection_id", ""))
     return result
 
 
@@ -609,7 +610,7 @@ def decode_projection_rows(
     decoded: dict[str, dict] = {}
     for row in rows:
         projection = proposition_projection_from_graph_row(row, projection_id, vector_index_id)
-        proposition_id = projection["proposition_id"]
+        proposition_id = projection.get("proposition_id", "")
         if proposition_id in decoded and decoded.get(proposition_id, {}) != projection:
             raise InvalidRequestError(f"conflicting Proposition projections for Proposition ID: {proposition_id}")
         decoded[proposition_id] = projection
@@ -621,13 +622,16 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
     """Decode a one-hop row while reusing the Section 7 Proposition projection codec."""
     if not isinstance(value, Mapping) or set(value) != RELATION_ONE_HOP_RESULT_FIELDS:
         raise InvalidRequestError("relation one-hop row has invalid fields")
-    projection_row = {field: value[field] for field in PROPOSITION_PROJECTION_FIELDS}
+    # The exact field set is checked above, so every typed default below is unreachable.
+    projection_row = {field: item for field, item in value.items() if field in PROPOSITION_PROJECTION_FIELDS}
     result: dict = {
         "projection": proposition_projection_from_graph_row(projection_row, PropositionProjectionQuery.RELATION_ONE_HOP),
-        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
-        "object_type": projection_entity_object_type(value["object_type"], "relation object type"),
+        "object_label": require_text(
+            value.get("object_label", ""), "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
+        "object_type": projection_entity_object_type(value.get("object_type", ""), "relation object type"),
         "predicate_cardinality": projection_cardinality(
-            value["predicate_cardinality"],
+            value.get("predicate_cardinality", ""),
             "relation Predicate cardinality",
         ),
     }
@@ -643,19 +647,22 @@ def validate_relation_proposition_projection(value: object) -> dict:
         "predicate_cardinality",
     }:
         raise InvalidRequestError("RelationPropositionProjection has invalid fields")
-    object_type = value["object_type"]
+    # The exact field set is checked above; the type checks below refuse every typed default.
+    object_type = value.get("object_type", "")
     if not isinstance(object_type, ExpectedObjectType):
         raise InvalidRequestError("relation result object_type must be an ExpectedObjectType")
-    cardinality = value["predicate_cardinality"]
+    cardinality = value.get("predicate_cardinality", "")
     if not isinstance(cardinality, PredicateCardinality):
         raise InvalidRequestError("relation result predicate_cardinality must be a PredicateCardinality")
     result: dict = {
-        "projection": validate_proposition_projection(value["projection"]),
-        "object_label": require_text(value["object_label"], "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False),
+        "projection": validate_proposition_projection(value.get("projection", {})),
+        "object_label": require_text(
+            value.get("object_label", ""), "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
+        ),
         "object_type": object_type,
         "predicate_cardinality": cardinality,
     }
-    if result.get("projection", {}).get("projection_id") != PropositionProjectionQuery.RELATION_ONE_HOP:
+    if result.get("projection", {}).get("projection_id", "") != PropositionProjectionQuery.RELATION_ONE_HOP:
         raise InvalidRequestError("relation result requires a relation one-hop projection")
     return result
 
@@ -666,7 +673,7 @@ def decode_relation_projection_rows(rows: object, limit: int) -> list[dict]:
     decoded: dict[str, dict] = {}
     for row in rows:
         item = relation_proposition_projection_from_graph_row(row)
-        proposition_id = item["projection"]["proposition_id"]
+        proposition_id = item.get("projection", {}).get("proposition_id", "")
         if proposition_id in decoded and decoded.get(proposition_id, {}) != item:
             raise InvalidRequestError(f"conflicting relation projections for Proposition ID: {proposition_id}")
         decoded[proposition_id] = item
@@ -830,9 +837,10 @@ class MemGraphConnection:
 
     def abandon_open(self, future, loop) -> None:
         """Cancel a driver open that overran; close its driver if it finished anyway."""
-        if future.cancel() or future.cancelled() or future.exception() is not None:
-            return
-        asyncio_run_coroutine_threadsafe(future.result().close(), loop)
+        # concurrent.futures reports a successful open with an exception() of None.
+        abandoned = future.cancel() or future.cancelled() or future.exception() is not None
+        if not abandoned:
+            asyncio_run_coroutine_threadsafe(future.result().close(), loop)
 
     def reconnect_after_turn(self) -> bool:
         """Start replacing a lost connection; return whether an attempt started.
@@ -895,19 +903,18 @@ class MemGraphConnection:
             self.reconnect_future = ()
             self.available = False
             self.reconnect_needed = False
-        if not loop or not thread:
-            return
-        future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
-        try:
-            future.result(timeout=2 * self.timeout_seconds)
-        except Exception as err:
-            future.cancel()
-            logger.warning("Graph driver shutdown did not finish", exc_info=err)
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join(self.timeout_seconds)
-        if not thread.is_alive():
-            loop.close()
-        logger.info("Disconnected from graph database")
+        if loop and thread:
+            future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
+            try:
+                future.result(timeout=2 * self.timeout_seconds)
+            except Exception as err:
+                future.cancel()
+                logger.warning("Graph driver shutdown did not finish", exc_info=err)
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(self.timeout_seconds)
+            if not thread.is_alive():
+                loop.close()
+            logger.info("Disconnected from graph database")
 
     async def shutdown(self) -> None:
         """Cancel outstanding work on the loop, then close the driver."""
@@ -1077,9 +1084,9 @@ class MemGraphConnection:
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise InvalidRequestError("canonical entity query returned an invalid collection")
         decoded = [canonical_entity_match_from_graph_row(row) for row in rows]
-        if len({row["canonical_id"] for row in decoded}) != len(decoded):
+        if len({row.get("canonical_id", "") for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical entity query returned duplicate identities")
-        result = sorted(decoded, key=lambda row: row["canonical_id"])
+        result = sorted(decoded, key=lambda row: row.get("canonical_id", ""))
         return result
 
     def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
@@ -1090,9 +1097,9 @@ class MemGraphConnection:
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise InvalidRequestError("canonical Predicate query returned an invalid collection")
         decoded = [canonical_predicate_match_from_graph_row(row) for row in rows]
-        if len({row["canonical_id"] for row in decoded}) != len(decoded):
+        if len({row.get("canonical_id", "") for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical Predicate query returned duplicate identities")
-        result = sorted(decoded, key=lambda row: row["canonical_id"])
+        result = sorted(decoded, key=lambda row: row.get("canonical_id", ""))
         return result
 
     def relation_one_hop_proposition_projections(

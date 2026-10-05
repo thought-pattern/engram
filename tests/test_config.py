@@ -19,9 +19,9 @@ def test_engram_config_custom_values() -> None:
         session_overflow=SessionOverflow.REJECT,
     )
 
-    assert config["capacity"] == 5000
-    assert config["max_sessions"] == 100
-    assert config["session_overflow"] == SessionOverflow.REJECT
+    assert config.get("capacity", 0) == 5000
+    assert config.get("max_sessions", 0) == 100
+    assert config.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
 
 
 def test_engram_config_invalid_capacity() -> None:
@@ -114,24 +114,24 @@ def test_engram_config_graph_vector_config() -> None:
         vector_weight=0.8,
     )
 
-    assert config["vector_enabled"] is True
-    assert config["visibility_scope"] == {
+    assert config.get("vector_enabled", False) is True
+    assert config.get("visibility_scope", {}) == {
         "kind": "global",
         "company_id": {},
         "customer_id": {},
         "engagement_id": {},
     }
-    assert config["vector_limit"] == 75
-    assert config["vector_support_scan_limit"] == 50000
-    assert config["vector_min_similarity"] == 0.52
-    assert config["vector_weight"] == 0.8
+    assert config.get("vector_limit", 0) == 75
+    assert config.get("vector_support_scan_limit", 0) == 50000
+    assert config.get("vector_min_similarity", 0.0) == 0.52
+    assert config.get("vector_weight", 0.0) == 0.8
 
 
 def test_engram_config_custom_stopwords() -> None:
     custom = {"custom", "stop", "words"}
     config = engram_config(stopwords=custom)
 
-    assert config["stopwords"] == custom
+    assert config.get("stopwords", set()) == custom
 
 
 def test_config_from_dict_builds_a_host_mapping_and_drops_retired_deployment_mode(caplog) -> None:
@@ -149,10 +149,11 @@ def test_config_from_dict_builds_a_host_mapping_and_drops_retired_deployment_mod
         base_path="",
     )
 
-    assert config["session_overflow"] == SessionOverflow.REJECT
-    assert config["graph"]["host"] == "graph.internal"
-    assert config["graph"]["enabled"] is True
-    assert "deployment_mode" not in config["graph"]
+    graph = config.get("graph", {})
+    assert config.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
+    assert graph.get("host", "") == "graph.internal"
+    assert graph.get("enabled", False) is True
+    assert "deployment_mode" not in graph
     assert "deployment_mode" not in caplog.text
 
 
@@ -186,10 +187,12 @@ def test_config_from_dict_starts_from_the_engram_file_and_applies_host_overrides
         base_path=str(base),
     )
 
-    assert config["capacity"] == 42
-    assert config["conversation"]["bot_name"] == "Elias Thorne"
-    assert config["conversation"]["seed_files"] == [str(seed)]
-    assert config["graph"]["host"] == "host-override"
-    assert config["graph"]["enabled"] is True
-    assert config["graph"]["vector_limit"] == 125
+    conversation = config.get("conversation", {})
+    graph = config.get("graph", {})
+    assert config.get("capacity", 0) == 42
+    assert conversation.get("bot_name", "") == "Elias Thorne"
+    assert conversation.get("seed_files", []) == [str(seed)]
+    assert graph.get("host", "") == "host-override"
+    assert graph.get("enabled", False) is True
+    assert graph.get("vector_limit", 0) == 125
     assert config_from_dict({}, base_path=str(tmp_path / "missing.yml")) == engram_config()

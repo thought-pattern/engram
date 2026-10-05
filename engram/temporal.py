@@ -32,22 +32,20 @@ WHITESPACE_CONTROL_RE = re_compile(r"[\t\n\r\v\f]")
 # requests" are quantities. Full dates (YYYY-MM-DD) are always dates. Words
 # that often follow a real year ("in 1969 people...") are not listed.
 PLAUSIBLE_YEARS = range(1_000, 3_000)
-QUANTITY_WORDS = frozenset(
-    {
-        "bit", "byte", "kb", "kib", "mb", "mib", "gb", "gib", "tb", "tib",
-        "ms", "millisecond", "second", "sec", "minute", "min", "hour", "hr",
-        "day", "week", "month", "year", "decade", "century",
-        "hz", "khz", "mhz", "ghz", "rpm", "fps", "px", "pixel", "dpi",
-        "frame", "page", "row", "column", "line", "word", "character", "char",
-        "token", "item", "unit", "record", "request", "query", "step",
-        "iteration", "retry", "attempt", "file", "entry", "message", "packet",
-        "connection", "thread", "node", "copy",
-        "percent", "%", "degree", "volt", "watt", "mah", "calorie",
-        "dollar", "usd", "eur", "euro", "cent",
-        "meter", "metre", "km", "cm", "mm", "mile", "foot", "feet", "ft", "inch",
-        "kg", "gram", "lb", "ton", "liter", "litre", "ml",
-    }
-)  # fmt: skip
+QUANTITY_WORDS = {
+    "bit", "byte", "kb", "kib", "mb", "mib", "gb", "gib", "tb", "tib",
+    "ms", "millisecond", "second", "sec", "minute", "min", "hour", "hr",
+    "day", "week", "month", "year", "decade", "century",
+    "hz", "khz", "mhz", "ghz", "rpm", "fps", "px", "pixel", "dpi",
+    "frame", "page", "row", "column", "line", "word", "character", "char",
+    "token", "item", "unit", "record", "request", "query", "step",
+    "iteration", "retry", "attempt", "file", "entry", "message", "packet",
+    "connection", "thread", "node", "copy",
+    "percent", "%", "degree", "volt", "watt", "mah", "calorie",
+    "dollar", "usd", "eur", "euro", "cent",
+    "meter", "metre", "km", "cm", "mm", "mile", "foot", "feet", "ft", "inch",
+    "kg", "gram", "lb", "ton", "liter", "litre", "ml",
+}  # fmt: skip
 FOLLOWING_WORD_RE = re_compile(r"\s*-?\s*([^\W\d_]+|%)")
 UNRESOLVED_RE = re_compile(
     r"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at)|before|after|between|during|latest|most\s+recent|"
@@ -135,15 +133,15 @@ def validate_temporal_query(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != TEMPORAL_QUERY_FIELDS:
         raise InvalidRequestError("TemporalQuery has invalid fields")
     result = temporal_query(
-        operator=value["operator"],
-        axis=value["axis"],
-        source_text=value["source_text"],
-        start=value["start"],
-        start_available=value["start_available"],
-        end=value["end"],
-        end_available=value["end_available"],
-        confidence=value["confidence"],
-        resolved=value["resolved"],
+        operator=value.get("operator", TemporalQueryOperator.UNSPECIFIED),
+        axis=value.get("axis", TemporalAxis.VALID_TIME),
+        source_text=value.get("source_text", ""),
+        start=value.get("start", ""),
+        start_available=value.get("start_available", False),
+        end=value.get("end", ""),
+        end_available=value.get("end_available", False),
+        confidence=value.get("confidence", 0.0),
+        resolved=value.get("resolved", False),
     )
     return result
 
@@ -151,15 +149,15 @@ def validate_temporal_query(value: object) -> dict:
 def temporal_query_to_dict(value: object) -> dict[str, object]:
     current = validate_temporal_query(value)
     result = {
-        "operator": current["operator"].value,
-        "axis": current["axis"].value,
-        "source_text": current["source_text"],
-        "start": current["start"],
-        "start_available": current["start_available"],
-        "end": current["end"],
-        "end_available": current["end_available"],
-        "confidence": current["confidence"],
-        "resolved": current["resolved"],
+        "operator": current.get("operator", TemporalQueryOperator.UNSPECIFIED).value,
+        "axis": current.get("axis", TemporalAxis.VALID_TIME).value,
+        "source_text": current.get("source_text", ""),
+        "start": current.get("start", ""),
+        "start_available": current.get("start_available", False),
+        "end": current.get("end", ""),
+        "end_available": current.get("end_available", False),
+        "confidence": current.get("confidence", 0.0),
+        "resolved": current.get("resolved", False),
     }
     return result
 
@@ -168,20 +166,20 @@ def temporal_query_from_dict(value: object) -> dict:
     if not isinstance(value, Mapping) or set(value) != TEMPORAL_QUERY_FIELDS:
         raise InvalidRequestError("serialized TemporalQuery has invalid fields")
     try:
-        operator = TemporalQueryOperator(str(value["operator"]))
-        axis = TemporalAxis(str(value["axis"]))
+        operator = TemporalQueryOperator(str(value.get("operator", "")))
+        axis = TemporalAxis(str(value.get("axis", "")))
     except ValueError as error:
         raise InvalidRequestError("serialized TemporalQuery enum is unsupported") from error
     result = temporal_query(
         operator=operator,
         axis=axis,
-        source_text=value["source_text"],
-        start=value["start"],
-        start_available=value["start_available"],
-        end=value["end"],
-        end_available=value["end_available"],
-        confidence=value["confidence"],
-        resolved=value["resolved"],
+        source_text=value.get("source_text", ""),
+        start=value.get("start", ""),
+        start_available=value.get("start_available", False),
+        end=value.get("end", ""),
+        end_available=value.get("end_available", False),
+        confidence=value.get("confidence", 0.0),
+        resolved=value.get("resolved", False),
     )
     return result
 

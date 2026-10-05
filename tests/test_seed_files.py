@@ -40,7 +40,7 @@ def test_seed_files_load_in_order_and_each_pattern_answers(tmp_path):
     )
     engram = Engram(config=engram_config(conversation=conversation_config(seed_files=[first, second])))
 
-    patterns = [statement["pattern"] for statement in engram.statements]
+    patterns = [statement.get("pattern", "") for statement in engram.statements]
     assert patterns == ["FIRST FILE PATTERN", "SECOND FILE PATTERN"]
     first_result = engram.pattern_query("first file pattern")
     second_result = engram.pattern_query("second file pattern")
@@ -52,7 +52,7 @@ def test_empty_seed_files_leave_the_statement_store_empty():
     engram = Engram(config=engram_config(conversation=conversation_config(bot_name="Mara")))
 
     assert engram.statements == []
-    assert engram.bot_properties["name"] == "Mara"
+    assert engram.bot_properties.get("name", "") == "Mara"
 
 
 def test_missing_malformed_and_pairless_seeds_fail_before_statements_exist(tmp_path):
@@ -110,8 +110,8 @@ def test_duplicate_check_compares_normalized_match_paths(tmp_path):
         with pytest_raises(ValueError, match="duplicate seed pattern") as caught:
             load_seed_files([first, second])
         message = str(caught.value)
-        assert repr(earlier["pattern"]) in message
-        assert repr(later["pattern"]) in message
+        assert repr(earlier.get("pattern", "")) in message
+        assert repr(later.get("pattern", "")) in message
         assert first in message
         assert second in message
 
@@ -126,7 +126,7 @@ def test_duplicate_policy_last_replaces_a_normalized_variant(tmp_path):
         )
     )
 
-    assert [statement["pattern"] for statement in engram.statements] == ["hello!"]
+    assert [statement.get("pattern", "") for statement in engram.statements] == ["hello!"]
     result = engram.pattern_query("hello")
     assert result and "second file" in result[2].lower()
 
@@ -137,7 +137,7 @@ def test_duplicate_policy_first_ignores_a_normalized_variant(tmp_path):
 
     pairs = load_seed_files([first, second], duplicate_policy="first")
 
-    assert [pair["pattern"] for pair in pairs] == ["HELLO"]
+    assert [pair.get("pattern", "") for pair in pairs] == ["HELLO"]
 
 
 def test_relative_seed_path_resolves_from_the_config_directory(tmp_path, monkeypatch):
@@ -151,7 +151,7 @@ def test_relative_seed_path_resolves_from_the_config_directory(tmp_path, monkeyp
 
     loaded = load_config(str(project / "config.yml"))
     expected = os_path.abspath(os_path.join(str(project), "data", "one.json"))
-    assert os_path.normcase(loaded["conversation"]["seed_files"][0]) == os_path.normcase(expected)
+    assert os_path.normcase(loaded.get("conversation", {}).get("seed_files", [])[0]) == os_path.normcase(expected)
     engram = Engram(config=loaded)
     result = engram.pattern_query("ping")
     assert result and "config-directory-marker" in result[2].lower()
@@ -189,7 +189,7 @@ def test_duplicate_policy_last_keeps_one_later_pair(tmp_path):
             conversation=conversation_config(seed_files=[first, second], duplicate_policy="last"),
         )
     )
-    patterns = [statement["pattern"] for statement in engram.statements]
+    patterns = [statement.get("pattern", "") for statement in engram.statements]
 
     assert patterns.count("HELLO") == 1
     assert "ONLY FIRST" in patterns
@@ -231,8 +231,8 @@ def test_hyphenated_questions_match_spaced_corpus_patterns():
     mil = engram.pattern_query("What is MIL-STD-498?")
     fstring = engram.pattern_query("What is an f-string?")
 
-    assert mil and mil[0]["pattern"] == "WHAT IS MIL STD 498"
-    assert fstring and fstring[0]["pattern"] == "WHAT IS AN F STRING"
+    assert mil and mil[0].get("pattern", "") == "WHAT IS MIL STD 498"
+    assert fstring and fstring[0].get("pattern", "") == "WHAT IS AN F STRING"
 
 
 def test_seed_patterns_stay_unique_when_hyphens_become_spaces():
@@ -248,15 +248,18 @@ def test_seed_patterns_stay_unique_when_hyphens_become_spaces():
     ]
     seen = {}
     for name in names:
-        pairs = json_loads((root / name).read_text(encoding="utf-8"))["pairs"]
-        for pair in pairs:
+        seed_document = json_loads((root / name).read_text(encoding="utf-8"))
+        assert "pairs" in seed_document, name
+        for pair in seed_document.get("pairs", []):
+            assert "pattern" in pair, name
+            pattern = pair.get("pattern", "")
             key = (
-                normalize_pattern(pair["pattern"]),
+                normalize_pattern(pattern),
                 normalize_pattern(pair.get("that", "")),
                 normalize_pattern(pair.get("topic", "")),
             )
-            assert key not in seen, f"{pair['pattern']!r} in {name} collides with {seen[key]}"
-            seen[key] = f"{name}: {pair['pattern']}"
+            assert key not in seen, f"{pattern!r} in {name} collides with {seen.get(key, '')}"
+            seen[key] = f"{name}: {pattern}"
 
 
 def test_set_file_and_seed_file_match_a_set_member(tmp_path):
@@ -330,7 +333,7 @@ def test_predicate_file_supplies_get_name_on_a_new_session(tmp_path):
     result = engram.pattern_query("hello", context_id="robin")
 
     assert result[2] == "Hello, Robin."
-    assert engram.sessions["robin"]["predicates"]["name"] == "Robin"
+    assert engram.sessions.get("robin", {}).get("predicates", {}).get("name", "") == "Robin"
 
 
 def test_bot_name_wins_over_the_properties_file(tmp_path):
@@ -340,9 +343,9 @@ def test_bot_name_wins_over_the_properties_file(tmp_path):
     )
     engram = Engram(config=engram_config(conversation=conversation_config(bot_name="Mara", properties_file=properties)))
 
-    assert engram.bot_properties["name"] == "Mara"
-    assert engram.bot_properties["version"] == VERSION
-    assert engram.bot_properties["city"] == "Kyoto"
+    assert engram.bot_properties.get("name", "") == "Mara"
+    assert engram.bot_properties.get("version", "") == VERSION
+    assert engram.bot_properties.get("city", "") == "Kyoto"
 
 
 def test_custom_substitution_applies_before_the_pattern_walk(tmp_path):
@@ -353,5 +356,5 @@ def test_custom_substitution_applies_before_the_pattern_walk(tmp_path):
     result = engram.pattern_query("colour")
 
     assert result
-    assert result[0]["pattern"] == "COLOR"
+    assert result[0].get("pattern", "") == "COLOR"
     assert "color" in result[2].lower()

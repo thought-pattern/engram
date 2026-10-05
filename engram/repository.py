@@ -1,6 +1,5 @@
 """Authoritative live accepted-response artifact repository."""
 
-from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import datetime
 from heapq import nsmallest as heapq_nsmallest
@@ -65,14 +64,15 @@ def eviction_order_key(artifact: dict) -> tuple[datetime, int, str]:
     return result
 
 
-def trusted_or_validated_artifact(artifact: object, trusted: dict | None) -> dict:
+def trusted_or_validated_artifact(artifact: object, trusted: dict) -> dict:
     """Return the live artifact when ``artifact`` is it or equals it, else validate.
 
     Live artifacts were validated when they entered the repository and are
     never changed in place, so an equal value needs no second validation.
-    Returning the live object keeps the stored form canonical.
+    Returning the live object keeps the stored form canonical. ``trusted`` is
+    {} when no live artifact exists; a validated artifact is never empty.
     """
-    if trusted is not None and (artifact is trusted or artifact == trusted):
+    if trusted and (artifact is trusted or artifact == trusted):
         result = trusted
         return result
     result = validate_cached_response_artifact(artifact)
@@ -103,7 +103,7 @@ def repository_state(
         if not isinstance(statement_id, str) or not statement_id:
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values")
         try:
-            validated_artifact = trusted_or_validated_artifact(artifact, trusted.get(statement_id))
+            validated_artifact = trusted_or_validated_artifact(artifact, trusted.get(statement_id, {}))
         except InvalidRequestError as error:
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values") from error
         if validated_artifact.get("statement_id", "") != statement_id:
@@ -275,49 +275,60 @@ class ArtifactRepository:
         # Recent candidates this repository built: id -> (candidate, base state,
         # changed statement IDs). A candidate handed back unchanged needs only
         # its changed entries checked, not every stored artifact.
-        self.internal_planned: dict[int, tuple[dict, dict, frozenset[str]]] = {}
+        self.internal_planned: dict[int, tuple[dict, dict, set[str]]] = {}
         self.index_state(self.internal_state)
 
-    def plan(self, candidate: dict, changed: Iterable[str]) -> dict:
+    def plan(self, candidate: dict, changed: tuple) -> dict:
         """Remember a candidate built from the live state along with the IDs it changes."""
         with self.internal_lock:
             while len(self.internal_planned) >= MAX_PLANNED_CANDIDATES:
                 del self.internal_planned[next(iter(self.internal_planned))]
-            self.internal_planned[id(candidate)] = (candidate, self.internal_state, frozenset(changed))
+            self.internal_planned[id(candidate)] = (candidate, self.internal_state, set(changed))
             return candidate
 
-    def planned_changes(self, candidate: object, base: dict) -> frozenset[str] | None:
-        """Return the changed IDs of a candidate this repository built from ``base``, else None."""
+    def planned_changes(self, candidate: object, base: dict) -> dict:
+        """Report whether this repository built ``candidate`` from ``base``, and the IDs it changes.
+
+        ``planned`` is False for any other candidate; a planned candidate may
+        change no statement, so an empty ``changed`` set does not mean unknown.
+        The returned set is a copy of the recorded one.
+        """
         with self.internal_lock:
-            entry = self.internal_planned.get(id(candidate))
-            if entry is None or entry[0] is not candidate or entry[1] is not base:
-                result = None
+            entry = self.internal_planned.get(id(candidate), ())
+            if not entry or entry[0] is not candidate or entry[1] is not base:
+                result = {"planned": False, "changed": set()}
                 return result
-            result = entry[2]
+            changed = set(entry[2])
+            result = {"planned": True, "changed": changed}
             return result
 
-    def index_state(self, state: dict, changed: Iterable[str] | None = None) -> None:
+    def index_state(self, state: dict, changed=(), changed_known: bool = False) -> None:
         """Bring the exact-key index in line with ``state``.
 
         Artifacts are compared by identity, so only added, replaced, and
-        removed artifacts have their retrieval bindings computed. ``changed``
-        limits the comparison to those statement IDs when the caller knows them.
+        removed artifacts have their retrieval bindings computed. When
+        ``changed_known`` is set, ``changed`` (a collection of statement IDs)
+        limits the comparison to those IDs; otherwise every artifact is compared.
         """
         artifacts = state.get("artifacts", {})
-        candidates = self.internal_indexed if changed is None else [value for value in changed if value in self.internal_indexed]
-        stale = [
-            statement_id for statement_id in candidates if artifacts.get(statement_id) is not self.internal_indexed[statement_id][0]
-        ]
+        candidates = [value for value in changed if value in self.internal_indexed] if changed_known else self.internal_indexed
+        stale = []
+        for statement_id in candidates:
+            # An empty default is never the indexed object, so a missing artifact is stale.
+            indexed_artifact = self.internal_indexed.get(statement_id, ({}, ()))[0]
+            if artifacts.get(statement_id, {}) is not indexed_artifact:
+                stale.append(statement_id)
         for statement_id in stale:
             self.internal_dynamic_ids.discard(statement_id)
             _, signatures = self.internal_indexed.pop(statement_id)
             for signature in signatures:
-                owners = self.internal_key_owners.get(signature)
-                if owners is not None:
+                # Owner sets are removed once empty, so an absent set has nothing to discard.
+                owners = self.internal_key_owners.get(signature, set())
+                if owners:
                     owners.discard(statement_id)
                     if not owners:
                         del self.internal_key_owners[signature]
-        additions = artifacts if changed is None else {value: artifacts[value] for value in changed if value in artifacts}
+        additions = {value: artifacts.get(value, {}) for value in changed if value in artifacts} if changed_known else artifacts
         for statement_id, artifact in additions.items():
             if statement_id in self.internal_indexed:
                 continue
@@ -377,8 +388,9 @@ class ArtifactRepository:
     def find_artifact(self, statement_id: str) -> dict:
         """Return a copy of one artifact, or {} when it does not exist."""
         with self.internal_lock:
-            artifact = self.internal_state.get("artifacts", {}).get(statement_id)
-        if artifact is None:
+            artifact = self.internal_state.get("artifacts", {}).get(statement_id, {})
+        # Stored artifacts are validated and never empty, so {} means absent.
+        if not artifact:
             result: dict = {}
             return result
         copied = structural_copy(artifact)
@@ -393,7 +405,7 @@ class ArtifactRepository:
             artifacts = self.internal_state.get("artifacts", {})
             if statement_id not in artifacts:
                 raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
-            artifact = artifacts[statement_id]
+            artifact = artifacts.get(statement_id, {})
         copied = structural_copy(artifact)
         if not isinstance(copied, dict):
             raise InvalidRequestError("repository artifact did not remain an object")
@@ -430,7 +442,7 @@ class ArtifactRepository:
                     raise ResourceNotFoundError(f"accepted response artifact not found: {statement_id}")
                 updated[statement_id] = artifact
             candidate = trusted_repository_state(self.internal_state.get("state_generation", 0) + 1, updated)
-            result = self.plan(candidate, (artifact.get("statement_id", "") for artifact in validated_artifacts))
+            result = self.plan(candidate, tuple(artifact.get("statement_id", "") for artifact in validated_artifacts))
             return result
 
     def plan_admission(self, artifact: dict, policy: dict) -> dict:
@@ -459,7 +471,7 @@ class ArtifactRepository:
                     lifecycle_changed=False,
                     candidate_trusted=True,
                 )
-                self.plan(plan["candidate"], (statement_id,))
+                self.plan(plan.get("candidate", {}), (statement_id,))
                 return plan
 
             dynamic_ids = self.internal_dynamic_ids
@@ -470,7 +482,7 @@ class ArtifactRepository:
                 tuple(
                     heapq_nsmallest(
                         required_evictions,
-                        (live_artifacts[dynamic_id] for dynamic_id in dynamic_ids),
+                        (live_artifacts.get(dynamic_id, {}) for dynamic_id in dynamic_ids),
                         key=eviction_order_key,
                     )
                 )
@@ -493,7 +505,7 @@ class ArtifactRepository:
                 lifecycle_changed=False,
                 candidate_trusted=True,
             )
-            self.plan(plan["candidate"], (statement_id, *plan["evicted_statement_ids"]))
+            self.plan(plan.get("candidate", {}), (statement_id, *plan.get("evicted_statement_ids", ())))
             return plan
 
     def candidate_without_artifact(
@@ -534,10 +546,17 @@ class ArtifactRepository:
         published = self.snapshot()
         return published
 
-    def replace_trusted(self, candidate: dict, expected_state_generation: int, changed: Iterable[str] | None = None) -> None:
+    def replace_trusted(
+        self,
+        candidate: dict,
+        expected_state_generation: int,
+        changed=(),
+        changed_known: bool = False,
+    ) -> None:
         """Publish a candidate the caller validated against this repository's live state.
 
-        ``changed`` names the statement IDs that differ from the live state, when known.
+        With ``changed_known``, ``changed`` names every statement ID that differs
+        from the live state; otherwise every artifact is compared.
         """
         with self.internal_lock:
             current_generation = self.internal_state.get("state_generation", 0)
@@ -548,7 +567,7 @@ class ArtifactRepository:
             if candidate.get("state_generation", 0) != expected_state_generation + 1:
                 raise ConflictError("candidate repository state_generation must advance by exactly one")
             self.internal_state = candidate
-            self.index_state(candidate, changed)
+            self.index_state(candidate, changed, changed_known)
 
     def restore_state(self, state: dict) -> dict:
         """Restore one previously validated in-process repository state."""
@@ -559,11 +578,14 @@ class ArtifactRepository:
         recovered = self.snapshot()
         return recovered
 
-    def restore_trusted(self, state: dict, changed: Iterable[str] | None = None) -> None:
-        """Roll back to a state that was live earlier in this process."""
+    def restore_trusted(self, state: dict, changed=(), changed_known: bool = False) -> None:
+        """Roll back to a state that was live earlier in this process.
+
+        ``changed`` and ``changed_known`` follow ``replace_trusted``.
+        """
         with self.internal_lock:
             self.internal_state = state
-            self.index_state(state, changed)
+            self.index_state(state, changed, changed_known)
 
     def exact_lookup(
         self,
@@ -582,7 +604,9 @@ class ArtifactRepository:
             raise InvalidRequestError("contextual exact key must be a ScopedRetrievalKey") from error
         with self.internal_lock:
             artifacts = self.internal_state.get("artifacts", {})
-            carriers = {statement_id: artifacts[statement_id] for statement_id in self.internal_key_owners.get(signature, ())}
+            # The key index tracks the live state, so every owner names a stored artifact.
+            owners = self.internal_key_owners.get(signature, ())
+            carriers = {statement_id: artifacts.get(statement_id, {}) for statement_id in owners}
             lookup = ContextualExactLookup(carriers, trusted_artifacts=True).exact_lookup(key, context)
             result = lookup
             return result

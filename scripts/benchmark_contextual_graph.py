@@ -18,7 +18,7 @@ from engram.core import Engram
 from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
 from engram.service import EngramCore
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/contextual/benchmark.json")
@@ -228,7 +228,7 @@ def validate_manifest(value: object) -> dict:
 
 def run(manifest_path: Path) -> dict:
     manifest = validate_manifest(json_loads(manifest_path.read_text(encoding="utf-8")))
-    if not get_nlp():
+    if not SPACY_PIPELINES.pipeline():
         raise RuntimeError("Section 8 benchmark requires the pre-provisioned spaCy model")
     partition_reports = {}
     all_latencies = []

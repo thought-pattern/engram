@@ -2,13 +2,7 @@
 
 from engram.config import engram_config
 from engram.core import Engram
-from engram.substitutions import (
-    apply_gender,
-    apply_substitutions,
-    expand_contractions,
-    split_sentences,
-    substitution_maps,
-)
+from engram.substitutions import apply_gender, apply_substitutions, expand_contractions, split_sentences
 
 
 def test_apply_substitutions_basic_substitution():
@@ -225,16 +219,6 @@ def test_split_sentences_decimals_handled():
     """Test NLTK handles decimal numbers correctly."""
     result = split_sentences("The value is 3.14. That's pi.")
     assert len(result) == 2
-
-
-"""Tests for SubstitutionMaps class."""
-
-
-def test_substitution_maps_custom_maps_override():
-    """Test custom maps can be provided."""
-    custom_contractions = {"yo": "hello"}
-    maps = substitution_maps(contractions=custom_contractions)
-    assert maps["contractions"] == {"yo": "hello"}
 
 
 """Integration tests for contractions with Engram."""

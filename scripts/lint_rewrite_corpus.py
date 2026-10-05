@@ -19,9 +19,9 @@ DEFAULT_OUTPUT = Path("eval/results/rewrite/lint.json")
 
 def internal_cases(path: Path) -> list[dict[str, object]]:
     decoded = json_loads(path.read_text(encoding="utf-8"))
-    if not isinstance(decoded, dict) or not isinstance(decoded.get("cases"), list):
+    if not isinstance(decoded, dict) or "cases" not in decoded or not isinstance(decoded.get("cases", []), list):
         raise ValueError("rewrite evaluation corpus must be an object with cases")
-    cases = decoded["cases"]
+    cases = decoded.get("cases", [])
     if not all(isinstance(case, dict) for case in cases):
         raise ValueError("rewrite evaluation cases must be objects")
     return cases
@@ -45,7 +45,8 @@ def lint(cases_path: Path) -> dict[str, object]:
         except (KeyError, ValueError) as error:
             regressions.append({"severity": "error", "code": "malformed_regression", "case_id": case_id, "detail": str(error)})
             continue
-        if execution["final_text"] != case.get("expected_final", ""):
+        chain = execution.get("chain", ())
+        if execution.get("final_text", "") != case.get("expected_final", ""):
             regressions.append(
                 {
                     "severity": "error",
@@ -55,18 +56,18 @@ def lint(cases_path: Path) -> dict[str, object]:
                 }
             )
         expected_rewrite = case.get("should_rewrite", False) is True
-        if bool(execution["chain"]) != expected_rewrite:
+        if bool(chain) != expected_rewrite:
             regressions.append(
                 {
                     "severity": "error",
-                    "code": "unexpected_rewrite" if execution["chain"] else "unreachable_rule",
+                    "code": "unexpected_rewrite" if chain else "unreachable_rule",
                     "case_id": case_id,
                     "detail": "rewrite application differs from the frozen expectation",
                 }
             )
     findings = [*structural, *regressions]
-    counts = Counter(str(finding["code"]) for finding in findings)
-    errors = sum(finding["severity"] == "error" for finding in findings)
+    counts = Counter(str(finding.get("code", "")) for finding in findings)
+    errors = sum(finding.get("severity", "") == "error" for finding in findings)
     result = {
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
@@ -102,8 +103,9 @@ def main() -> int:
     report = lint(args.cases)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json_dumps({"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"]}))
-    result = 0 if report["passed"] else 1
+    passed = report.get("passed", False)
+    print(json_dumps({"passed": passed, "errors": report.get("errors", 0), "warnings": report.get("warnings", 0)}))
+    result = 0 if passed else 1
     return result
 
 

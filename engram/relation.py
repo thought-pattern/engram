@@ -21,7 +21,7 @@ from engram.errors import InvalidRequestError
 from engram.graph import validate_relation_proposition_projection
 from engram.identity import normalize_retrieval_key
 from engram.resolution import validate_query_frame
-from engram.spacy_setup import get_nlp
+from engram.spacy_setup import SPACY_PIPELINES
 from engram.temporal import validate_temporal_query
 from engram.validation import require_identifier, require_text, utc_datetime
 
@@ -95,19 +95,14 @@ def validate_canonical_resolution(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != CANONICAL_RESOLUTION_FIELDS:
         raise InvalidRequestError("CanonicalResolution has invalid fields")
     result = canonical_resolution(
-        value["status"],
-        canonical_id=value["canonical_id"],
-        primary_label=value["primary_label"],
-        object_type=value["object_type"],
-        score=value["score"],
-        candidate_ids=value["candidate_ids"],
-        evidence=value["evidence"],
+        value.get("status", CanonicalResolutionStatus.MISS),
+        canonical_id=value.get("canonical_id", ""),
+        primary_label=value.get("primary_label", ""),
+        object_type=value.get("object_type", ExpectedObjectType.UNKNOWN),
+        score=value.get("score", 0.0),
+        candidate_ids=value.get("candidate_ids", ()),
+        evidence=value.get("evidence", ()),
     )
-    return result
-
-
-def internal_miss() -> dict:
-    result = canonical_resolution(CanonicalResolutionStatus.MISS)
     return result
 
 
@@ -115,7 +110,7 @@ def explicit_resolution(values: tuple[tuple[str, str, ExpectedObjectType], ...],
     by_id = {canonical_id: (label, object_type) for canonical_id, label, object_type in values}
     candidate_ids = tuple(sorted(by_id))
     if not candidate_ids:
-        result = internal_miss()
+        result = canonical_resolution(CanonicalResolutionStatus.MISS)
         return result
     if len(candidate_ids) > 1:
         result = canonical_resolution(
@@ -125,7 +120,7 @@ def explicit_resolution(values: tuple[tuple[str, str, ExpectedObjectType], ...],
         )
         return result
     canonical_id = next(iter(candidate_ids))
-    label, object_type = by_id[canonical_id]
+    label, object_type = by_id.get(canonical_id, ("", ExpectedObjectType.UNKNOWN))
     result = canonical_resolution(
         CanonicalResolutionStatus.SELECTED,
         canonical_id=canonical_id,
@@ -159,7 +154,7 @@ class RelationQuestion:
     def document(self):
         """Return the parsed question, or () when no parser is loaded."""
         if not self.internal_parsed:
-            nlp = get_nlp()
+            nlp = SPACY_PIPELINES.pipeline()
             self.internal_document = nlp(self.text) if nlp else ()
             self.internal_parsed = True
         result = self.internal_document
@@ -168,7 +163,7 @@ class RelationQuestion:
 
 def bound_question(question: object, frame: dict) -> RelationQuestion:
     """Require the shared parse to belong to this frame's exact question."""
-    if not isinstance(question, RelationQuestion) or question.resolved_text != frame["resolved_text"]:
+    if not isinstance(question, RelationQuestion) or question.resolved_text != frame.get("resolved_text", ""):
         raise InvalidRequestError("relation question must be the parse of this frame's resolved text")
     return question
 
@@ -186,7 +181,7 @@ def select_scored(
     values: dict[str, tuple[float, str, ExpectedObjectType, set[str]]],
 ) -> dict:
     if not values:
-        result = internal_miss()
+        result = canonical_resolution(CanonicalResolutionStatus.MISS)
         return result
     ordered = sorted(values.items(), key=lambda item: (-item[1][0], item[0]))[:MAX_RELATION_CANDIDATES]
     candidate_ids = tuple(sorted(item[0] for item in ordered))
@@ -222,17 +217,16 @@ def resolve_canonical_subject(
     if not callable(lookup) or not callable(cooperative_check):
         raise InvalidRequestError("canonical subject resolver dependencies must be callable")
     shared_question = bound_question(question, current)
+    entities = current.get("identity", {}).get("entities", ())
     explicit = tuple(
-        (entity["canonical_id"], entity["surface"], ExpectedObjectType.UNKNOWN)
-        for entity in current["identity"]["entities"]
-        if entity["canonical_id"]
+        (entity.get("canonical_id", ""), entity.get("surface", ""), ExpectedObjectType.UNKNOWN)
+        for entity in entities
+        if entity.get("canonical_id", "")
     )
     if explicit:
         result = explicit_resolution(explicit, "caller_entity_identity")
         return result
-    surfaces: list[tuple[str, str, float]] = [
-        (entity["surface"], "identity_surface", 0.0) for entity in current["identity"]["entities"]
-    ]
+    surfaces: list[tuple[str, str, float]] = [(entity.get("surface", ""), "identity_surface", 0.0) for entity in entities]
     known = {normalize_retrieval_key(surface) for surface, _, _ in surfaces}
     for surface in named_entity_surfaces(shared_question):
         normalized = normalize_retrieval_key(surface)
@@ -247,19 +241,21 @@ def resolve_canonical_subject(
         if not isinstance(rows, list) or len(rows) > MAX_RELATION_CANDIDATES:
             raise InvalidRequestError("canonical entity lookup returned an invalid collection")
         for row in rows:
-            label = normalize_retrieval_key(row["primary_label"])
-            aliases = {normalize_retrieval_key(value) for value in row["aliases"]}
-            edges = {normalize_retrieval_key(value) for value in row["edge_surfaces"]}
+            canonical_id = row.get("canonical_id", "")
+            primary_label = row.get("primary_label", "")
+            label = normalize_retrieval_key(primary_label)
+            aliases = {normalize_retrieval_key(value) for value in row.get("aliases", ())}
+            edges = {normalize_retrieval_key(value) for value in row.get("edge_surfaces", ())}
             base = 1.0 if normalized == label else 0.92 if normalized in aliases else 0.82 if normalized in edges else 0.0
             if not base:
                 continue
             score = max(0.0, base - penalty)
-            prior = scored.get(row["canonical_id"], ())
+            prior = scored.get(canonical_id, ())
             evidence_values = {evidence, "primary_label" if base == 1.0 else "alias" if base == 0.92 else "edge_surface"}
             if prior and prior[0] >= score:
                 prior[3].update(evidence_values)
             else:
-                scored[row["canonical_id"]] = (score, row["primary_label"], row["entity_type"], evidence_values)
+                scored[canonical_id] = (score, primary_label, row.get("entity_type", ExpectedObjectType.UNKNOWN), evidence_values)
     cooperative_check()
     result = select_scored(scored)
     return result
@@ -324,23 +320,23 @@ def resolve_canonical_predicate(
     if not callable(lookup) or not callable(cooperative_check):
         raise InvalidRequestError("canonical Predicate resolver dependencies must be callable")
     shared_question = bound_question(question, current)
-    relation = current["identity"]["relation"]
-    if relation["canonical_id"]:
-        result = explicit_resolution(
-            ((relation["canonical_id"], relation["surface"], current["expected_object_type"]),),
-            "caller_predicate_identity",
-        )
+    identity = current.get("identity", {})
+    relation = identity.get("relation", {})
+    relation_id = relation.get("canonical_id", "")
+    relation_surface = relation.get("surface", "")
+    expected = current.get("expected_object_type", ExpectedObjectType.UNKNOWN)
+    if relation_id:
+        result = explicit_resolution(((relation_id, relation_surface, expected),), "caller_predicate_identity")
         return result
     surfaces: list[tuple[str, str, float]] = []
-    if relation["surface"]:
-        surfaces.append((relation["surface"], "relation_surface", 0.0))
+    if relation_surface:
+        surfaces.append((relation_surface, "relation_surface", 0.0))
     surfaces.extend(dependency_predicate_surfaces(shared_question))
     known = {normalize_retrieval_key(surface) for surface, _, _ in surfaces}
-    for term in current["identity"]["lexical_terms"]:
+    for term in identity.get("lexical_terms", ()):
         if term not in known:
             known.add(term)
             surfaces.append((term, "lexical_relation", 0.35))
-    expected = current["expected_object_type"]
     scored: dict[str, tuple[float, str, ExpectedObjectType, set[str]]] = {}
     for surface, evidence, penalty in surfaces[:MAX_RELATION_SURFACES]:
         cooperative_check()
@@ -349,26 +345,27 @@ def resolve_canonical_predicate(
         if not isinstance(rows, list) or len(rows) > MAX_RELATION_CANDIDATES:
             raise InvalidRequestError("canonical Predicate lookup returned an invalid collection")
         for row in rows:
-            label = normalize_retrieval_key(row["primary_label"])
-            synonyms = {normalize_retrieval_key(value) for value in row["synonyms"]}
-            canonical_id = normalize_retrieval_key(row["canonical_id"])
+            row_id = row.get("canonical_id", "")
+            primary_label = row.get("primary_label", "")
+            object_type = row.get("object_type", ExpectedObjectType.UNKNOWN)
+            label = normalize_retrieval_key(primary_label)
+            synonyms = {normalize_retrieval_key(value) for value in row.get("synonyms", ())}
+            canonical_id = normalize_retrieval_key(row_id)
             base = 1.0 if normalized in {label, canonical_id} else 0.92 if normalized in synonyms else 0.0
             if not base:
                 continue
             type_penalty = (
                 0.12
-                if expected != ExpectedObjectType.UNKNOWN
-                and row["object_type"] != ExpectedObjectType.UNKNOWN
-                and expected != row["object_type"]
+                if expected != ExpectedObjectType.UNKNOWN and object_type != ExpectedObjectType.UNKNOWN and expected != object_type
                 else 0.0
             )
             score = max(0.0, base - penalty - type_penalty)
-            prior = scored.get(row["canonical_id"], ())
+            prior = scored.get(row_id, ())
             evidence_values = {evidence, "predicate_label" if base == 1.0 else "predicate_synonym"}
             if prior and prior[0] >= score:
                 prior[3].update(evidence_values)
             else:
-                scored[row["canonical_id"]] = (score, row["primary_label"], row["object_type"], evidence_values)
+                scored[row_id] = (score, primary_label, object_type, evidence_values)
     cooperative_check()
     result = select_scored(scored)
     return result
@@ -385,7 +382,9 @@ def one_hop_query_plan(
     """Compile only the fixed one-hop template; Cypher and procedures are not inputs."""
     entity = validate_canonical_resolution(subject)
     relation = validate_canonical_resolution(predicate)
-    if entity["status"] != CanonicalResolutionStatus.SELECTED or relation["status"] != CanonicalResolutionStatus.SELECTED:
+    entity_status = entity.get("status", CanonicalResolutionStatus.MISS)
+    relation_status = relation.get("status", CanonicalResolutionStatus.MISS)
+    if entity_status != CanonicalResolutionStatus.SELECTED or relation_status != CanonicalResolutionStatus.SELECTED:
         raise InvalidRequestError("one-hop query plan requires selected entity and Predicate identities")
     if not isinstance(template_id, RelationPlanTemplate) or template_id != RelationPlanTemplate.ONE_HOP_PROPOSITION:
         raise InvalidRequestError("one-hop query plan template is unsupported")
@@ -395,8 +394,8 @@ def one_hop_query_plan(
         raise InvalidRequestError(f"one-hop query plan max_rows must be from 1 through {MAX_RELATION_PLAN_ROWS}")
     result: dict = {
         "template_id": RelationPlanTemplate.ONE_HOP_PROPOSITION,
-        "subject_entity_id": entity["canonical_id"],
-        "predicate_id": relation["canonical_id"],
+        "subject_entity_id": entity.get("canonical_id", ""),
+        "predicate_id": relation.get("canonical_id", ""),
         "expected_object_type": expected_object_type,
         "max_rows": max_rows,
     }
@@ -421,22 +420,23 @@ def projection_interval(
     projection = item.get("projection", {})
     if axis == TemporalAxis.VALID_TIME:
         result = (
-            projection["valid_from"],
-            projection["valid_from_available"],
-            projection["valid_to"],
-            projection["valid_to_available"],
+            projection.get("valid_from", ""),
+            projection.get("valid_from_available", False),
+            projection.get("valid_to", ""),
+            projection.get("valid_to_available", False),
         )
         return result
-    upper = projection["system_to"]
-    upper_available = projection["system_to_available"]
-    if projection["invalidated_at_available"] and (
-        not upper_available or utc_datetime(projection["invalidated_at"]) < utc_datetime(upper)
+    upper = projection.get("system_to", "")
+    upper_available = projection.get("system_to_available", False)
+    invalidated_at = projection.get("invalidated_at", "")
+    if projection.get("invalidated_at_available", False) and (
+        not upper_available or utc_datetime(invalidated_at) < utc_datetime(upper)
     ):
-        upper = projection["invalidated_at"]
+        upper = invalidated_at
         upper_available = True
     result = (
-        projection["system_from"],
-        projection["system_from_available"],
+        projection.get("system_from", ""),
+        projection.get("system_from_available", False),
         upper,
         upper_available,
     )
@@ -456,26 +456,11 @@ def intervals_overlap(first: dict, second: dict, axis: TemporalAxis) -> bool:
     return result
 
 
-def relation_selection(
-    *,
-    direct_answer: bool,
-    selected_proposition_id: str,
-    evidence_proposition_ids: tuple[str, ...],
-    conflict_proposition_ids: tuple[str, ...],
-    ranking_proposition_ids: tuple[str, ...],
-    reason: RelationSelectionReason,
-    cardinality: PredicateCardinality,
-) -> dict:
-    result: dict = {
-        "direct_answer": direct_answer,
-        "selected_proposition_id": selected_proposition_id,
-        "selected_proposition_id_available": bool(selected_proposition_id),
-        "evidence_proposition_ids": evidence_proposition_ids,
-        "conflict_proposition_ids": conflict_proposition_ids,
-        "ranking_proposition_ids": ranking_proposition_ids,
-        "reason": reason,
-        "cardinality": cardinality,
-    }
+def relation_trust_rank(item: dict) -> tuple[bool, float, str]:
+    """Order Propositions with supplied trust first, then by descending trust and identifier."""
+    projection = item.get("projection", {})
+    trust_unavailable = not projection.get("supplied_trust_available", False)
+    result = (trust_unavailable, -projection.get("supplied_trust", 0.0), projection.get("proposition_id", ""))
     return result
 
 
@@ -485,168 +470,123 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
         raise InvalidRequestError(f"relation selection items must be a tuple of at most {MAX_RELATION_PLAN_ROWS} values")
     validated = tuple(validate_relation_proposition_projection(item) for item in items)
     temporal: dict = validate_temporal_query(temporal_query)
-    evidence_proposition_ids = tuple(sorted(item["projection"]["proposition_id"] for item in validated))
+    operator = temporal.get("operator", TemporalQueryOperator.UNSPECIFIED)
+    axis = temporal.get("axis", TemporalAxis.VALID_TIME)
+    evidence_proposition_ids = tuple(sorted(item.get("projection", {}).get("proposition_id", "") for item in validated))
     if not validated:
-        result = relation_selection(
-            direct_answer=False,
-            selected_proposition_id="",
-            evidence_proposition_ids=(),
-            conflict_proposition_ids=(),
-            ranking_proposition_ids=(),
-            reason=RelationSelectionReason.NO_ELIGIBLE_PROPOSITION,
-            cardinality=PredicateCardinality.UNKNOWN,
-        )
+        result = {
+            "direct_answer": False,
+            "selected_proposition_id": "",
+            "selected_proposition_id_available": False,
+            "evidence_proposition_ids": (),
+            "conflict_proposition_ids": (),
+            "ranking_proposition_ids": (),
+            "reason": RelationSelectionReason.NO_ELIGIBLE_PROPOSITION,
+            "cardinality": PredicateCardinality.UNKNOWN,
+        }
         return result
 
-    cardinalities = {item["predicate_cardinality"] for item in validated}
+    cardinalities = {item.get("predicate_cardinality", PredicateCardinality.UNKNOWN) for item in validated}
     cardinality = next(iter(cardinalities)) if len(cardinalities) == 1 else PredicateCardinality.UNKNOWN
     considered = validated
-    if temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) == TemporalQueryOperator.LATEST:
+    if operator == TemporalQueryOperator.LATEST:
         lower_values = []
         for item in validated:
-            lower, lower_available, internal_upper, internal_upper_available = projection_interval(
-                item, temporal.get("axis", TemporalAxis.VALID_TIME)
-            )
+            lower, lower_available, internal_upper, internal_upper_available = projection_interval(item, axis)
             if not lower_available:
-                ranking_proposition_ids = tuple(sorted(evidence_proposition_ids))
-                result = relation_selection(
-                    direct_answer=False,
-                    selected_proposition_id="",
-                    evidence_proposition_ids=evidence_proposition_ids,
-                    conflict_proposition_ids=(),
-                    ranking_proposition_ids=ranking_proposition_ids,
-                    reason=RelationSelectionReason.LATEST_BOUND_UNAVAILABLE,
-                    cardinality=cardinality,
-                )
+                result = {
+                    "direct_answer": False,
+                    "selected_proposition_id": "",
+                    "selected_proposition_id_available": False,
+                    "evidence_proposition_ids": evidence_proposition_ids,
+                    "conflict_proposition_ids": (),
+                    "ranking_proposition_ids": evidence_proposition_ids,
+                    "reason": RelationSelectionReason.LATEST_BOUND_UNAVAILABLE,
+                    "cardinality": cardinality,
+                }
                 return result
             lower_values.append((utc_datetime(lower), item))
         latest = max(value for value, internal_item in lower_values)
         considered = tuple(item for value, item in lower_values if value == latest)
 
-    ranking_proposition_ids = tuple(
-        item["projection"]["proposition_id"]
-        for item in sorted(
-            validated,
-            key=lambda item: (
-                not item["projection"]["supplied_trust_available"],
-                -item["projection"]["supplied_trust"],
-                item["projection"]["proposition_id"],
-            ),
-        )
-    )
-    objects = {item["projection"]["object_entity_id"] for item in considered}
+    ranked = sorted(validated, key=relation_trust_rank)
+    ranking_proposition_ids = tuple(item.get("projection", {}).get("proposition_id", "") for item in ranked)
+    objects = {item.get("projection", {}).get("object_entity_id", "") for item in considered}
     conflict_ids = set()
     for index, first in enumerate(considered):
+        first_projection = first.get("projection", {})
         for second in considered[index + 1 :]:
-            if first["projection"]["object_entity_id"] != second["projection"]["object_entity_id"] and intervals_overlap(
-                first, second, temporal.get("axis", TemporalAxis.VALID_TIME)
-            ):
-                conflict_ids.add(first["projection"]["proposition_id"])
-                conflict_ids.add(second["projection"]["proposition_id"])
-    normalized_conflict_ids = tuple(sorted(conflict_ids))
-    if len(objects) > 1:
-        if cardinality == PredicateCardinality.MULTI:
-            reason = RelationSelectionReason.VALID_MULTI_VALUE
-            normalized_conflict_ids = ()
-        elif temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) == TemporalQueryOperator.LATEST and len(considered) > 1:
-            reason = RelationSelectionReason.LATEST_TIE
-            if cardinality == PredicateCardinality.UNKNOWN:
-                normalized_conflict_ids = ()
-        elif cardinality == PredicateCardinality.SINGLE and normalized_conflict_ids:
-            reason = RelationSelectionReason.CONFLICT_SINGLE_VALUE
-        elif normalized_conflict_ids:
-            reason = RelationSelectionReason.CARDINALITY_UNKNOWN
-            normalized_conflict_ids = ()
-        else:
-            reason = RelationSelectionReason.BOUNDED_MULTIPLE_PERIODS
-        result = relation_selection(
-            direct_answer=False,
-            selected_proposition_id="",
-            evidence_proposition_ids=evidence_proposition_ids,
-            conflict_proposition_ids=normalized_conflict_ids,
-            ranking_proposition_ids=ranking_proposition_ids,
-            reason=reason,
-            cardinality=cardinality,
-        )
-        return result
-    if cardinality != PredicateCardinality.SINGLE:
-        # One observed value does not make a Predicate single-valued: a MULTI
-        # Predicate may hold values outside this bound and an UNKNOWN one
-        # declares no policy, so the observation stays typed evidence.
-        result = relation_selection(
-            direct_answer=False,
-            selected_proposition_id="",
-            evidence_proposition_ids=evidence_proposition_ids,
-            conflict_proposition_ids=(),
-            ranking_proposition_ids=ranking_proposition_ids,
-            reason=(
-                RelationSelectionReason.VALID_MULTI_VALUE
-                if cardinality == PredicateCardinality.MULTI
-                else RelationSelectionReason.CARDINALITY_UNKNOWN
-            ),
-            cardinality=cardinality,
-        )
-        return result
-
-    explicit_historical = temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) not in {
+            second_projection = second.get("projection", {})
+            different_objects = first_projection.get("object_entity_id", "") != second_projection.get("object_entity_id", "")
+            if different_objects and intervals_overlap(first, second, axis):
+                conflict_ids.add(first_projection.get("proposition_id", ""))
+                conflict_ids.add(second_projection.get("proposition_id", ""))
+    conflict_proposition_ids = tuple(sorted(conflict_ids))
+    explicit_historical = operator not in {
         TemporalQueryOperator.UNSPECIFIED,
         TemporalQueryOperator.CURRENT,
         TemporalQueryOperator.NOW,
         TemporalQueryOperator.LATEST,
     }
-    if explicit_historical:
-        has_open_bounds = any(
-            not lower_available or not upper_available
-            for lower, lower_available, upper, upper_available in (
-                projection_interval(item, temporal.get("axis", TemporalAxis.VALID_TIME)) for item in considered
-            )
-        )
-        if has_open_bounds:
-            result = relation_selection(
-                direct_answer=False,
-                selected_proposition_id="",
-                evidence_proposition_ids=evidence_proposition_ids,
-                conflict_proposition_ids=(),
-                ranking_proposition_ids=ranking_proposition_ids,
-                reason=RelationSelectionReason.TEMPORAL_BOUNDS_OPEN,
-                cardinality=cardinality,
-            )
-            return result
-
-    if any(not item["projection"]["supplied_trust_available"] for item in considered):
-        result = relation_selection(
-            direct_answer=False,
-            selected_proposition_id="",
-            evidence_proposition_ids=evidence_proposition_ids,
-            conflict_proposition_ids=(),
-            ranking_proposition_ids=ranking_proposition_ids,
-            reason=RelationSelectionReason.TRUST_UNAVAILABLE,
-            cardinality=cardinality,
-        )
-        return result
-    ranked_considered = sorted(
-        considered,
-        key=lambda item: (-item["projection"]["supplied_trust"], item["projection"]["proposition_id"]),
-    )
-    selected_proposition_id = ranked_considered[0]["projection"]["proposition_id"]
-    unique_trust_leader = len(ranked_considered) > 1 and (
-        ranked_considered[0]["projection"]["supplied_trust"] > ranked_considered[1]["projection"]["supplied_trust"]
-    )
-    if temporal.get("operator", TemporalQueryOperator.UNSPECIFIED) == TemporalQueryOperator.LATEST:
-        reason = RelationSelectionReason.SELECTED_LATEST
-    elif unique_trust_leader:
-        reason = RelationSelectionReason.SELECTED_TRUST_RANKED
+    direct_answer = False
+    selected_proposition_id = ""
+    if len(objects) > 1:
+        if cardinality == PredicateCardinality.MULTI:
+            reason = RelationSelectionReason.VALID_MULTI_VALUE
+            conflict_proposition_ids = ()
+        elif operator == TemporalQueryOperator.LATEST and len(considered) > 1:
+            reason = RelationSelectionReason.LATEST_TIE
+            if cardinality == PredicateCardinality.UNKNOWN:
+                conflict_proposition_ids = ()
+        elif cardinality == PredicateCardinality.SINGLE and conflict_proposition_ids:
+            reason = RelationSelectionReason.CONFLICT_SINGLE_VALUE
+        elif conflict_proposition_ids:
+            reason = RelationSelectionReason.CARDINALITY_UNKNOWN
+            conflict_proposition_ids = ()
+        else:
+            reason = RelationSelectionReason.BOUNDED_MULTIPLE_PERIODS
+    elif cardinality != PredicateCardinality.SINGLE:
+        # One observed value does not make a Predicate single-valued: a MULTI
+        # Predicate may hold values outside this bound and an UNKNOWN one
+        # declares no policy, so the observation stays typed evidence.
+        if cardinality == PredicateCardinality.MULTI:
+            reason = RelationSelectionReason.VALID_MULTI_VALUE
+        else:
+            reason = RelationSelectionReason.CARDINALITY_UNKNOWN
+    elif explicit_historical and any(
+        not lower_available or not upper_available
+        for lower, lower_available, upper, upper_available in (projection_interval(item, axis) for item in considered)
+    ):
+        reason = RelationSelectionReason.TEMPORAL_BOUNDS_OPEN
+    elif any(not item.get("projection", {}).get("supplied_trust_available", False) for item in considered):
+        reason = RelationSelectionReason.TRUST_UNAVAILABLE
     else:
-        reason = RelationSelectionReason.SELECTED_UNIQUE
-    result = relation_selection(
-        direct_answer=True,
-        selected_proposition_id=selected_proposition_id,
-        evidence_proposition_ids=evidence_proposition_ids,
-        conflict_proposition_ids=(),
-        ranking_proposition_ids=ranking_proposition_ids,
-        reason=reason,
-        cardinality=cardinality,
-    )
+        # Every considered Proposition carries supplied trust here, so the trust
+        # rank orders them by descending trust and then identifier.
+        ranked_considered = sorted(considered, key=relation_trust_rank)
+        leader = ranked_considered[0].get("projection", {})
+        leader_trust = leader.get("supplied_trust", 0.0)
+        unique_trust_leader = len(ranked_considered) > 1 and (
+            leader_trust > ranked_considered[1].get("projection", {}).get("supplied_trust", 0.0)
+        )
+        direct_answer = True
+        selected_proposition_id = leader.get("proposition_id", "")
+        if operator == TemporalQueryOperator.LATEST:
+            reason = RelationSelectionReason.SELECTED_LATEST
+        elif unique_trust_leader:
+            reason = RelationSelectionReason.SELECTED_TRUST_RANKED
+        else:
+            reason = RelationSelectionReason.SELECTED_UNIQUE
+    result = {
+        "direct_answer": direct_answer,
+        "selected_proposition_id": selected_proposition_id,
+        "selected_proposition_id_available": bool(selected_proposition_id),
+        "evidence_proposition_ids": evidence_proposition_ids,
+        "conflict_proposition_ids": conflict_proposition_ids,
+        "ranking_proposition_ids": ranking_proposition_ids,
+        "reason": reason,
+        "cardinality": cardinality,
+    }
     return result
 
 

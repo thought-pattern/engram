@@ -17,6 +17,10 @@ from engram.relation import select_relation_propositions
 from engram.temporal import parse_temporal_query
 from scripts.benchmark_metadata import benchmark_source_state
 
+# Fields every corpus and case must declare; the report reads each one.
+CORPUS_FIELDS = {"name", "development", "held_out"}
+CASE_FIELDS = {"id", "cardinality", "propositions", "query", "expected"}
+
 
 def internal_score(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -78,27 +82,33 @@ def internal_percentile(values: list[float], fraction: float) -> float:
     return result
 
 
-def run(corpus_path: Path) -> dict[str, object]:
+def run(corpus_path: Path) -> dict:
     corpus = json_loads(corpus_path.read_text(encoding="utf-8"))
+    if not isinstance(corpus, dict) or not CORPUS_FIELDS.issubset(corpus):
+        raise ValueError("temporal conflict corpus must be an object with a name and both splits")
     results = []
     durations = []
     for split in ("development", "held_out"):
-        for case in corpus[split]:
+        for case in corpus.get(split, []):
+            if not isinstance(case, dict) or not CASE_FIELDS.issubset(case):
+                raise ValueError("temporal conflict corpus cases must declare every case field")
+            cardinality = case.get("cardinality", "")
             started = time_perf_counter_ns()
-            items = tuple(internal_item(value, case["cardinality"]) for value in case["propositions"])
-            selection = select_relation_propositions(items, parse_temporal_query(case["query"]))
+            items = tuple(internal_item(value, cardinality) for value in case.get("propositions", []))
+            selection = select_relation_propositions(items, parse_temporal_query(case.get("query", "")))
             elapsed_ms = (time_perf_counter_ns() - started) / 1_000_000
             durations.append(elapsed_ms)
-            expected = case["expected"]
+            expected = case.get("expected", {})
             observed = {
-                "direct_answer": selection["direct_answer"],
-                "reason": selection["reason"].value,
-                "selected_proposition_id": selection["selected_proposition_id"],
-                "conflict_proposition_ids": list(selection["conflict_proposition_ids"]),
+                "direct_answer": selection.get("direct_answer", False),
+                # The selection reason is a StrEnum, so its string form is its value.
+                "reason": str(selection.get("reason", "")),
+                "selected_proposition_id": selection.get("selected_proposition_id", ""),
+                "conflict_proposition_ids": list(selection.get("conflict_proposition_ids", ())),
             }
             results.append(
                 {
-                    "id": case["id"],
+                    "id": case.get("id", ""),
                     "split": split,
                     "passed": observed == expected,
                     "elapsed_ms": elapsed_ms,
@@ -107,12 +117,12 @@ def run(corpus_path: Path) -> dict[str, object]:
                 }
             )
     report = {
-        "corpus": corpus["name"],
+        "corpus": corpus.get("name", ""),
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source": benchmark_source_state(),
-        "passed": all(value["passed"] for value in results),
+        "passed": all(value.get("passed", False) for value in results),
         "case_count": len(results),
-        "passed_count": sum(value["passed"] for value in results),
+        "passed_count": sum(value.get("passed", False) for value in results),
         "duration_ms": {
             "median": statistics_median(durations),
             "p95": internal_percentile(durations, 0.95),
@@ -135,8 +145,9 @@ def main() -> None:
     report = run(arguments.corpus)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json_dumps({"passed": report["passed"], "case_count": report["case_count"], "duration_ms": report["duration_ms"]}))
-    if not report["passed"]:
+    passed = report.get("passed", False)
+    print(json_dumps({"passed": passed, "case_count": report.get("case_count", 0), "duration_ms": report.get("duration_ms", {})}))
+    if not passed:
         raise SystemExit(1)
 
 

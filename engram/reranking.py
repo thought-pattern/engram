@@ -45,7 +45,9 @@ def unit(value: object, name: str) -> float:
 
 def internal_score(features: dict) -> tuple[float, dict[str, float]]:
     normalized = {name: unit(features.get(name, 0.0), name) for name in RERANKER_FEATURES}
-    logit = RERANKER_INTERCEPT + sum(RERANKER_COEFFICIENTS.get(name, 0.0) * normalized[name] for name in RERANKER_FEATURES)
+    logit = RERANKER_INTERCEPT + sum(
+        RERANKER_COEFFICIENTS.get(name, 0.0) * normalized.get(name, 0.0) for name in RERANKER_FEATURES
+    )
     if logit >= 0:
         exponent = math_exp(-logit)
         score = 1.0 / (1.0 + exponent)
@@ -71,11 +73,11 @@ class TransparentLogisticReranker:
         self.internal_completed = 0
         self.internal_fallbacks = 0
         self.internal_cancellations = 0
-        self.internal_last_reason = "disabled" if not self.settings["enabled"] else "ready"
+        self.internal_last_reason = "disabled" if not self.settings.get("enabled", False) else "ready"
 
     @property
     def enabled(self) -> bool:
-        result = self.settings["enabled"]
+        result = self.settings.get("enabled", False)
         return result
 
     def health(self) -> dict:
@@ -83,8 +85,8 @@ class TransparentLogisticReranker:
             result = {
                 "enabled": self.enabled,
                 "ready": self.enabled,
-                "implementation": self.settings["implementation"],
-                "model_version": self.settings["model_version"],
+                "implementation": self.settings.get("implementation", ""),
+                "model_version": self.settings.get("model_version", ""),
                 "requests": self.internal_requests,
                 "completed": self.internal_completed,
                 "fallbacks": self.internal_fallbacks,
@@ -118,7 +120,7 @@ class TransparentLogisticReranker:
             raise InvalidRequestError("reranker shortlist must be a tuple")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("reranker cooperative_check must be callable")
-        if self.enabled and len(shortlist) > self.settings["shortlist_size"]:
+        if self.enabled and len(shortlist) > self.settings.get("shortlist_size", 0):
             # The cap is known from the tuple length, so an oversized shortlist is
             # refused before any candidate is copied, validated, or sorted.
             started = self.clock_ns()
@@ -126,7 +128,7 @@ class TransparentLogisticReranker:
             result = {
                 "applied": False,
                 "reason": "shortlist_budget",
-                "model_version": self.settings["model_version"],
+                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": max(0, self.clock_ns() - started),
                 "model_time_target_exceeded": False,
                 "input_bytes": 0,
@@ -159,7 +161,7 @@ class TransparentLogisticReranker:
             result = {
                 "applied": False,
                 "reason": "disabled",
-                "model_version": self.settings["model_version"],
+                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": 0,
                 "model_time_target_exceeded": False,
                 "input_bytes": 0,
@@ -172,15 +174,15 @@ class TransparentLogisticReranker:
             + sum(len(name.encode("utf-8")) + 8 for name in RERANKER_FEATURES)
             for value in baseline
         )
-        if input_bytes > self.settings["max_input_bytes"]:
+        if input_bytes > self.settings.get("max_input_bytes", 0):
             self.internal_record("input_budget", fallback=True)
             elapsed = max(0, self.clock_ns() - started)
             result = {
                 "applied": False,
                 "reason": "input_budget",
-                "model_version": self.settings["model_version"],
+                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": elapsed,
-                "model_time_target_exceeded": elapsed > self.settings["max_model_time_ms"] * 1_000_000,
+                "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
                 "input_bytes": input_bytes,
                 "scores": [],
             }
@@ -219,9 +221,9 @@ class TransparentLogisticReranker:
         result = {
             "applied": True,
             "reason": "completed",
-            "model_version": self.settings["model_version"],
+            "model_version": self.settings.get("model_version", ""),
             "elapsed_ns": elapsed,
-            "model_time_target_exceeded": elapsed > self.settings["max_model_time_ms"] * 1_000_000,
+            "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
             "input_bytes": input_bytes,
             "scores": scored,
         }

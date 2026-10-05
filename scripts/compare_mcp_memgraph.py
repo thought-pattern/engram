@@ -17,7 +17,7 @@ if str(REPOSITORY) not in sys_path:
 from mcp.client import Client
 
 from engram.config import load_config
-from engram.constants import VERSION
+from engram.constants import VERSION, ExpectedObjectType, ResolutionOutcome, ResolverState
 from engram.core import Engram
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from engram.service import EngramCore
@@ -73,10 +73,10 @@ def relation_probe(config_path: str) -> dict:
         relation_rows = []
         relation_latency = 0.0
         if len(entities) == 1 and len(predicates) == 1:
+            entity_id = entities[0].get("canonical_id", "")
+            predicate_id = predicates[0].get("canonical_id", "")
             relation_rows, relation_latency = timed(
-                lambda: engine.relation_one_hop_proposition_projections(
-                    entities[0]["canonical_id"], predicates[0]["canonical_id"], row_limit=10
-                )
+                lambda: engine.relation_one_hop_proposition_projections(entity_id, predicate_id, row_limit=10)
             )
         core = EngramCore(engine)
         resolution, resolution_latency = timed(
@@ -87,15 +87,16 @@ def relation_probe(config_path: str) -> dict:
                 configured_resolvers=("structured_graph",),
             )
         )
-        structured = next(item for item in resolution["resolver_results"] if item["resolver"] == "structured_graph")
+        structured = next(item for item in resolution.get("resolver_results", ()) if item.get("resolver", "") == "structured_graph")
+        consumption = structured.get("consumption", {})
         result = {
             "canonical_entity": {
                 "latency_ms": entity_latency,
                 "matches": [
                     {
-                        "canonical_id": item["canonical_id"],
-                        "primary_label": item["primary_label"],
-                        "entity_type": item["entity_type"].value,
+                        "canonical_id": item.get("canonical_id", ""),
+                        "primary_label": item.get("primary_label", ""),
+                        "entity_type": item.get("entity_type", ExpectedObjectType.UNKNOWN).value,
                     }
                     for item in entities
                 ],
@@ -104,9 +105,9 @@ def relation_probe(config_path: str) -> dict:
                 "latency_ms": predicate_latency,
                 "matches": [
                     {
-                        "canonical_id": item["canonical_id"],
-                        "primary_label": item["primary_label"],
-                        "object_type": item["object_type"].value,
+                        "canonical_id": item.get("canonical_id", ""),
+                        "primary_label": item.get("primary_label", ""),
+                        "object_type": item.get("object_type", ExpectedObjectType.UNKNOWN).value,
                     }
                     for item in predicates
                 ],
@@ -115,24 +116,24 @@ def relation_probe(config_path: str) -> dict:
                 "latency_ms": relation_latency,
                 "matches": [
                     {
-                        "proposition_id": item["projection"]["proposition_id"],
-                        "object_label": item["object_label"],
-                        "object_type": item["object_type"].value,
+                        "proposition_id": item.get("projection", {}).get("proposition_id", ""),
+                        "object_label": item.get("object_label", ""),
+                        "object_type": item.get("object_type", ExpectedObjectType.UNKNOWN).value,
                     }
                     for item in relation_rows
                 ],
             },
             "default_core_resolution": {
                 "latency_ms": resolution_latency,
-                "outcome": resolution["outcome"].value,
-                "reason_codes": list(resolution["reason_codes"]),
-                "response_candidates": [item["response"] for item in resolution["response_candidates"]],
-                "proposition_evidence": resolution["evidence_package"]["retained_count"],
+                "outcome": resolution.get("outcome", ResolutionOutcome.MISS).value,
+                "reason_codes": list(resolution.get("reason_codes", ())),
+                "response_candidates": [item.get("response", "") for item in resolution.get("response_candidates", ())],
+                "proposition_evidence": resolution.get("evidence_package", {}).get("retained_count", 0),
                 "structured_graph": {
-                    "state": structured["state"].value,
-                    "reason_code": structured["reason_code"],
-                    "elapsed_ns": structured["consumption"]["elapsed_ns"],
-                    "exhausted_dimensions": list(structured["consumption"]["exhausted_dimensions"]),
+                    "state": structured.get("state", ResolverState.FAILED).value,
+                    "reason_code": structured.get("reason_code", ""),
+                    "elapsed_ns": consumption.get("elapsed_ns", 0),
+                    "exhausted_dimensions": list(consumption.get("exhausted_dimensions", ())),
                 },
             },
         }
@@ -161,7 +162,7 @@ async def internal_conversation(config_path: str) -> dict:
                 },
             )
         )
-        if started.get("turn_count") != 0:
+        if "turn_count" not in started or started.get("turn_count", 0) != 0:
             raise RuntimeError("MCP conversation did not start at turn zero")
         for prompt in PROMPTS:
             turn_started = time_perf_counter_ns()
@@ -187,13 +188,14 @@ async def compare(config_path: str) -> dict:
     disabled = await internal_conversation("")
     enabled = await internal_conversation(config_path)
     differences = []
-    for index, (disabled_turn, enabled_turn) in enumerate(zip(disabled["turns"], enabled["turns"], strict=True)):
+    turn_pairs = zip(disabled.get("turns", []), enabled.get("turns", []), strict=True)
+    for index, (disabled_turn, enabled_turn) in enumerate(turn_pairs):
         differences.append(
             {
                 "turn": index + 1,
                 "prompt": PROMPTS[index],
-                "response_changed": disabled_turn["response_sha256"] != enabled_turn["response_sha256"],
-                "source_changed": disabled_turn["source"] != enabled_turn["source"],
+                "response_changed": disabled_turn.get("response_sha256", "") != enabled_turn.get("response_sha256", ""),
+                "source_changed": disabled_turn.get("source", "") != enabled_turn.get("source", ""),
                 "disabled": disabled_turn,
                 "enabled": enabled_turn,
             }
@@ -209,8 +211,8 @@ async def compare(config_path: str) -> dict:
         "section8_relation_probe": relation_probe(config_path),
         "comparison": {
             "turns": len(differences),
-            "response_changed_turns": sum(item["response_changed"] for item in differences),
-            "source_changed_turns": sum(item["source_changed"] for item in differences),
+            "response_changed_turns": sum(item.get("response_changed", False) for item in differences),
+            "source_changed_turns": sum(item.get("source_changed", False) for item in differences),
             "differences": differences,
         },
     }

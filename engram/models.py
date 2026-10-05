@@ -131,35 +131,40 @@ def session_update_context(
     """
     session["previous_response"] = previous_response
     session["last_active"] = datetime.now(UTC)
+    history_size = session.get("history_size", 0)
 
     # Update response history
     if previous_response:
-        session.get("response_history", []).insert(0, previous_response)
-        if len(session.get("response_history", [])) > session.get("history_size", 0):
-            session.get("response_history", []).pop()
+        response_history = session.setdefault("response_history", [])
+        response_history.insert(0, previous_response)
+        if len(response_history) > history_size:
+            response_history.pop()
 
         # Update that_history (split into sentences)
         sentences = split_sentences(previous_response.upper())
-        session.get("that_history", []).insert(0, sentences)
-        if len(session.get("that_history", [])) > session.get("history_size", 0):
-            session.get("that_history", []).pop()
+        that_history = session.setdefault("that_history", [])
+        that_history.insert(0, sentences)
+        if len(that_history) > history_size:
+            that_history.pop()
 
     # Update input history
     if user_input:
-        session.get("input_history", []).insert(0, user_input)
-        if len(session.get("input_history", [])) > session.get("history_size", 0):
-            session.get("input_history", []).pop()
+        input_history = session.setdefault("input_history", [])
+        input_history.insert(0, user_input)
+        if len(input_history) > history_size:
+            input_history.pop()
 
 
 def session_record_input(session: dict, user_input: str) -> bool:
     """Record an input without changing the previous bot response."""
-    if not user_input:
-        return False
-    session["last_active"] = datetime.now(UTC)
-    session.get("input_history", []).insert(0, user_input)
-    if len(session.get("input_history", [])) > session.get("history_size", 0):
-        session.get("input_history", []).pop()
-    return True
+    recorded = bool(user_input)
+    if recorded:
+        session["last_active"] = datetime.now(UTC)
+        input_history = session.setdefault("input_history", [])
+        input_history.insert(0, user_input)
+        if len(input_history) > session.get("history_size", 0):
+            input_history.pop()
+    return recorded
 
 
 def session_update_dialogue(
@@ -170,17 +175,15 @@ def session_update_dialogue(
     fact_admissions=(),
 ) -> None:
     """Update per-user discourse state independently of response history."""
-    session.setdefault("active_topic", "")
     session.setdefault("entities", [])
-    session.setdefault("dialogue_act_history", [])
-    session.setdefault("last_fact_admissions", [])
 
     session["active_topic"] = active_topic
     session["last_fact_admissions"] = list(fact_admissions or ())
+    dialogue_act_history = session.setdefault("dialogue_act_history", [])
     if dialogue_act:
-        session.get("dialogue_act_history", []).insert(0, dialogue_act)
-        if len(session.get("dialogue_act_history", [])) > session.get("history_size", 0):
-            session.get("dialogue_act_history", []).pop()
+        dialogue_act_history.insert(0, dialogue_act)
+        if len(dialogue_act_history) > session.get("history_size", 0):
+            dialogue_act_history.pop()
 
     for entity in entities or ():
         entity_text = str(entity.get("text", "")).strip()
@@ -196,13 +199,14 @@ def session_update_dialogue(
         for existing in matching:
             if label_priority.get(str(existing.get("label", "")), 0) > label_priority.get(entity_label, 0):
                 entity_label = str(existing.get("label", ""))
-        session["entities"] = [
+        retained_entities = [
             existing
             for existing in session.get("entities", [])
             if str(existing.get("text", "")).casefold() != entity_text.casefold()
         ]
-        session.get("entities", []).insert(0, {"text": entity_text, "label": entity_label})
-    del session.get("entities", [])[20:]
+        retained_entities.insert(0, {"text": entity_text, "label": entity_label})
+        session["entities"] = retained_entities
+    del session.setdefault("entities", [])[20:]
 
 
 def session_touch(session: dict) -> None:

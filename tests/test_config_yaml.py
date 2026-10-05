@@ -44,21 +44,23 @@ def test_load_config_defaults_empty_file_returns_defaults(tmp_path):
 
 def test_load_config_values_scalar_overrides(tmp_path):
     cfg = load_config(internal_write(tmp_path, "capacity: 500\nweight_base: 0.9\nuse_spacy_facts: true\n"))
-    assert cfg["capacity"] == 500
-    assert cfg["weight_base"] == 0.9
-    assert cfg["use_spacy_facts"] is True
+    assert cfg.get("capacity", 0) == 500
+    assert cfg.get("weight_base", 0.0) == 0.9
+    assert cfg.get("use_spacy_facts", False) is True
 
 
 def test_load_config_values_omitted_keys_keep_defaults(tmp_path):
     defaults = engram_config()
     cfg = load_config(internal_write(tmp_path, "capacity: 42\n"))
-    assert cfg["capacity"] == 42
-    assert cfg["max_sessions"] == defaults["max_sessions"]  # omitted -> default
+    assert cfg.get("capacity", 0) == 42
+    assert "max_sessions" in defaults
+    assert "max_sessions" in cfg
+    assert cfg.get("max_sessions", 0) == defaults.get("max_sessions", 0)  # omitted -> default
 
 
 def test_load_config_values_enum_fields_by_name(tmp_path):
     cfg = load_config(internal_write(tmp_path, "session_overflow: reject\n"))
-    assert cfg["session_overflow"] == SessionOverflow.REJECT
+    assert cfg.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
 
 
 def test_load_config_values_graph_mapping(tmp_path):
@@ -68,9 +70,10 @@ def test_load_config_values_graph_mapping(tmp_path):
             "graph:\n  host: db\n  port: 7777\n  enabled: true\n",
         )
     )
-    assert cfg["graph"]["host"] == "db"
-    assert cfg["graph"]["port"] == 7777
-    assert cfg["graph"]["enabled"] is True
+    graph = cfg.get("graph", {})
+    assert graph.get("host", "") == "db"
+    assert graph.get("port", 0) == 7777
+    assert graph.get("enabled", False) is True
 
 
 def test_load_config_ignores_and_logs_an_unknown_key(tmp_path, caplog):
@@ -83,8 +86,9 @@ def test_load_config_ignores_and_logs_an_unknown_key(tmp_path, caplog):
 def test_load_config_ignores_an_unknown_graph_key(tmp_path, caplog):
     # A stale graph section (e.g. the pre-pymgclient uri/database form).
     cfg = load_config(internal_write(tmp_path, "graph:\n  uri: bolt://localhost:7687\n  port: 7777\n"))
-    assert cfg["graph"]["port"] == 7777
-    assert "uri" not in cfg["graph"]
+    graph = cfg.get("graph", {})
+    assert graph.get("port", 0) == 7777
+    assert "uri" not in graph
     assert "uri" in caplog.text
 
 
@@ -95,8 +99,9 @@ def test_load_config_values_validation_applies(tmp_path):
 
 def test_load_config_ignores_an_unknown_conversation_key(tmp_path):
     cfg = load_config(internal_write(tmp_path, "conversation:\n  persona: Mara\n  bot_name: Mara\n"))
-    assert cfg["conversation"]["bot_name"] == "Mara"
-    assert "persona" not in cfg["conversation"]
+    conversation = cfg.get("conversation", {})
+    assert conversation.get("bot_name", "") == "Mara"
+    assert "persona" not in conversation
 
 
 def test_load_config_conversation_blank_bot_name_raises(tmp_path):
@@ -123,8 +128,9 @@ def test_load_config_absolute_seed_path_stays_absolute(tmp_path):
     seed.write_text('{"pairs": []}', encoding="utf-8")
     quoted = seed.resolve().as_posix()
     cfg = load_config(internal_write(tmp_path, f'conversation:\n  seed_files:\n    - "{quoted}"\n'))
-    assert os_path.isabs(cfg["conversation"]["seed_files"][0])
-    assert os_path.normcase(cfg["conversation"]["seed_files"][0]) == os_path.normcase(os_path.abspath(quoted))
+    seed_files = cfg.get("conversation", {}).get("seed_files", [])
+    assert os_path.isabs(seed_files[0])
+    assert os_path.normcase(seed_files[0]) == os_path.normcase(os_path.abspath(quoted))
 
 
 """The shipped template is loadable.
@@ -139,4 +145,5 @@ def test_example_template_example_parses():
     repo_root = Path(__file__).resolve().parents[1]
     cfg = load_config(str(repo_root / "config.example.yml"))
     assert isinstance(cfg, dict)
-    assert cfg["conversation"] == engram_config()["conversation"]
+    assert "conversation" in cfg
+    assert cfg.get("conversation", {}) == engram_config().get("conversation", {})

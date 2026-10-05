@@ -18,11 +18,11 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn() -> None:
 
     event = runtime.send("hello")
 
-    assert event["turn"] == 1
-    assert event["response"] == "Hello!"
-    assert event["context_changes"]["previous_response"]["before"] == "."
-    assert runtime.inspect()["session"]["response_history"] == ["Hello!", "."]
-    assert runtime.inspect()["latest_turn"] == event
+    assert event.get("turn", 0) == 1
+    assert event.get("response", "") == "Hello!"
+    assert event.get("context_changes", {}).get("previous_response", {}).get("before", "") == "."
+    assert runtime.inspect().get("session", {}).get("response_history", []) == ["Hello!", "."]
+    assert runtime.inspect().get("latest_turn", {}) == event
     # No transcript is kept: responses use the session's bounded history.
     assert "turns" not in runtime.report()
 
@@ -45,11 +45,12 @@ def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
     recall = runtime.send("What's good?")
     snapshot = runtime.inspect()
 
-    assert teaching["learned_statements"]
-    assert all(statement["introduced_by_user_id"] == "Alice" for statement in teaching["learned_statements"])
-    assert recall["response"] == "Sushi is good."
-    assert snapshot["turn_count"] == 2
-    assert snapshot["learned_unique_texts"] == ["Sushi is good."]
+    learned_statements = teaching.get("learned_statements", [])
+    assert learned_statements
+    assert all(statement.get("introduced_by_user_id", "") == "Alice" for statement in learned_statements)
+    assert recall.get("response", "") == "Sushi is good."
+    assert snapshot.get("turn_count", 0) == 2
+    assert snapshot.get("learned_unique_texts", []) == ["Sushi is good."]
 
 
 def test_runtime_returns_report_without_writing_files() -> None:
@@ -60,8 +61,8 @@ def test_runtime_returns_report_without_writing_files() -> None:
 
     report = runtime.report()
 
-    assert report["summary"]["exchanges"] == 1
-    assert report["user_id"] == "agent"
+    assert report.get("summary", {}).get("exchanges", 0) == 1
+    assert report.get("user_id", "") == "agent"
 
 
 def test_turn_planner_preserves_messages_and_reserves_the_farewell() -> None:

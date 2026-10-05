@@ -30,7 +30,7 @@ from engram.feedback import (
     feedback_state_to_json,
     negative_resolution_key,
 )
-from engram.identity import build_standalone_identity, scope_key
+from engram.identity import extract_standalone_identity, scope_key
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
@@ -86,7 +86,7 @@ def ingest_benchmark_verdicts(store: FeedbackStore, record_count: int, prefix: s
                 reference_id=f"resolution-{index}",
                 kind=FeedbackObservationKind.VERDICT,
                 outcome=FeedbackOutcome.ACCEPTED if index % 2 == 0 else FeedbackOutcome.REJECTED_CONTEXT,
-                query_identity=build_standalone_identity("What is the benchmark response?", scope),
+                query_identity=extract_standalone_identity("What is the benchmark response?", scope),
                 scope=scope,
                 constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
                 statement_id=f"{prefix}-statement-{index}",
@@ -113,7 +113,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
             reference_id=f"resolution-{index}",
             kind=FeedbackObservationKind.VERDICT,
             outcome=FeedbackOutcome.ACCEPTED if index % 2 == 0 else FeedbackOutcome.REJECTED_CONTEXT,
-            query_identity=build_standalone_identity("What is the benchmark response?", scope),
+            query_identity=extract_standalone_identity("What is the benchmark response?", scope),
             scope=scope,
             constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
             statement_id="statement-benchmark",
@@ -125,7 +125,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         internal_apply(store, f"feedback-{index}", verdict)
         ingestion.append((time_perf_counter_ns() - started) / 1_000_000)
     target_scope = scope_key(namespace="section6-benchmark")
-    target_identity = build_standalone_identity("What is the benchmark response?", target_scope)
+    target_identity = extract_standalone_identity("What is the benchmark response?", target_scope)
     target_constraint = constraint_fingerprint("UNKNOWN", {}, "")
     history = []
     for _ in range(samples):
@@ -157,7 +157,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         reference_id=f"resolution-{scale_records}",
         kind=FeedbackObservationKind.VERDICT,
         outcome=FeedbackOutcome.ACCEPTED if scale_records % 2 == 0 else FeedbackOutcome.REJECTED_CONTEXT,
-        query_identity=build_standalone_identity("What is the benchmark response?", scale_scope),
+        query_identity=extract_standalone_identity("What is the benchmark response?", scale_scope),
         scope=scale_scope,
         constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
         statement_id="scale-probe-statement",
@@ -221,7 +221,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         negative_scope = scope_key(namespace="section6-benchmark")
         negatives.admit(
             negative_resolution_key(
-                query_identity=build_standalone_identity(f"negative benchmark request {index}", negative_scope),
+                query_identity=extract_standalone_identity(f"negative benchmark request {index}", negative_scope),
                 scope=negative_scope,
                 constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
                 resolver_plan_fingerprint=canonical_fingerprint("exact-only"),

@@ -4,7 +4,7 @@ This module provides template parsing and evaluation for dynamic response genera
 Templates can be simple strings or structured JSON objects with variable substitution,
 random selection, conditionals, redirects, and more.
 
-The evaluation context is a plain dict built by ``TemplateContext``.
+The evaluation context is a plain dict normalized by ``template_context``.
 """
 
 from contextvars import ContextVar
@@ -84,10 +84,14 @@ def template_context(
     learn_fn=(),
     graph_fn=(),
 ) -> dict:
-    """Build a context dict for template evaluation.
+    """Validate and normalize the evaluation context for one template turn.
 
     Contains all data needed to evaluate a template, including wildcard captures,
-    session predicates, bot properties, and history.
+    session predicates, bot properties, and history. Captures and histories are
+    copied to lists, a non-dict mapping argument becomes an empty map, and the
+    evaluation time defaults to the current UTC instant and must parse as a UTC
+    timestamp. The predicates dict is kept by reference so ``set`` writes
+    reach the session that owns it.
     """
     selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     projection_timestamp(selected_evaluation_time, True, "template evaluation time")
@@ -149,10 +153,14 @@ def get_topicstar(ctx: dict, index: int) -> str:
 
 def get_map(ctx: dict, map_name: str, key: str, default: str = "") -> str:
     """Get value from named map."""
-    if map_name in ctx.get("maps", {}):
-        value = ctx.get("maps", {})[map_name].get(key.lower(), default)
-        return value
-    return default
+    maps = ctx.get("maps", {})
+    if map_name not in maps:
+        return default
+    named_map = maps.get(map_name, {})
+    if not isinstance(named_map, dict):
+        raise TypeError("a template map must be a dictionary")
+    value = named_map.get(key.lower(), default)
+    return value
 
 
 def get_input(ctx: dict, index: int = 1) -> str:
@@ -185,19 +193,19 @@ def get_that(ctx: dict, response_idx: int = 1, sentence_idx: int = 1) -> str:
 
 
 def simple_variable_values(context: dict) -> dict[str, str]:
-    """Collect concrete values for the centralized simple-variable tokens."""
+    """Render the current value of each centralized simple-variable token."""
 
     result = {
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["topic"]: context.get("predicates", {}).get("topic", ""),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["input"]: context.get("input_text", ""),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["request"]: context.get("request_text", ""),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["id"]: context.get("session_id", ""),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["size"]: str(context.get("category_count", 0)),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["vocabulary"]: str(context.get("vocabulary_count", 0)),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["date"]: datetime.now().strftime("%B %d, %Y"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["time"]: datetime.now().strftime("%H:%M:%S"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["program"]: context.get("bot", {}).get("name", "ENGRAM"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS["version"]: context.get("bot", {}).get("version", VERSION),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("topic", ""): context.get("predicates", {}).get("topic", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("input", ""): context.get("input_text", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("request", ""): context.get("request_text", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("id", ""): context.get("session_id", ""),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("size", ""): str(context.get("category_count", 0)),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("vocabulary", ""): str(context.get("vocabulary_count", 0)),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("date", ""): datetime.now().strftime("%B %d, %Y"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("time", ""): datetime.now().strftime("%H:%M:%S"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("program", ""): context.get("bot", {}).get("name", "ENGRAM"),
+        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("version", ""): context.get("bot", {}).get("version", VERSION),
     }
     return result
 
@@ -403,7 +411,7 @@ class TemplateProcessor:
         if branches:
             for case in branches:
                 if "value" in case:
-                    if var_value == case["value"]:
+                    if var_value == case.get("value", ""):
                         result_template = case.get("then", "")
                         result = self.process(result_template, context)
                         # Check for loop (bounded so a predicate that never

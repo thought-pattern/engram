@@ -116,17 +116,23 @@ def internal_tokens(value: str) -> tuple[str, ...]:
     return result
 
 
+def rule_precedence(rule: dict) -> tuple[int, str]:
+    """Order validated rules by descending priority, then by rule identity."""
+    result = (-rule.get("priority", 0), rule.get("rule_id", ""))
+    return result
+
+
 def rewrite_rule(value: object) -> dict:
     """Validate and copy one exact version-1 rule record."""
     data = internal_mapping(value, "RewriteRule", RULE_FIELDS)
-    constraint_data = internal_mapping(data["input_constraints"], "RewriteInputConstraints", INPUT_FIELDS)
-    provenance_data = internal_mapping(data["provenance"], "RewriteProvenance", PROVENANCE_FIELDS)
+    constraint_data = internal_mapping(data.get("input_constraints", {}), "RewriteInputConstraints", INPUT_FIELDS)
+    provenance_data = internal_mapping(data.get("provenance", {}), "RewriteProvenance", PROVENANCE_FIELDS)
     try:
-        mode = RewriteMatchMode(internal_text(constraint_data["match_mode"], "rewrite match_mode", 32))
-        scope = RewriteScope(internal_text(data["scope"], "rewrite scope", 32))
+        mode = RewriteMatchMode(internal_text(constraint_data.get("match_mode", ""), "rewrite match_mode", 32))
+        scope = RewriteScope(internal_text(data.get("scope", ""), "rewrite scope", 32))
     except ValueError as error:
         raise InvalidRequestError("rewrite rule uses an unsupported enum value") from error
-    raw_operators = constraint_data["required_operators"]
+    raw_operators = constraint_data.get("required_operators", [])
     if not isinstance(raw_operators, (list, tuple)) or len(raw_operators) > len(QueryOperator):
         raise InvalidRequestError("rewrite required_operators must be a bounded list")
     try:
@@ -135,40 +141,40 @@ def rewrite_rule(value: object) -> dict:
         raise InvalidRequestError("rewrite required_operators contains an unsupported operator") from error
     if len(set(operators)) != len(operators):
         raise InvalidRequestError("rewrite required_operators must be unique")
-    requires_subject = constraint_data["requires_inherited_subject"]
+    requires_subject = constraint_data.get("requires_inherited_subject", False)
     if not isinstance(requires_subject, bool):
         raise InvalidRequestError("rewrite requires_inherited_subject must be a boolean")
     if requires_subject and scope != RewriteScope.CONTEXTUAL:
         raise InvalidRequestError("inherited-subject rewrite rules must be contextual")
-    template = internal_text(data["output_template"], "rewrite output_template", MAX_REWRITE_PATTERN_BYTES, empty=True)
+    template = internal_text(data.get("output_template", ""), "rewrite output_template", MAX_REWRITE_PATTERN_BYTES, empty=True)
     fields = {match.group(1) for match in re_finditer(r"\{([^{}]+)\}", template)}
     if fields.difference(SAFE_TEMPLATE_FIELDS) or ("{subject}" in template) != requires_subject:
         raise InvalidRequestError("rewrite output_template uses unsupported or inconsistent fields")
     constraint: dict = {
         "match_mode": mode,
-        "pattern": internal_text(constraint_data["pattern"], "rewrite pattern", MAX_REWRITE_PATTERN_BYTES),
-        "min_tokens": internal_integer(constraint_data["min_tokens"], "rewrite min_tokens", 1, 512),
-        "max_tokens": internal_integer(constraint_data["max_tokens"], "rewrite max_tokens", 1, 512),
+        "pattern": internal_text(constraint_data.get("pattern", ""), "rewrite pattern", MAX_REWRITE_PATTERN_BYTES),
+        "min_tokens": internal_integer(constraint_data.get("min_tokens", 0), "rewrite min_tokens", 1, 512),
+        "max_tokens": internal_integer(constraint_data.get("max_tokens", 0), "rewrite max_tokens", 1, 512),
         "required_operators": operators,
         "requires_inherited_subject": requires_subject,
     }
     if constraint.get("min_tokens", 0) > constraint.get("max_tokens", 0):
         raise InvalidRequestError("rewrite min_tokens must not exceed max_tokens")
     provenance: dict = {
-        "author": internal_text(provenance_data["author"], "rewrite provenance author", MAX_REWRITE_PROVENANCE_BYTES),
-        "origin": internal_text(provenance_data["origin"], "rewrite provenance origin", MAX_REWRITE_PROVENANCE_BYTES),
-        "license": internal_text(provenance_data["license"], "rewrite provenance license", 96),
-        "created_at": internal_text(provenance_data["created_at"], "rewrite provenance created_at", 40),
+        "author": internal_text(provenance_data.get("author", ""), "rewrite provenance author", MAX_REWRITE_PROVENANCE_BYTES),
+        "origin": internal_text(provenance_data.get("origin", ""), "rewrite provenance origin", MAX_REWRITE_PROVENANCE_BYTES),
+        "license": internal_text(provenance_data.get("license", ""), "rewrite provenance license", 96),
+        "created_at": internal_text(provenance_data.get("created_at", ""), "rewrite provenance created_at", 40),
     }
     result: dict = {
-        "rule_id": internal_text(data["rule_id"], "rewrite rule_id", MAX_REWRITE_RULE_ID_BYTES),
-        "category": internal_text(data["category"], "rewrite category", 64),
+        "rule_id": internal_text(data.get("rule_id", ""), "rewrite rule_id", MAX_REWRITE_RULE_ID_BYTES),
+        "category": internal_text(data.get("category", ""), "rewrite category", 64),
         "input_constraints": constraint,
         "output_template": template,
-        "priority": internal_integer(data["priority"], "rewrite priority", 0, MAX_REWRITE_PRIORITY),
+        "priority": internal_integer(data.get("priority", 0), "rewrite priority", 0, MAX_REWRITE_PRIORITY),
         "scope": scope,
         "max_applications": internal_integer(
-            data["max_applications"],
+            data.get("max_applications", 0),
             "rewrite max_applications",
             1,
             MAX_REWRITE_APPLICATIONS_PER_RULE,
@@ -185,15 +191,15 @@ def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
     except (TypeError, json_JSONDecodeError) as error:
         raise InvalidRequestError("rewrite corpus must be valid JSON") from error
     data = internal_mapping(decoded, "RewriteCorpus", CORPUS_FIELDS)
-    internal_text(data["corpus_id"], "rewrite corpus_id", 128)
-    raw_rules = data["rules"]
+    internal_text(data.get("corpus_id", ""), "rewrite corpus_id", 128)
+    raw_rules = data.get("rules", [])
     if not isinstance(raw_rules, list) or not 1 <= len(raw_rules) <= MAX_REWRITE_RULES:
         raise InvalidRequestError(f"rewrite corpus rules must contain 1 through {MAX_REWRITE_RULES} items")
     rules = tuple(rewrite_rule(rule) for rule in raw_rules)
-    identities = tuple(rule["rule_id"] for rule in rules)
+    identities = tuple(rule.get("rule_id", "") for rule in rules)
     if len(set(identities)) != len(identities):
         raise InvalidRequestError("rewrite corpus contains duplicate rule identity/version pairs")
-    result = tuple(sorted(rules, key=lambda rule: (-rule["priority"], rule["rule_id"])))
+    result = tuple(sorted(rules, key=rule_precedence))
     return result
 
 
@@ -206,9 +212,9 @@ def load_default_rewrite_corpus() -> tuple[dict, ...]:
 
 def match_span(text: str, rule: dict) -> tuple[int, int]:
     constraint = rule.get("input_constraints", {})
-    pattern = re_escape(normalized_text(constraint["pattern"]))
+    pattern = re_escape(normalized_text(constraint.get("pattern", "")))
     pattern = pattern.replace(r"\ ", r"\s+").replace("'", "['’]")
-    mode = constraint["match_mode"]
+    mode = constraint.get("match_mode", RewriteMatchMode.EXACT)
     if mode == RewriteMatchMode.EXACT:
         expression = rf"^{pattern}[?.!]*$"
     elif mode == RewriteMatchMode.PREFIX:
@@ -236,13 +242,14 @@ def candidate_output(text: str, rule: dict, subject: str) -> str:
 def eligible(rule: dict, text: str, operator: QueryOperator, subject: str, inherited_subject: bool) -> bool:
     constraint = rule.get("input_constraints", {})
     count = len(internal_tokens(text))
-    if not constraint["min_tokens"] <= count <= constraint["max_tokens"]:
+    if not constraint.get("min_tokens", 0) <= count <= constraint.get("max_tokens", 0):
         return False
-    if constraint["required_operators"] and operator not in constraint["required_operators"]:
+    required_operators = constraint.get("required_operators", ())
+    if required_operators and operator not in required_operators:
         return False
-    if rule.get("scope", {}) == RewriteScope.CONTEXTUAL and not inherited_subject:
+    if rule.get("scope", RewriteScope.GLOBAL) == RewriteScope.CONTEXTUAL and not inherited_subject:
         return False
-    if constraint["requires_inherited_subject"] and not subject:
+    if constraint.get("requires_inherited_subject", False) and not subject:
         return False
     result = match_span(text, rule)[0] >= 0
     return result
@@ -265,8 +272,8 @@ class RewriteEngine:
             raise InvalidRequestError("rewrite rules must be a tuple")
         if not 1 <= len(rules) <= MAX_REWRITE_RULES:
             raise InvalidRequestError(f"rewrite rules must contain 1 through {MAX_REWRITE_RULES} items")
-        self.rules = tuple(sorted((rewrite_rule(rule) for rule in rules), key=lambda rule: (-rule["priority"], rule["rule_id"])))
-        rule_identities = tuple(rule["rule_id"] for rule in self.rules)
+        self.rules = tuple(sorted((rewrite_rule(rule) for rule in rules), key=rule_precedence))
+        rule_identities = tuple(rule.get("rule_id", "") for rule in self.rules)
         if len(set(rule_identities)) != len(rule_identities):
             raise InvalidRequestError("rewrite rules must have unique identity/version pairs")
         self.max_depth = internal_integer(max_depth, "rewrite max_depth", 1, MAX_TRACE_STEPS)
@@ -318,8 +325,8 @@ class RewriteEngine:
                 break
             candidates = []
             for rule in self.rules:
-                identity = rule["rule_id"]
-                if applications.get(identity, 0) >= rule["max_applications"]:
+                identity = rule.get("rule_id", "")
+                if applications.get(identity, 0) >= rule.get("max_applications", 0):
                     continue
                 if eligible(rule, current, operator, selected_subject, inherited_subject):
                     output = candidate_output(current, rule, selected_subject)
@@ -339,9 +346,9 @@ class RewriteEngine:
             if signature in seen:
                 stop_reason = RewriteStopReason.CYCLE
                 break
-            identity = rule["rule_id"]
+            identity = rule.get("rule_id", "")
             applications[identity] = applications.get(identity, 0) + 1
-            chain.append((rule["rule_id"], current, output))
+            chain.append((identity, current, output))
             current = output
             seen.add(signature)
         else:
@@ -373,32 +380,37 @@ def apply_rewrites_to_frame(
     fail the request.
     """
     frame = validate_query_frame(value)
-    inherited_subject = any(item["field_name"] == "subjects" for item in frame["inheritance"])
-    subject = frame["identity"]["entities"][0]["surface"] if frame["identity"]["entities"] else ""
+    inherited_subject = any(item.get("field_name", "") == "subjects" for item in frame.get("inheritance", ()))
+    identity = frame.get("identity", {})
+    entities = identity.get("entities", ())
+    subject = entities[0].get("surface", "") if entities else ""
     execution = engine.rewrite(
-        frame["resolved_text"],
-        operator=frame["identity"]["operator"],
+        frame.get("resolved_text", ""),
+        operator=identity.get("operator", QueryOperator.UNKNOWN),
         subject=subject,
         inherited_subject=inherited_subject,
         cooperative_check=cooperative_check,
     )
-    if execution["stop_reason"] != RewriteStopReason.FIXED_POINT:
-        logger.info("Rewrite stopped at %s; resolving the original representation", execution["stop_reason"].value)
+    stop_reason = execution.get("stop_reason", RewriteStopReason.FIXED_POINT)
+    if stop_reason != RewriteStopReason.FIXED_POINT:
+        logger.info("Rewrite stopped at %s; resolving the original representation", stop_reason.value)
         result = frame
         return result
-    trace = tuple(rewrite_trace_step(rule_id, input_text, output_text) for rule_id, input_text, output_text in execution["chain"])
-    result = query_frame_with_changes(frame, {"resolved_text": execution["final_text"], "rewrite_chain": trace})
+    trace = tuple(
+        rewrite_trace_step(rule_id, input_text, output_text) for rule_id, input_text, output_text in execution.get("chain", ())
+    )
+    result = query_frame_with_changes(frame, {"resolved_text": execution.get("final_text", ""), "rewrite_chain": trace})
     return result
 
 
 def rewrite_rule_population(rule: dict) -> tuple[int, int, set, set]:
     """Return the token range, operators, and (inherited, subject present) states ``eligible`` admits."""
-    constraint = rule["input_constraints"]
-    operators = set(constraint["required_operators"]) or set(QueryOperator)
-    inherited_states = (True,) if rule["scope"] == RewriteScope.CONTEXTUAL else (False, True)
-    subject_states = (True,) if constraint["requires_inherited_subject"] else (False, True)
+    constraint = rule.get("input_constraints", {})
+    operators = set(constraint.get("required_operators", ())) or set(QueryOperator)
+    inherited_states = (True,) if rule.get("scope", RewriteScope.GLOBAL) == RewriteScope.CONTEXTUAL else (False, True)
+    subject_states = (True,) if constraint.get("requires_inherited_subject", False) else (False, True)
     contexts = {(inherited, subject) for inherited in inherited_states for subject in subject_states}
-    result = (constraint["min_tokens"], constraint["max_tokens"], operators, contexts)
+    result = (constraint.get("min_tokens", 0), constraint.get("max_tokens", 0), operators, contexts)
     return result
 
 
@@ -418,7 +430,12 @@ def rewrite_population_covers(outer: dict, inner: dict) -> bool:
     """Return whether ``outer`` admits every input ``inner`` admits under one match mode and pattern."""
     outer_min, outer_max, outer_operators, outer_contexts = rewrite_rule_population(outer)
     inner_min, inner_max, inner_operators, inner_contexts = rewrite_rule_population(inner)
-    result = outer_min <= inner_min and inner_max <= outer_max and inner_operators <= outer_operators and inner_contexts <= outer_contexts
+    result = (
+        outer_min <= inner_min
+        and inner_max <= outer_max
+        and inner_operators <= outer_operators
+        and inner_contexts <= outer_contexts
+    )
     return result
 
 
@@ -435,40 +452,47 @@ def lint_rewrite_corpus(rules: tuple[dict, ...]) -> tuple[dict, ...]:
     patterns: dict[tuple[object, ...], list[dict]] = {}
     outputs: dict[str, list[str]] = {}
     for rule in validated:
-        constraint = rule["input_constraints"]
-        same_pattern = patterns.setdefault((constraint["match_mode"], constraint["pattern"].casefold()), [])
+        rule_id = rule.get("rule_id", "")
+        output_template = rule.get("output_template", "")
+        constraint = rule.get("input_constraints", {})
+        match_mode = constraint.get("match_mode", RewriteMatchMode.EXACT)
+        pattern = constraint.get("pattern", "")
+        same_pattern = patterns.setdefault((match_mode, pattern.casefold()), [])
         for prior in same_pattern:
             if not rewrite_populations_overlap(prior, rule):
                 continue
-            if prior["output_template"] != rule["output_template"]:
+            prior_rule_id = prior.get("rule_id", "")
+            if prior.get("output_template", "") != output_template:
                 findings.append(
                     {
                         "severity": "error",
                         "code": "rule_collision",
-                        "rule_ids": (prior["rule_id"], rule["rule_id"]),
+                        "rule_ids": (prior_rule_id, rule_id),
                         "detail": "rules admit a common input under one pattern with different outputs",
                     }
                 )
                 continue
-            higher, lower = sorted((prior, rule), key=lambda value: (-value["priority"], value["rule_id"]))
+            higher, lower = sorted((prior, rule), key=rule_precedence)
             if rewrite_population_covers(higher, lower):
+                higher_rule_id = higher.get("rule_id", "")
+                lower_rule_id = lower.get("rule_id", "")
                 findings.append(
                     {
                         "severity": "error",
                         "code": "unreachable_rule",
-                        "rule_ids": (prior["rule_id"], rule["rule_id"]),
-                        "detail": f"{higher['rule_id']} has the same output and admits every input of {lower['rule_id']} first",
+                        "rule_ids": (prior_rule_id, rule_id),
+                        "detail": f"{higher_rule_id} has the same output and admits every input of {lower_rule_id} first",
                     }
                 )
         same_pattern.append(rule)
-        pattern_tokens = internal_tokens(constraint["pattern"])
+        pattern_tokens = internal_tokens(pattern)
         overbroad = (
-            rule["category"] != "contractions"
-            and rule["scope"] == RewriteScope.GLOBAL
+            rule.get("category", "") != "contractions"
+            and rule.get("scope", RewriteScope.GLOBAL) == RewriteScope.GLOBAL
             and (
-                (constraint["match_mode"] == RewriteMatchMode.TOKEN_SEQUENCE and len(pattern_tokens) < 2)
-                or (constraint["match_mode"] == RewriteMatchMode.PREFIX and len(pattern_tokens) < 3)
-                or (constraint["match_mode"] == RewriteMatchMode.EXACT and len(pattern_tokens) < 3)
+                (match_mode == RewriteMatchMode.TOKEN_SEQUENCE and len(pattern_tokens) < 2)
+                or (match_mode == RewriteMatchMode.PREFIX and len(pattern_tokens) < 3)
+                or (match_mode == RewriteMatchMode.EXACT and len(pattern_tokens) < 3)
             )
         )
         if overbroad:
@@ -476,12 +500,12 @@ def lint_rewrite_corpus(rules: tuple[dict, ...]) -> tuple[dict, ...]:
                 {
                     "severity": "error",
                     "code": "overbroad_rule",
-                    "rule_ids": (rule["rule_id"],),
+                    "rule_ids": (rule_id,),
                     "detail": "global non-contraction rule has an insufficiently constrained input",
                 }
             )
-        output_key = rule["output_template"].casefold()
-        outputs.setdefault(output_key, []).append(rule["rule_id"])
+        output_key = output_template.casefold()
+        outputs.setdefault(output_key, []).append(rule_id)
     for rule_ids in outputs.values():
         if len(rule_ids) > 1:
             findings.append(
@@ -494,22 +518,24 @@ def lint_rewrite_corpus(rules: tuple[dict, ...]) -> tuple[dict, ...]:
             )
     cycle_engine = RewriteEngine(validated, max_depth=MAX_TRACE_STEPS, max_expansions=MAX_REWRITE_RULES)
     for rule in validated:
-        constraint = rule["input_constraints"]
-        if constraint["requires_inherited_subject"]:
+        constraint = rule.get("input_constraints", {})
+        if constraint.get("requires_inherited_subject", False):
             continue
+        required_operators = constraint.get("required_operators", ())
         execution = cycle_engine.rewrite(
-            constraint["pattern"],
-            operator=constraint["required_operators"][0] if constraint["required_operators"] else QueryOperator.UNKNOWN,
+            constraint.get("pattern", ""),
+            operator=required_operators[0] if required_operators else QueryOperator.UNKNOWN,
         )
-        if execution["stop_reason"] == RewriteStopReason.CYCLE:
+        if execution.get("stop_reason", RewriteStopReason.FIXED_POINT) == RewriteStopReason.CYCLE:
+            rule_id = rule.get("rule_id", "")
             findings.append(
                 {
                     "severity": "error",
                     "code": "rewrite_cycle",
-                    "rule_ids": tuple(step[0].split("@", maxsplit=1)[0] for step in execution["chain"]),
-                    "detail": f"rule input reaches a cycle from {rule['rule_id']}",
+                    "rule_ids": tuple(step[0].split("@", maxsplit=1)[0] for step in execution.get("chain", ())),
+                    "detail": f"rule input reaches a cycle from {rule_id}",
                 }
             )
-    findings.sort(key=lambda finding: (finding["severity"], finding["code"], finding["rule_ids"]))
+    findings.sort(key=lambda finding: (finding.get("severity", ""), finding.get("code", ""), finding.get("rule_ids", ())))
     result = tuple(findings)
     return result

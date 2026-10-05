@@ -2,7 +2,7 @@
 
 from heapq import heappop as heapq_heappop, heapreplace as heapq_heapreplace
 
-from engram.constants import Tier
+from engram.constants import EARLIEST_UTC, Tier
 
 
 def get_eviction_candidates(engram) -> list[tuple[int, dict]]:
@@ -29,7 +29,7 @@ def evict_statement_at(engram, idx: int) -> bool:
 
     Args:
         engram: Engram instance.
-        idx: Index in _statements list.
+        idx: Index in the statements list.
 
     Returns:
         True if evicted successfully, False if index invalid.
@@ -60,9 +60,10 @@ def detach_keywords(engram, stmt: dict) -> None:
     with engram.keyword_lock:
         for kw in stmt.get("keywords", []):
             if kw in engram.keywords:
-                engram.keywords[kw].get("statement_ids", set()).discard(stmt.get("id", ""))
+                statement_ids = engram.keywords.get(kw, {}).get("statement_ids", set())
+                statement_ids.discard(stmt.get("id", ""))
                 # Prune empty keyword entries
-                if not engram.keywords[kw].get("statement_ids", []):
+                if not statement_ids:
                     del engram.keywords[kw]
 
 
@@ -74,27 +75,28 @@ def detach_statement(engram, stmt: dict) -> None:
     # A surviving statement carrying the same pattern keeps its own entry and
     # becomes the map target. Keeping this entry for a survivor instead would
     # leave a dead entry behind once the last carrier is evicted.
+    stmt_id = stmt.get("id", "")
     for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])]:
         if not pattern:
             continue
         carriers = [
-            engram.statement_by_id[statement_id]
+            engram.statement_by_id.get(statement_id, {})
             for statement_id in engram.pattern_statements.get(pattern, ())
-            if statement_id != stmt.get("id", "")
+            if statement_id != stmt_id and statement_id in engram.statement_by_id
         ]
         survivors = [
-            s for s in carriers if s.get("that", False) == stmt.get("that", False) and s.get("topic", "") == stmt.get("topic", "")
+            s for s in carriers if s.get("that", "") == stmt.get("that", "") and s.get("topic", "") == stmt.get("topic", "")
         ]
         engram.pattern_matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
-        if engram.pattern_to_statement.get(pattern, False) == stmt.get("id", ""):
+        if pattern in engram.pattern_to_statement and engram.pattern_to_statement.get(pattern, "") == stmt_id:
             del engram.pattern_to_statement[pattern]
             if survivors:
                 engram.pattern_to_statement[pattern] = survivors[0].get("id", "")
 
     for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])]:
-        carriers = engram.pattern_statements.get(pattern)
-        if carriers and stmt.get("id", "") in carriers:
-            carriers.remove(stmt.get("id", ""))
+        carriers = engram.pattern_statements.get(pattern, [])
+        if stmt_id in carriers:
+            carriers.remove(stmt_id)
             if not carriers:
                 del engram.pattern_statements[pattern]
 
@@ -105,8 +107,8 @@ def lru_entry(statement: dict, sequence: int) -> tuple:
     The key is (last used, whether it was ever hit, store order). Equal
     timestamps keep store order, as list positions did.
     """
-    last_hit = statement.get("last_hit", False)
-    last_used = last_hit or statement.get("created_at", False)
+    last_hit = statement.get("last_hit", "")
+    last_used = last_hit or statement.get("created_at", EARLIEST_UTC)
     result = (last_used, 1 if last_hit else 0, sequence, statement.get("id", ""))
     return result
 
@@ -132,10 +134,15 @@ def evict_dynamic(engram) -> bool:
         entry = heap[0]
         statement_id = entry[3]
         sequence = entry[2]
-        if statement_id not in engram.dynamic_statement_ids or engram.statement_sequence.get(statement_id) != sequence:
+        live = (
+            statement_id in engram.dynamic_statement_ids
+            and statement_id in engram.statement_sequence
+            and engram.statement_sequence.get(statement_id, 0) == sequence
+        )
+        if not live:
             heapq_heappop(heap)
             continue
-        current = lru_entry(engram.statement_by_id[statement_id], sequence)
+        current = lru_entry(engram.statement_by_id.get(statement_id, {}), sequence)
         if current != entry:
             heapq_heapreplace(heap, current)
             continue

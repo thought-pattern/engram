@@ -7,7 +7,6 @@ from threading import Barrier as threading_Barrier, Event as threading_Event
 
 from google.protobuf import empty_pb2, json_format, struct_pb2
 from grpc import (
-    Channel as grpc_Channel,
     RpcError as grpc_RpcError,
     StatusCode as grpc_StatusCode,
     channel_ready_future as grpc_channel_ready_future,
@@ -22,7 +21,7 @@ from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
-from engram.identity import build_standalone_identity, query_identity_to_dict
+from engram.identity import extract_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
 from engram.resolution import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore
@@ -44,12 +43,12 @@ class GrpcCore(EngramCore):
         super().__init__(engram)
 
 
-def as_dict(message: struct_pb2.Struct) -> dict:
+def as_dict(message) -> dict:
     result = json_format.MessageToDict(message, preserving_proto_field_name=True)
     return result
 
 
-def as_struct(value: dict) -> struct_pb2.Struct:
+def as_struct(value: dict):
     result = struct_pb2.Struct()
     json_format.ParseDict(value, result)
     return result
@@ -69,7 +68,7 @@ def running_server(core: EngramCore, **kwargs):
         server.stop(0)
 
 
-def health_status(channel: grpc_Channel) -> int:
+def health_status(channel) -> int:
     health_stub = health_pb2_grpc.HealthStub(channel)
     check = getattr(health_stub, "Check", ())
     if not callable(check):
@@ -81,7 +80,7 @@ def health_status(channel: grpc_Channel) -> int:
     return result
 
 
-def internal_trailing_metadata(error: grpc_RpcError) -> dict[str, str]:
+def internal_trailing_metadata(error) -> dict[str, str]:
     metadata = error.trailing_metadata()
     result: dict[str, str] = {}
     for item in metadata:
@@ -103,21 +102,23 @@ def test_engagement_maintenance_protocol_deletes_one_scope_and_keeps_peer_respon
             request.update(example.command(action))
             result = as_dict(stub.MaintainEngagement(request))
             if action == "plan":
-                assert result.get("dry_run") is True
+                assert result.get("dry_run", False) is True
                 assert len(result.get("selected_statement_ids", [])) == 3
             elif action == "prepare":
-                assert result.get("drained") is True
-                assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is False
+                assert result.get("drained", False) is True
+                paused_status = as_dict(stub.GetStatus(empty_pb2.Empty()))
+                assert "ready" in paused_status
+                assert paused_status.get("ready", False) is False
                 with pytest_raises(grpc_RpcError) as paused:
                     stub.LearnResponse(
                         engram_pb2.LearnResponseRequest(request="late", response="late private response", request_id="late-wire")
                     )
                 assert paused.value.code() == grpc_StatusCode.FAILED_PRECONDITION
             elif action == "purge":
-                assert result.get("purged") is True
-        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready") is True
+                assert result.get("purged", False) is True
+        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready", False) is True
         artifacts = example.core.engram.response_repository.snapshot().get("artifacts", {})
-        assert set(artifacts) == {example.ids.get(name) for name in ("public", "company", "engagement_b")}
+        assert set(artifacts) == {example.ids.get(name, "") for name in ("public", "company", "engagement_b")}
 
 
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:
@@ -134,24 +135,25 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="Alice")))
         status = as_dict(stub.GetStatus(empty_pb2.Empty()))
 
-        assert alice["user_id"] == "Alice"
-        assert carol["user_id"] == "Carol"
-        assert first["turn"] == 1
-        assert recalled["response"] == "Sushi is good."
+        assert alice.get("user_id", "") == "Alice"
+        assert carol.get("user_id", "") == "Carol"
+        assert first.get("turn", 0) == 1
+        assert recalled.get("response", "") == "Sushi is good."
         assert predicate.value == "curious"
         assert read_predicate.value == "curious"
-        assert fact["introduced_by_user_id"] == ""
-        assert fact["source_label"] == "research"
-        assert inspected["session"]["previous_response"] == "Sushi is good."
-        assert inspected["core_status"]["active_conversations"] == 2
-        assert report["summary"]["exchanges"] == 1
+        assert "introduced_by_user_id" in fact
+        assert fact.get("introduced_by_user_id", "") == ""
+        assert fact.get("source_label", "") == "research"
+        assert inspected.get("session", {}).get("previous_response", "") == "Sushi is good."
+        assert inspected.get("core_status", {}).get("active_conversations", 0) == 2
+        assert report.get("summary", {}).get("exchanges", 0) == 1
         assert "turns" not in report
-        assert status["healthy"] is True
+        assert status.get("healthy", False) is True
         assert health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 
         stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="Alice")))
-        assert stopped["stopped"] is True
-        assert as_dict(stub.GetStatus(empty_pb2.Empty()))["active_conversations"] == 1
+        assert stopped.get("stopped", False) is True
+        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("active_conversations", 0) == 1
 
 
 def test_every_call_ends_by_letting_a_lost_graph_connection_reconnect() -> None:
@@ -225,34 +227,40 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                 )
             )
         )
+        proposal_id = proposal.get("proposal_id", "")
+        statement_id = learned.get("statement_id", "")
+        assert proposal_id
+        assert statement_id
         resolved = as_dict(
             stub.Resolve(
                 engram_pb2.ResolveRequest(
-                    proposal_id=proposal["proposal_id"],
+                    proposal_id=proposal_id,
                     outcome=engram_pb2.REGULATOR_OUTCOME_ACCEPTED,
-                    statement_id=learned["statement_id"],
+                    statement_id=statement_id,
                 )
             )
         )
         retry = as_dict(
             stub.Resolve(
                 engram_pb2.ResolveRequest(
-                    proposal_id=proposal["proposal_id"],
+                    proposal_id=proposal_id,
                     outcome=engram_pb2.REGULATOR_OUTCOME_ACCEPTED,
-                    statement_id=learned["statement_id"],
+                    statement_id=statement_id,
                 )
             )
         )
 
-        assert proposal["candidates"][0]["response"] == "Nine to five."
-        assert resolved["idempotent"] is False
-        assert retry["idempotent"] is True
-        assert core.engram.response_repository.get_artifact(learned["statement_id"])["statistics"]["hit_count"] == 1
+        assert proposal.get("candidates", [])[0].get("response", "") == "Nine to five."
+        assert "idempotent" in resolved
+        assert resolved.get("idempotent", False) is False
+        assert retry.get("idempotent", False) is True
+        artifact = core.engram.response_repository.get_artifact(statement_id)
+        assert artifact.get("statistics", {}).get("hit_count", 0) == 1
 
         with pytest_raises(grpc_RpcError) as invalid:
-            stub.Resolve(engram_pb2.ResolveRequest(proposal_id=proposal["proposal_id"]))
+            stub.Resolve(engram_pb2.ResolveRequest(proposal_id=proposal_id))
         assert invalid.value.code() == grpc_StatusCode.INVALID_ARGUMENT
-        assert internal_trailing_metadata(invalid.value)["engram-error-type"] == "InvalidRequestError"
+        assert internal_trailing_metadata(invalid.value).get("engram-error-type", "") == "InvalidRequestError"
 
         with pytest_raises(grpc_RpcError) as missing:
             stub.Chat(engram_pb2.ChatRequest(user_id="Missing", text="hello"))
@@ -267,7 +275,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
         with pytest_raises(grpc_RpcError) as closed:
             stub.AddFact(engram_pb2.AddFactRequest(text="Too late."))
         assert closed.value.code() == grpc_StatusCode.FAILED_PRECONDITION
-        assert as_dict(stub.GetStatus(empty_pb2.Empty()))["state"] == "closed"
+        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("state", "") == "closed"
         assert health_status(channel) == health_pb2.HealthCheckResponse.NOT_SERVING
 
 
@@ -314,7 +322,7 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
 
         assert result.outcome == "ANSWER"
         assert result.selected_candidate_available is True
-        assert as_dict(result.selected_candidate)["response"] == "The transport-neutral result."
+        assert as_dict(result.selected_candidate).get("response", "") == "The transport-neutral result."
         assert len(result.response_candidates) == 1
         assert result.evidence_package_available is False
         assert result.evidence_package.retained_count == 0
@@ -343,13 +351,13 @@ def test_grpc_evidence_service_uses_shared_graph_resolution(monkeypatch) -> None
         )
 
     assert result.outcome == "EVIDENCE"
-    assert as_dict(result.response_candidates[0])["response"] == "Ada Lovelace — birth place: London."
+    assert as_dict(result.response_candidates[0]).get("response", "") == "Ada Lovelace — birth place: London."
     assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
 
 
 def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:
     core = GrpcCore()
-    identity = build_standalone_identity("Uncached evidence contract request")
+    identity = extract_standalone_identity("Uncached evidence contract request")
     budget = resolution_budget()
     with running_server(core) as (_, channel, _):
         stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
@@ -382,7 +390,7 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
 
         assert failure.value.code() == grpc_StatusCode.INVALID_ARGUMENT
         assert failure.value.details() == f"request exceeds the limit of {MAX_CACHE_REQUEST_BYTES} UTF-8 bytes"
-        assert internal_trailing_metadata(failure.value)["engram-error-type"] == "InvalidRequestError"
+        assert internal_trailing_metadata(failure.value).get("engram-error-type", "") == "InvalidRequestError"
         assert core.resolution_requests == {}
 
 
@@ -417,8 +425,9 @@ def test_session_limit_is_resource_exhausted() -> None:
         with pytest_raises(grpc_RpcError) as failure:
             stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Bob"))
 
+    # The core's conversation registry refuses the second start before any session is created.
     assert failure.value.code() == grpc_StatusCode.RESOURCE_EXHAUSTED
-    assert failure.value.details() == "Maximum sessions reached"
+    assert failure.value.details() == "maximum active conversations reached"
 
 
 def test_chat_validation_is_invalid_argument_but_an_internal_value_error_is_internal(caplog, monkeypatch) -> None:
@@ -468,12 +477,15 @@ def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and
                 )
             )
 
-        assert created["idempotent"] is False
-        assert mcp_replay["idempotent"] is True
-        assert grpc_replay["idempotent"] is True
-        assert grpc_replay["statement_id"] == created["statement_id"]
+        created_statement_id = created.get("statement_id", "")
+        assert "idempotent" in created
+        assert created.get("idempotent", False) is False
+        assert mcp_replay.get("idempotent", False) is True
+        assert grpc_replay.get("idempotent", False) is True
+        assert created_statement_id
+        assert grpc_replay.get("statement_id", "") == created_statement_id
         assert conflicting.value.code() == grpc_StatusCode.ABORTED
-        assert len(core.engram.response_repository.snapshot()["artifacts"]) == 1
+        assert len(core.engram.response_repository.snapshot().get("artifacts", {})) == 1
 
 
 def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adapter_visibility() -> None:
@@ -482,27 +494,31 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
     core, _ = mcp.require_active()
     learned = core.learn_response("What is concurrent?", "One accepted result.", "concurrent-learn")
     proposal = core.propose("What is concurrent?", "concurrent-proposal")
+    proposal_id = proposal.get("proposal_id", "")
+    statement_id = learned.get("statement_id", "")
+    assert proposal_id
+    assert statement_id
 
     with running_server(core) as (_, _, stub):
         barrier = threading_Barrier(7)
 
         def python_resolve() -> dict:
             barrier.wait()
-            result = core.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+            result = core.resolve(proposal_id, "accepted", statement_id)
             return result
 
         def mcp_resolve() -> dict:
             barrier.wait()
-            result = mcp.resolve(proposal["proposal_id"], "accepted", learned["statement_id"])
+            result = mcp.resolve(proposal_id, "accepted", statement_id)
             return result
 
         def grpc_resolve() -> dict:
             barrier.wait()
             result = stub.Resolve(
                 engram_pb2.ResolveRequest(
-                    proposal_id=proposal["proposal_id"],
+                    proposal_id=proposal_id,
                     outcome=engram_pb2.REGULATOR_OUTCOME_ACCEPTED,
-                    statement_id=learned["statement_id"],
+                    statement_id=statement_id,
                 )
             )
             result = as_dict(result)
@@ -514,16 +530,25 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
             barrier.wait()
             results = [future.result(timeout=10) for future in futures]
 
-        python_view = core.inspect_conversation("0", conversation_token=mcp.active_conversation_token)["session"]
-        mcp_view = mcp.inspect()["session"]
+        python_view = core.inspect_conversation("0", conversation_token=mcp.active_conversation_token).get("session", {})
+        mcp_view = mcp.inspect().get("session", {})
         grpc_view = as_dict(
             stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=mcp.active_conversation_token))
-        )["session"]
+        ).get("session", {})
 
-        assert sum(result["idempotent"] is False for result in results) == 1
-        assert sum(result["idempotent"] is True for result in results) == 5
-        assert core.engram.response_repository.get_artifact(learned["statement_id"])["statistics"]["hit_count"] == 1
-        assert python_view["previous_response"] == mcp_view["previous_response"] == grpc_view["previous_response"]
+        assert all("idempotent" in result for result in results)
+        assert sum(result.get("idempotent", False) is False for result in results) == 1
+        assert sum(result.get("idempotent", False) is True for result in results) == 5
+        artifact = core.engram.response_repository.get_artifact(statement_id)
+        assert artifact.get("statistics", {}).get("hit_count", 0) == 1
+        assert "previous_response" in python_view
+        assert "previous_response" in mcp_view
+        assert "previous_response" in grpc_view
+        assert (
+            python_view.get("previous_response", "")
+            == mcp_view.get("previous_response", "")
+            == grpc_view.get("previous_response", "")
+        )
 
 
 def test_grpc_restart_begins_with_empty_process_memory() -> None:
@@ -552,8 +577,8 @@ def test_grpc_restart_begins_with_empty_process_memory() -> None:
     with running_server(restarted_core) as (_, _, restarted_stub):
         started = as_dict(restarted_stub.StartConversation(engram_pb2.StartConversationRequest(user_id="static-after-restart")))
         static_turn = as_dict(restarted_stub.Chat(engram_pb2.ChatRequest(user_id="static-after-restart", text="hello")))
-        assert started.get("statement_count") == 2
-        assert static_turn.get("response") == "Hello!"
+        assert started.get("statement_count", 0) == 2
+        assert static_turn.get("response", "") == "Hello!"
         proposal = as_dict(
             restarted_stub.Propose(
                 engram_pb2.ProposeRequest(
@@ -596,8 +621,8 @@ def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
 
         release.set()
         inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="Alice"), timeout=5))
-        assert inspected["turn_count"] == 1
-        assert inspected["latest_turn"]["response"] == "Hello!"
+        assert inspected.get("turn_count", 0) == 1
+        assert inspected.get("latest_turn", {}).get("response", "") == "Hello!"
 
 
 def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
@@ -624,11 +649,11 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
         stop_future = executor.submit(server.stop, 2)
         assert stop_future.done() is False
         release.set()
-        assert as_dict(chat_future.result(timeout=5))["response"] == "Hello!"
+        assert as_dict(chat_future.result(timeout=5)).get("response", "") == "Hello!"
         assert stop_future.result(timeout=5) is True
 
     channel.close()
-    assert core.status()["state"] == "closed"
+    assert core.status().get("state", "") == "closed"
     assert server.stop(0) is False
 
 

@@ -1,11 +1,12 @@
 """Bounded Section 15 operational telemetry tests."""
 
+from copy import deepcopy
 from json import dumps as json_dumps
 
 from engram.constants import ResolutionOutcome, ResolverState
 from engram.resolution import budget_consumption, empty_candidate, resolution_result, resolver_result
 from engram.service import EngramCore
-from engram.telemetry import operational_telemetry, record_resolution, telemetry_snapshot
+from engram.telemetry import EMPTY_OPERATIONAL_TELEMETRY, record_resolution, telemetry_snapshot
 
 
 def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resources() -> None:
@@ -37,37 +38,43 @@ def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resour
         namespace=namespace,
         configured_resolvers=("exact",),
     )
+    learned_id = learned.get("statement_id", "")
+    assert learned_id
     feedback = core.record_resolution_feedback(
         "telemetry-answer",
         "telemetry-feedback",
         "rejected_context",
-        learned["statement_id"],
+        learned_id,
         "private feedback detail",
     )
-    telemetry = core.status()["telemetry"]
+    telemetry = core.status().get("telemetry", {})
+    resolution = telemetry.get("resolution", {})
+    exact = telemetry.get("resolvers", {}).get("exact", {})
 
-    assert answer["outcome"] == ResolutionOutcome.ANSWER
+    assert answer.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.ANSWER
     assert replay == answer
-    assert miss["outcome"] == ResolutionOutcome.MISS
-    assert feedback["idempotent"] is False
-    assert telemetry["resolution"]["requests"] == 3
-    assert telemetry["resolution"]["executions"] == 2
-    assert telemetry["resolution"]["replays"] == 1
-    assert telemetry["resolution"]["outcomes"] == {"ANSWER": 2, "EVIDENCE": 0, "MISS": 1}
-    assert sum(telemetry["resolution"]["latency"]["buckets"].values()) == 2
-    assert telemetry["resolution"]["resources"]["output_bytes"]["total"] > 0
-    assert telemetry["resolvers"]["exact"]["invocations"] == 2
-    assert telemetry["resolvers"]["exact"]["candidate_contributions"] == 1
-    assert telemetry["resolvers"]["exact"]["selected_contributions"] == 1
-    assert telemetry["regulator_outcomes"]["rejected_context"] == 1
+    assert "outcome" in miss
+    assert miss.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.MISS
+    assert "idempotent" in feedback
+    assert feedback.get("idempotent", False) is False
+    assert resolution.get("requests", 0) == 3
+    assert resolution.get("executions", 0) == 2
+    assert resolution.get("replays", 0) == 1
+    assert resolution.get("outcomes", {}) == {"ANSWER": 2, "EVIDENCE": 0, "MISS": 1}
+    assert sum(resolution.get("latency", {}).get("buckets", {}).values()) == 2
+    assert resolution.get("resources", {}).get("output_bytes", {}).get("total", 0) > 0
+    assert exact.get("invocations", 0) == 2
+    assert exact.get("candidate_contributions", 0) == 1
+    assert exact.get("selected_contributions", 0) == 1
+    assert telemetry.get("regulator_outcomes", {}).get("rejected_context", 0) == 1
 
     encoded = json_dumps(telemetry, sort_keys=True)
-    for sensitive in (request, namespace, "Sarah", learned["statement_id"], "private feedback detail"):
+    for sensitive in (request, namespace, "Sarah", learned_id, "private feedback detail"):
         assert sensitive not in encoded
 
 
 def test_unknown_resolver_and_exhaustion_values_collapse_into_fixed_other_buckets() -> None:
-    telemetry = operational_telemetry()
+    telemetry = deepcopy(EMPTY_OPERATIONAL_TELEMETRY)
     result = resolution_result(
         outcome=ResolutionOutcome.MISS,
         selected_candidate=empty_candidate(),
@@ -100,7 +107,8 @@ def test_unknown_resolver_and_exhaustion_values_collapse_into_fixed_other_bucket
     record_resolution(telemetry, result, replayed=False)
     snapshot = telemetry_snapshot(telemetry)
 
-    assert snapshot["resolvers"]["other"]["invocations"] == 1
-    assert snapshot["resolvers"]["other"]["states"]["exhausted"] == 1
-    assert snapshot["resolution"]["budget_exhaustion"]["other"] == 1
+    other_resolver = snapshot.get("resolvers", {}).get("other", {})
+    assert other_resolver.get("invocations", 0) == 1
+    assert other_resolver.get("states", {}).get("exhausted", 0) == 1
+    assert snapshot.get("resolution", {}).get("budget_exhaustion", {}).get("other", 0) == 1
     assert "private-user-derived" not in json_dumps(snapshot, sort_keys=True)
