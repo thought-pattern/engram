@@ -22,16 +22,16 @@ classifiers = [
 # requirements.txt, which carries the pinned versions.
 dependencies = [
     "PyYAML>=6.0.3",
-    "msgpack==1.2.1",
+    "msgpack==1.2.3",
     "nltk>=3.10.3",
     "spacy>=3.8.16",
     "sentence-transformers>=6.1.0",
     "neo4j>=6.3.1,<7",
-    "mcp>=2.2.0,<3",
+    "mcp>=2.3.0,<3",
     "grpcio>=1.84.0,<1.85",
     "grpcio-health-checking>=1.84.0,<1.85",
     "protobuf>=7.36.2,<8",
-    "tzdata==2026.4",
+    "tzdata==2026.5",
 ]
 
 [project.scripts]
