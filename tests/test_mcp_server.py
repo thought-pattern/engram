@@ -13,8 +13,7 @@ from pytest import raises as pytest_raises
 from engram.errors import ConflictError, LifecycleError
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from scripts.run_section3_mcp_conformance import evaluate_turn, run_length_encode_passes
-
-from .test_relation import RelationGraph
+from tests.test_relation import RelationGraph
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 
@@ -28,7 +27,7 @@ def tool_json(result) -> dict:
     return value
 
 
-def test_tool_failures_are_logged_in_full_and_clients_see_only_stable_messages(caplog) -> None:
+def test_tool_failures_log_only_their_origin_and_clients_see_only_stable_messages(caplog) -> None:
     secret = "private-internal-failure-detail"
 
     class FailingService:
@@ -55,7 +54,9 @@ def test_tool_failures_are_logged_in_full_and_clients_see_only_stable_messages(c
     assert secret not in failed.content[0].text
     assert refused.is_error is True
     assert "no active conversation; call engram_start first" in refused.content[0].text
-    assert secret in caplog.text
+    assert secret not in caplog.text
+    assert "RuntimeError at test_mcp_server.py" in caplog.text
+    assert "LifecycleError at test_mcp_server.py" in caplog.text
 
 
 def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text() -> None:

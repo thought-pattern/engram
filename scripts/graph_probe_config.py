@@ -34,7 +34,6 @@ def materialize_engram_graph_config(source: str, destination: Path) -> str:
     graph = {
         **connection,
         "enabled": True,
-        "deployment_mode": "tapestry_managed",
         "vector_enabled": False,
     }
     destination.write_text(yaml_safe_dump({"graph": graph}, sort_keys=True), encoding="utf-8")

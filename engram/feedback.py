@@ -33,6 +33,7 @@ from engram.constants import (
     FEEDBACK_STATE_FIELDS,
     FEEDBACK_STATISTICS_FIELDS,
     MAX_CONSTRAINT_ENCODED_BYTES,
+    MAX_ENUM_WIRE_BYTES,
     MAX_FEEDBACK_BUCKET_SECONDS,
     MAX_FEEDBACK_BUCKETS,
     MAX_FEEDBACK_HALF_LIFE_SECONDS,
@@ -48,6 +49,8 @@ from engram.constants import (
     MAX_NEGATIVE_RECORDS,
     MAX_NEGATIVE_TTL_SECONDS,
     MAX_REFERENCE_ID_BYTES,
+    MAX_REQUIRED_SOURCE_LABEL_BYTES,
+    MAX_RESOURCE_COUNTER,
     MAX_STATEMENT_ID_BYTES,
     NEGATIVE_RESOLUTION_FIELDS,
     NEGATIVE_RESOLUTION_KEY_FIELDS,
@@ -86,7 +89,7 @@ from engram.mutations import (
 from engram.validation import require_bool, require_text, require_utc_datetime, utc_datetime
 
 
-def internal_integer(value: object, name: str, minimum: int = 0, maximum: int = 9_223_372_036_854_775_807) -> int:
+def internal_integer(value: object, name: str, minimum: int = 0, maximum: int = MAX_RESOURCE_COUNTER) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise InvalidRequestError(f"{name} must be an integer from {minimum} through {maximum}")
     return value
@@ -131,8 +134,8 @@ def load_json_mapping(value: str, name: str) -> dict:
         raise InvalidRequestError(f"{name} must be a string")
     try:
         decoded = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError(f"{name} must be valid JSON") from error
+    except json_JSONDecodeError as err:
+        raise InvalidRequestError(f"{name} must be valid JSON") from err
     if not isinstance(decoded, dict):
         raise InvalidRequestError(f"{name} must contain an object")
     return decoded
@@ -182,8 +185,8 @@ def canonical_binary_encoding(value: object) -> bytes:
         encoded = msgpack_packb(canonical_binary_value(value), use_bin_type=True, strict_types=True, use_single_float=False)
     except InvalidRequestError:
         raise
-    except (OverflowError, ValueError, TypeError, UnicodeError, RecursionError) as error:
-        raise InvalidRequestError("feedback fingerprint contains an invalid native value") from error
+    except (OverflowError, ValueError, TypeError, UnicodeError, RecursionError) as err:
+        raise InvalidRequestError("feedback fingerprint contains an invalid native value") from err
     if not isinstance(encoded, bytes):
         raise InvalidRequestError("feedback fingerprint encoding failed")
     return encoded
@@ -278,8 +281,8 @@ def constraint_fingerprint(
 
     if not isinstance(required_metadata, dict):
         raise InvalidRequestError("feedback required_metadata must be an object")
-    require_text(expected_object_type, "feedback expected_object_type", 64)
-    require_text(required_source_label, "feedback required_source_label", 256, allow_empty=True)
+    require_text(expected_object_type, "feedback expected_object_type", MAX_ENUM_WIRE_BYTES)
+    require_text(required_source_label, "feedback required_source_label", MAX_REQUIRED_SOURCE_LABEL_BYTES, allow_empty=True)
     value = {
         "expected_object_type": expected_object_type,
         "required_metadata": dict(required_metadata),
@@ -287,8 +290,8 @@ def constraint_fingerprint(
     }
     try:
         encoded = canonical_binary_encoding(thaw_native_value(value))
-    except (InvalidRequestError, RecursionError) as error:
-        raise InvalidRequestError("feedback constraints must contain bounded native values") from error
+    except (InvalidRequestError, RecursionError) as err:
+        raise InvalidRequestError("feedback constraints must contain bounded native values") from err
     if len(encoded) > MAX_CONSTRAINT_ENCODED_BYTES:
         raise InvalidRequestError(f"feedback constraints exceed the encoded limit of {MAX_CONSTRAINT_ENCODED_BYTES} bytes")
     result = hashlib_sha256(encoded).hexdigest()
@@ -385,8 +388,8 @@ def feedback_policy_fingerprint(policy: object = {}) -> str:
     policy_value = feedback_policy() if policy == {} else policy
     try:
         data = feedback_policy_to_dict(policy_value)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("feedback policy fingerprint requires FeedbackPolicy") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("feedback policy fingerprint requires FeedbackPolicy") from err
     result = canonical_fingerprint(data)
     return result
 
@@ -458,19 +461,19 @@ def relationship_feedback_key(
     """Build one exact query, scope, constraint, and statement partition."""
     try:
         validated_query_identity = validate_query_identity(query_identity)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("relationship query_identity must be a QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("relationship query_identity must be a QueryIdentity") from err
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("relationship scope must match query identity scope") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("relationship scope must match query identity scope") from err
     if validated_query_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("relationship scope must match query identity scope")
     validated_constraint = internal_fingerprint(constraint_fingerprint, "relationship constraint_fingerprint")
     try:
         validated_statement = validate_statement_feedback_key(statement)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("relationship statement must be a StatementFeedbackKey") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("relationship statement must be a StatementFeedbackKey") from err
     result: dict = {
         "query_identity": validated_query_identity,
         "scope": validated_scope,
@@ -508,46 +511,65 @@ def relationship_feedback_key_fingerprint(value: object) -> str:
     return result
 
 
-def relationship_feedback_key_from_dict(
-    value: object,
-    identity_cache: object = (),
-    scope_cache: object = (),
-    statement_cache: object = (),
-) -> dict:
+class FeedbackDecodeMemo:
+    """Decoded query identities, scopes and statement keys shared across one state decode.
+
+    A feedback snapshot repeats the same identity, scope and statement key across many
+    relationship records; decoding each distinct value once keeps the decode linear in
+    the distinct values. One decode creates the memo and discards it when it finishes.
+    """
+
+    def __init__(self, statements: dict) -> None:
+        if not isinstance(statements, dict):
+            raise InvalidRequestError("feedback decode memo statements must be a dictionary")
+        self.internal_identities: dict[str, dict] = {}
+        self.internal_scopes: dict[str, dict] = {}
+        self.internal_statements: dict[str, dict] = dict(statements)
+
+    def query_identity(self, value: dict) -> dict:
+        """Return the decoded query identity for ``value``, decoding it on first sight."""
+        fingerprint = canonical_fingerprint(value)
+        if fingerprint not in self.internal_identities:
+            self.internal_identities[fingerprint] = query_identity_from_dict(value)
+        result = self.internal_identities.get(fingerprint, {})
+        return result
+
+    def scope(self, value: dict) -> dict:
+        """Return the decoded scope key for ``value``, decoding it on first sight."""
+        fingerprint = canonical_fingerprint(value)
+        if fingerprint not in self.internal_scopes:
+            self.internal_scopes[fingerprint] = scope_key_from_dict(value)
+        result = self.internal_scopes.get(fingerprint, {})
+        return result
+
+    def statement(self, value: dict) -> dict:
+        """Return the decoded statement feedback key for ``value``, decoding it on first sight."""
+        fingerprint = canonical_fingerprint(value)
+        if fingerprint not in self.internal_statements:
+            self.internal_statements[fingerprint] = statement_feedback_key_from_dict(value)
+        result = self.internal_statements.get(fingerprint, {})
+        return result
+
+
+def relationship_feedback_key_from_dict(value: object, memo: object = ()) -> dict:
+    """Validate and decode one relationship feedback key.
+
+    ``memo`` is the ``FeedbackDecodeMemo`` of the state decode this key belongs to, or
+    ``()`` to decode the key on its own.
+    """
     data = exact_mapping(value, "RelationshipFeedbackKey", RELATIONSHIP_FEEDBACK_KEY_FIELDS)
     for name in ("query_identity", "scope", "statement"):
         if not isinstance(data.get(name, {}), dict):
             raise InvalidRequestError(f"relationship {name} must be an object")
-    if identity_cache != () and not isinstance(identity_cache, dict):
-        raise InvalidRequestError("relationship identity_cache must be a dictionary")
-    if scope_cache != () and not isinstance(scope_cache, dict):
-        raise InvalidRequestError("relationship scope_cache must be a dictionary")
-    if statement_cache != () and not isinstance(statement_cache, dict):
-        raise InvalidRequestError("relationship statement_cache must be a dictionary")
-    identities = identity_cache if isinstance(identity_cache, dict) else {}
-    scopes = scope_cache if isinstance(scope_cache, dict) else {}
-    statements = statement_cache if isinstance(statement_cache, dict) else {}
-    identity_value = data.get("query_identity", {})
-    scope_value = data.get("scope", {})
-    statement_value = data.get("statement", {})
-    identity_fingerprint = canonical_fingerprint(identity_value)
-    scope_fingerprint = canonical_fingerprint(scope_value)
-    statement_fingerprint = canonical_fingerprint(statement_value)
-    if identity_fingerprint in identities:
-        query_identity = identities.get(identity_fingerprint, {})
+    if isinstance(memo, FeedbackDecodeMemo):
+        decoder = memo
+    elif type(memo) is tuple and not memo:
+        decoder = FeedbackDecodeMemo({})
     else:
-        query_identity = query_identity_from_dict(identity_value)
-        identities[identity_fingerprint] = query_identity
-    if scope_fingerprint in scopes:
-        scope = scopes.get(scope_fingerprint, {})
-    else:
-        scope = scope_key_from_dict(scope_value)
-        scopes[scope_fingerprint] = scope
-    if statement_fingerprint in statements:
-        statement = statements.get(statement_fingerprint, {})
-    else:
-        statement = statement_feedback_key_from_dict(statement_value)
-        statements[statement_fingerprint] = statement
+        raise InvalidRequestError("relationship memo must be a FeedbackDecodeMemo")
+    query_identity = decoder.query_identity(data.get("query_identity", {}))
+    scope = decoder.scope(data.get("scope", {}))
+    statement = decoder.statement(data.get("statement", {}))
     if query_identity.get("scope", {}) != scope:
         raise InvalidRequestError("relationship scope must match query identity scope")
     constraint = internal_fingerprint(data.get("constraint_fingerprint", ""), "relationship constraint_fingerprint")
@@ -587,12 +609,12 @@ def feedback_observation(
         raise InvalidRequestError("verdict feedback cannot use the candidate outcome")
     try:
         validated_query_identity = validate_query_identity(query_identity)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("feedback query_identity must be a QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("feedback query_identity must be a QueryIdentity") from err
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("feedback scope must match query identity scope") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("feedback scope must match query identity scope") from err
     if validated_query_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("feedback scope must match query identity scope")
     validated_constraint = internal_fingerprint(constraint_fingerprint, "feedback constraint_fingerprint")
@@ -745,8 +767,8 @@ def feedback_bucket(
     validated_start_at = canonical_utc(require_utc_datetime(start_at, "feedback bucket start_at"))
     try:
         validated_statistics = validate_feedback_statistics(statistics)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("feedback bucket statistics must be FeedbackStatistics") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("feedback bucket statistics must be FeedbackStatistics") from err
     result: dict = {
         "start_at": validated_start_at,
         "statistics": validated_statistics,
@@ -797,14 +819,14 @@ def statement_feedback_record(
     try:
         validated_key = validate_statement_feedback_key(key)
         validated_raw = validate_feedback_statistics(raw)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("statement feedback record key and raw statistics have invalid types") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("statement feedback record key and raw statistics have invalid types") from err
     if not isinstance(buckets, tuple):
         raise InvalidRequestError("statement feedback buckets must be a tuple of FeedbackBucket values")
     try:
         validated_buckets = tuple(validate_feedback_bucket(bucket) for bucket in buckets)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("statement feedback buckets must be a tuple of FeedbackBucket values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("statement feedback buckets must be a tuple of FeedbackBucket values") from err
     bucket_starts = tuple(bucket.get("start_at", "") for bucket in validated_buckets)
     bucket_instants = tuple(utc_datetime(start) for start in bucket_starts)
     if len(validated_buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_instants)) != bucket_instants:
@@ -877,8 +899,8 @@ def statement_feedback_record_from_dict(value: object) -> dict:
         raise InvalidRequestError("statement feedback buckets must be an array of objects")
     try:
         last_outcome = FeedbackOutcome(data.get("last_outcome", ""))
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("statement feedback contains an unsupported last_outcome") from error
+    except (TypeError, ValueError) as err:
+        raise InvalidRequestError("statement feedback contains an unsupported last_outcome") from err
     buckets = tuple(feedback_bucket_from_dict(item) for item in data.get("buckets", []))
     bucket_starts = tuple(bucket.get("start_at", "") for bucket in buckets)
     bucket_instants = tuple(utc_datetime(start) for start in bucket_starts)
@@ -909,14 +931,14 @@ def relationship_feedback_record(
     try:
         validated_key = validate_relationship_feedback_key(key)
         validated_raw = validate_feedback_statistics(raw)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("relationship feedback record key and raw statistics have invalid types") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("relationship feedback record key and raw statistics have invalid types") from err
     if not isinstance(buckets, tuple):
         raise InvalidRequestError("relationship feedback buckets must be a tuple of FeedbackBucket values")
     try:
         validated_buckets = tuple(validate_feedback_bucket(bucket) for bucket in buckets)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("relationship feedback buckets must be a tuple of FeedbackBucket values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("relationship feedback buckets must be a tuple of FeedbackBucket values") from err
     bucket_starts = tuple(bucket.get("start_at", "") for bucket in validated_buckets)
     bucket_instants = tuple(utc_datetime(start) for start in bucket_starts)
     if len(validated_buckets) > MAX_FEEDBACK_BUCKETS or tuple(sorted(bucket_instants)) != bucket_instants:
@@ -948,12 +970,8 @@ def validate_relationship_feedback_record(value: object) -> dict:
     return result
 
 
-def relationship_feedback_record_from_dict(
-    value: object,
-    identity_cache: object = (),
-    scope_cache: object = (),
-    statement_cache: object = (),
-) -> dict:
+def relationship_feedback_record_from_dict(value: object, memo: object = ()) -> dict:
+    """Validate and decode one relationship feedback record; ``memo`` is as for its key."""
     data = exact_mapping(value, "RelationshipFeedbackRecord", FEEDBACK_RECORD_FIELDS)
     if not isinstance(data.get("key", {}), dict) or not isinstance(data.get("raw", {}), dict):
         raise InvalidRequestError("relationship feedback key and raw values must be objects")
@@ -961,8 +979,8 @@ def relationship_feedback_record_from_dict(
         raise InvalidRequestError("relationship feedback buckets must be an array of objects")
     try:
         last_outcome = FeedbackOutcome(data.get("last_outcome", ""))
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("relationship feedback contains an unsupported last_outcome") from error
+    except (TypeError, ValueError) as err:
+        raise InvalidRequestError("relationship feedback contains an unsupported last_outcome") from err
     buckets = tuple(feedback_bucket_from_dict(item) for item in data.get("buckets", []))
     bucket_starts = tuple(bucket.get("start_at", "") for bucket in buckets)
     bucket_instants = tuple(utc_datetime(start) for start in bucket_starts)
@@ -970,7 +988,7 @@ def relationship_feedback_record_from_dict(
         raise InvalidRequestError("relationship feedback buckets must be bounded and ordered")
     if len(set(bucket_starts)) != len(bucket_starts):
         raise InvalidRequestError("relationship feedback bucket starts must be unique")
-    key = relationship_feedback_key_from_dict(data.get("key", {}), identity_cache, scope_cache, statement_cache)
+    key = relationship_feedback_key_from_dict(data.get("key", {}), memo)
     raw = feedback_statistics_from_dict(data.get("raw", {}))
     last_observed_at = require_utc_datetime(data.get("last_observed_at", ""), "relationship feedback last_observed_at")
     result: dict = {
@@ -1174,19 +1192,6 @@ def feedback_wire_record(value: dict) -> dict:
     return projected
 
 
-def feedback_native_copy(value: object) -> object:
-    """Copy a validated native state without changing tuple or enum contracts."""
-    if isinstance(value, dict):
-        result: object = {key: feedback_native_copy(nested) for key, nested in value.items()}
-    elif isinstance(value, list):
-        result = [feedback_native_copy(nested) for nested in value]
-    elif isinstance(value, tuple):
-        result = tuple(feedback_native_copy(nested) for nested in value)
-    else:
-        result = value
-    return result
-
-
 def trusted_feedback_key_fingerprint(value: dict) -> str:
     """Fingerprint a key already validated by its record decoder or store."""
     result = canonical_fingerprint(feedback_wire_value(value))
@@ -1354,17 +1359,12 @@ def feedback_state_from_dict(value: object) -> dict:
             key=lambda record: trusted_feedback_key_fingerprint(record.get("key", {})),
         )
     )
-    statement_cache = {
-        trusted_feedback_key_fingerprint(record.get("key", {})): record.get("key", {}) for record in parsed_statements
-    }
-    identity_cache: dict[str, dict] = {}
-    scope_cache: dict[str, dict] = {}
+    memo = FeedbackDecodeMemo(
+        {trusted_feedback_key_fingerprint(record.get("key", {})): record.get("key", {}) for record in parsed_statements}
+    )
     parsed_relationships = tuple(
         sorted(
-            (
-                relationship_feedback_record_from_dict(item, identity_cache, scope_cache, statement_cache)
-                for item in relationship_values
-            ),
+            (relationship_feedback_record_from_dict(item, memo) for item in relationship_values),
             key=lambda record: trusted_feedback_key_fingerprint(record.get("key", {})),
         )
     )
@@ -1387,18 +1387,6 @@ def feedback_state_from_json(value: str) -> dict:
     data = load_json_mapping(value, "FeedbackState JSON")
     result = feedback_state_from_dict(data)
     return result
-
-
-class PreparedFeedbackState(dict):
-    """Opaque link between a returned state projection and its off-live owner."""
-
-    def __init__(self, state: dict, target: object, candidate: object) -> None:
-        super().__init__(
-            {key: feedback_wire_value(value) if key == "receipts" else feedback_native_copy(value) for key, value in state.items()}
-        )
-        self.target = target
-        self.candidate = candidate
-        self.canonical = state
 
 
 def trusted_feedback_record_from_observation(key: dict, observation: dict, policy: dict) -> dict:
@@ -1604,18 +1592,18 @@ class FeedbackStore:
             self.internal_policy_suppression_evictions = candidate.internal_policy_suppression_evictions
             self.internal_stale_exclusion_evictions = candidate.internal_stale_exclusion_evictions
 
-    def replace_from_snapshot(self, state: dict) -> bool:
-        if isinstance(state, PreparedFeedbackState) and state.target is self and isinstance(state.candidate, FeedbackStore):
-            if dict(state) != state.canonical:
-                raise InvalidRequestError("prepared feedback state was modified before publication")
-            self.adopt(state.candidate)
-            return False
+    def replace_from_snapshot(self, state: dict) -> None:
+        """Validate a complete feedback state and install it as the live state."""
         validated_state = validate_feedback_state(state)
         with self.internal_lock:
             self.install(validated_state)
-        return True
 
     def apply_observation(self, observation: dict) -> None:
+        """Fold one store-validated observation into the statement, relationship and suppression state.
+
+        Called only by ``internal_plan`` on an off-live clone while the live store's
+        ``internal_lock`` is held, so this method takes no lock of its own.
+        """
         self.state_dirty = True
         # The observation was validated at the store boundary; its statement and
         # relationship keys are the exact partitions its aggregates live under.
@@ -1680,6 +1668,11 @@ class FeedbackStore:
             self.internal_stale_exclusions[exclusion_key] = freeze_feedback_record(exclusion)
 
     def enforce_capacity(self) -> None:
+        """Evict the least recently observed records until both record sets fit the policy capacities.
+
+        Called only by ``internal_plan`` on an off-live clone while the live store's
+        ``internal_lock`` is held, so this method takes no lock of its own.
+        """
         statement_capacity = self.internal_policy.get("max_statement_records", 0)
         relationship_capacity = self.internal_policy.get("max_relationship_records", 0)
         while len(self.internal_statement_records) > statement_capacity:
@@ -1751,8 +1744,7 @@ class FeedbackStore:
                 # A replay changes nothing, so its isolated after state is a copy of before.
                 result = {"before": before, "after": trusted_feedback_state_copy(before), "receipt": receipt, "replayed": True}
                 return result
-            candidate = planned.get("candidate", self)
-            after = PreparedFeedbackState(candidate.snapshot(), self, candidate)
+            after = planned.get("candidate", self).snapshot()
             result = {"before": before, "after": after, "receipt": receipt, "replayed": False}
             return result
 
@@ -1842,10 +1834,22 @@ class FeedbackStore:
         policy_fingerprint: str,
         evaluation_time: str,
     ) -> dict:
+        """Return the aged feedback posterior for one statement under one query and constraint.
+
+        Statement records count with any generation up to ``current_generation``;
+        relationship records also need the same query identity, scope and constraint.
+        Outcomes are aged to ``evaluation_time`` by the policy half-life. Statement rejects
+        count only quality and stale outcomes; relationship rejects also count context and
+        policy outcomes. Each side is available once its accepts plus rejects reach
+        ``minimum_verdict_samples``, and its value is the posterior
+        ``(accepts + prior_accept) / (accepts + rejects + prior_accept + prior_reject)``.
+        ``value`` averages the available sides, or is ``0.0`` with ``available`` false
+        when neither is.
+        """
         try:
             validated_query_identity = validate_query_identity(query_identity)
-        except IdentityValidationError as error:
-            raise InvalidRequestError("feedback history query_identity must be QueryIdentity") from error
+        except IdentityValidationError as err:
+            raise InvalidRequestError("feedback history query_identity must be QueryIdentity") from err
         internal_fingerprint(constraint, "feedback history constraint_fingerprint")
         require_text(statement_id, "feedback history statement_id", MAX_STATEMENT_ID_BYTES)
         internal_integer(current_generation, "feedback history current_generation", 1)
@@ -2043,12 +2047,12 @@ def negative_resolution_key(
     """Build the exact knowledge and policy state for one observed miss."""
     try:
         validated_query_identity = validate_query_identity(query_identity)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("negative query_identity must be QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("negative query_identity must be QueryIdentity") from err
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("negative scope must match query identity scope") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("negative scope must match query identity scope") from err
     if validated_query_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("negative scope must match query identity scope")
     validated_constraint = internal_fingerprint(constraint_fingerprint, "negative constraint_fingerprint")
@@ -2118,8 +2122,8 @@ def negative_resolution(
 ) -> dict:
     try:
         validated_key = validate_negative_resolution_key(key)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("negative resolution key has an invalid type") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("negative resolution key has an invalid type") from err
     if not isinstance(reason, NegativeResolutionReason):
         raise InvalidRequestError("negative resolution reason has an invalid type")
     created = require_utc_datetime(created_at, "negative created_at")
@@ -2190,8 +2194,8 @@ def negative_lookup(hit: object, record: object = {}) -> dict:
         raise InvalidRequestError("negative lookup record must be NegativeResolution")
     try:
         validated_record = empty_negative_resolution() if not record else validate_negative_resolution(record)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("negative lookup record must be NegativeResolution") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("negative lookup record must be NegativeResolution") from err
     if not validated_hit and validated_record != empty_negative_resolution():
         raise InvalidRequestError("negative lookup miss must use the concrete empty record")
     result: dict = {"hit": validated_hit, "record": validated_record}
@@ -2268,10 +2272,16 @@ class NegativeResolutionStore:
             heapq_heapify(self.internal_expiry_heap)
 
     def lookup(self, key: dict, evaluation_time: str) -> dict:
+        """Look up a negative resolution for ``key``; the read also maintains the store.
+
+        Records expired at ``evaluation_time`` are removed first, then every other record
+        for the same relationship is invalidated. A remaining exact record counts a hit,
+        increments its ``hit_count`` and is returned; otherwise the lookup is a miss.
+        """
         try:
             validated_key = validate_negative_resolution_key(key)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("negative lookup key must be NegativeResolutionKey") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("negative lookup key must be NegativeResolutionKey") from err
         at = require_utc_datetime(evaluation_time, "negative lookup evaluation_time")
         fingerprint = negative_resolution_key_fingerprint(validated_key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
@@ -2293,8 +2303,8 @@ class NegativeResolutionStore:
     def admit(self, key: dict, evaluation_time: str) -> dict:
         try:
             validated_key = validate_negative_resolution_key(key)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("negative admission key must be NegativeResolutionKey") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("negative admission key must be NegativeResolutionKey") from err
         at = require_utc_datetime(evaluation_time, "negative admission evaluation_time")
         fingerprint = negative_resolution_key_fingerprint(validated_key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
@@ -2329,8 +2339,8 @@ class NegativeResolutionStore:
 
         try:
             validated_key = validate_negative_resolution_key(key)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("negative invalidation key must be NegativeResolutionKey") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("negative invalidation key must be NegativeResolutionKey") from err
         fingerprint = negative_resolution_key_fingerprint(validated_key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
         with self.internal_lock:

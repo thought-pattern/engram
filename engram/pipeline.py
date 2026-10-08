@@ -20,25 +20,39 @@ Usage:
     print(result["source"], result["response"])
 """
 
+from math import isfinite as math_isfinite
+
 from engram import sessions as sessions_mod
-from engram.constants import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
+from engram.constants import (
+    DEFAULT_PIPELINE_CONTEXT_LIMIT,
+    DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    DEFAULT_USER_ID,
+    KIND_COMMAND,
+    KIND_QUESTION,
+    MAX_RESPONSE_BYTES,
+    QUESTION_WORDS,
+)
 from engram.nlp import input_kind
+from engram.validation import Characters, require_text
 
 
 def attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
-    """Attach the latest per-user discourse state to an API result."""
+    """Return a copy of an API result carrying the session's latest discourse state.
+
+    Without a session the copy keeps the result's own discourse fields.
+    """
+    attached = dict(result)
     if not session_id:
-        return result
+        return attached
     with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
-        if not session:
-            return result
-        history = session.get("dialogue_act_history", [])
-        result["dialogue_act"] = history[0] if history else ""
-        result["active_topic"] = session.get("active_topic", "")
-        result["entities"] = list(session.get("entities", []))
-        result["fact_admissions"] = list(session.get("last_fact_admissions", []))
-    return result
+        session = sessions_mod.get_session(engram, session_id, create_if_missing=False)
+        if session:
+            history = session.get("dialogue_act_history", [])
+            attached["dialogue_act"] = history[0] if history else ""
+            attached["active_topic"] = session.get("active_topic", "")
+            attached["entities"] = list(session.get("entities", []))
+            attached["fact_admissions"] = list(session.get("last_fact_admissions", []))
+    return attached
 
 
 def retract_response(engram, session_id: str, response: str) -> bool:
@@ -52,7 +66,7 @@ def retract_response(engram, session_id: str, response: str) -> bool:
     if not session_id or not response:
         return False
     with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
+        session = sessions_mod.get_session(engram, session_id, create_if_missing=False)
         if not session:
             return False
         history = session.get("response_history", [])
@@ -70,8 +84,9 @@ def update_session(engram, session_id: str, response: str) -> bool:
     """Record a response into the session context, creating the session if needed."""
     if not session_id:
         return False
-    sessions_mod.get_session(engram, session_id, create_if_missing=True)
-    sessions_mod.update_session_context(engram, session_id, response)
+    with engram.session_lock:
+        sessions_mod.get_session(engram, session_id, create_if_missing=True)
+        sessions_mod.update_session_context(engram, session_id, response)
     return True
 
 
@@ -80,8 +95,8 @@ def respond(
     text: str,
     context_id: str = "",
     llm_fn=(),
-    high_confidence: float = 0.7,
-    context_limit: int = 3,
+    high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
     user_id: str = "",
     evaluation_time: str = "",
 ) -> dict:
@@ -106,9 +121,11 @@ def respond(
         text: User input text.
         context_id: Optional conversation context for turn state.
         llm_fn: Optional callable (text, context_statements) -> response str.
+            Its response must be text of at most MAX_RESPONSE_BYTES.
         high_confidence: Calibrated score at or above which a conversational statement
-            answers without the LLM (scores run 0.0 - 1.0).
-        context_limit: Maximum retrieved statements passed to llm_fn.
+            answers without the LLM (a finite number from 0.0 to 1.0).
+        context_limit: Maximum retrieved statements passed to llm_fn (a
+            non-negative integer).
         user_id: Optional caller-owned identity for learned-fact attribution.
         evaluation_time: Optional canonical UTC timestamp used by graph
             recall for this turn.
@@ -124,10 +141,11 @@ def respond(
         dialogue_act, active_topic, entities and fact_admissions carry that
         session's latest discourse state ("" / [] without a session).
     """
-    if not 0 <= high_confidence <= 1:
-        raise ValueError("high_confidence must be between 0 and 1")
-    if context_limit < 0:
-        raise ValueError("context_limit must be non-negative")
+    confidence_is_number = isinstance(high_confidence, (int, float)) and not isinstance(high_confidence, bool)
+    if not confidence_is_number or not math_isfinite(high_confidence) or not 0 <= high_confidence <= 1:
+        raise ValueError("high_confidence must be a number between 0 and 1")
+    if isinstance(context_limit, bool) or not isinstance(context_limit, int) or context_limit < 0:
+        raise ValueError("context_limit must be a non-negative integer")
 
     # Tier 1: a matched category, including a pure wildcard, or graph recall.
     # The configured fallback text is not a category answer.
@@ -225,7 +243,8 @@ def respond(
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
         context_statements = [context_stmt.get("text", "") for context_stmt, _ in matches[:context_limit]]
-        response = llm_fn(text, context_statements)
+        generated = llm_fn(text, context_statements)
+        response = require_text(generated, "llm_fn response", MAX_RESPONSE_BYTES, allow_empty=True, characters=Characters.LINES)
         if response:
             update_session(engram, context_id, response)
             tier3 = {
@@ -268,10 +287,10 @@ def respond(
 def chat(
     engram,
     text: str,
-    user_id: str = "0",
+    user_id: str = DEFAULT_USER_ID,
     llm_fn=(),
-    high_confidence: float = 0.7,
-    context_limit: int = 3,
+    high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
 ) -> dict:
     """Run the chatbot for one caller-owned user context."""
     normalized_user_id = sessions_mod.normalize_user_id(user_id)

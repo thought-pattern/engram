@@ -6,8 +6,9 @@
 from google.protobuf import json_format
 from grpc import channel_ready_future, insecure_channel
 
-from engram import engram_pb2, engram_pb2_grpc
+from engram import engram_pb2
 from engram.core import Engram
+from engram.engram_pb2_grpc import EngramServiceStub
 from engram.grpc_server import EngramGrpcServer
 from engram.mcp_server import MCPConversationService
 from engram.service import EngramCore
@@ -35,7 +36,7 @@ def test_grpc_batch_exposes_the_core_envelope_and_scalar_receipt() -> None:
     channel = insecure_channel(server.start())
     channel_ready_future(channel).result(timeout=5)
     try:
-        stub = engram_pb2_grpc.EngramServiceStub(channel)
+        stub = EngramServiceStub(channel)
         response = stub.RetireResponses(
             engram_pb2.RetireResponsesRequest(
                 entries=[

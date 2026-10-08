@@ -7,6 +7,7 @@ from threading import RLock as threading_RLock
 
 from engram.artifacts import lifecycle_after_capacity_eviction, validate_cached_response_artifact
 from engram.constants import (
+    MAX_PLANNED_CANDIDATES,
     MAX_REPOSITORY_ARTIFACTS,
     REPOSITORY_STATE_FIELDS,
     TIER_ADMISSION_POLICY_FIELDS,
@@ -16,7 +17,7 @@ from engram.constants import (
     Tier,
 )
 from engram.copies import structural_copy
-from engram.eligibility import ContextualExactLookup
+from engram.eligibility import contextual_exact_lookup
 from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError, ResourceNotFoundError
 from engram.identity import (
     retrieval_representation_bindings,
@@ -24,8 +25,6 @@ from engram.identity import (
     validate_scoped_retrieval_key,
 )
 from engram.validation import utc_datetime
-
-MAX_PLANNED_CANDIDATES = 16
 
 
 def tier_admission_policy(dynamic_capacity: int) -> dict:
@@ -104,8 +103,8 @@ def repository_state(
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values")
         try:
             validated_artifact = trusted_or_validated_artifact(artifact, trusted.get(statement_id, {}))
-        except InvalidRequestError as error:
-            raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values") from err
         if validated_artifact.get("statement_id", "") != statement_id:
             raise InvalidRequestError("repository artifacts must map statement IDs to CachedResponseArtifact values")
         validated_artifacts[statement_id] = validated_artifact
@@ -167,8 +166,8 @@ def admission_plan(
     else:
         try:
             validated_candidate = validate_repository_state(candidate, trusted_artifacts)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("admission candidate must be a RepositoryState") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("admission candidate must be a RepositoryState") from err
     if not isinstance(admitted_statement_id, str):
         raise InvalidRequestError("admitted_statement_id must be a string")
     valid_evicted_ids = isinstance(evicted_statement_ids, tuple) and all(
@@ -210,8 +209,8 @@ def normalize_repository_state(
     for artifact in artifacts:
         try:
             validated_artifact = validate_cached_response_artifact(artifact)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("repository artifact input must contain CachedResponseArtifact values") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("repository artifact input must contain CachedResponseArtifact values") from err
         statement_id = validated_artifact.get("statement_id", "")
         if statement_id in artifact_map:
             raise ConflictError(f"duplicate artifact statement_id: {statement_id}")
@@ -236,8 +235,8 @@ def repository_state_with_artifact_updates(
         raise InvalidRequestError("repository updates must be a tuple of CachedResponseArtifact values")
     try:
         validated_artifacts = tuple(validate_cached_response_artifact(artifact) for artifact in artifacts)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("repository updates must be a tuple of CachedResponseArtifact values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("repository updates must be a tuple of CachedResponseArtifact values") from err
     updated = dict(validated_state.get("artifacts", {}))
     for artifact in validated_artifacts:
         statement_id = artifact.get("statement_id", "")
@@ -412,10 +411,19 @@ class ArtifactRepository:
         return copied
 
     def candidate_with_artifact(self, artifact: dict) -> dict:
+        """Build the next-generation candidate that adds or replaces one artifact.
+
+        The live state is unchanged; the candidate is recorded through ``plan``
+        with the artifact's statement ID as its one change, so ``atomic_replace``
+        or a coordinator can publish it later.
+
+        Raises:
+            InvalidRequestError: ``artifact`` is not a CachedResponseArtifact.
+        """
         try:
             artifact = validate_cached_response_artifact(artifact)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("repository artifact must be a CachedResponseArtifact") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("repository artifact must be a CachedResponseArtifact") from err
         with self.internal_lock:
             artifacts = dict(self.internal_state.get("artifacts", {}))
             artifacts[artifact.get("statement_id", "")] = artifact
@@ -430,8 +438,8 @@ class ArtifactRepository:
             raise InvalidRequestError("repository artifacts must be a tuple of CachedResponseArtifact values")
         try:
             validated_artifacts = tuple(validate_cached_response_artifact(artifact) for artifact in artifacts)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("repository artifacts must be a tuple of CachedResponseArtifact values") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("repository artifacts must be a tuple of CachedResponseArtifact values") from err
         if len({artifact.get("statement_id", "") for artifact in validated_artifacts}) != len(validated_artifacts):
             raise ConflictError("repository artifact updates must have unique statement IDs")
         with self.internal_lock:
@@ -450,8 +458,8 @@ class ArtifactRepository:
 
         try:
             artifact = validate_cached_response_artifact(artifact)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("admission artifact must be a CachedResponseArtifact") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("admission artifact must be a CachedResponseArtifact") from err
         validated_policy = validate_tier_admission_policy(policy)
         statement_id = artifact.get("statement_id", "")
         with self.internal_lock:
@@ -514,6 +522,17 @@ class ArtifactRepository:
         expected_generation: int,
         reason: object,
     ) -> dict:
+        """Build the next-generation candidate that removes one artifact at its expected generation.
+
+        The live state is unchanged; the candidate is recorded through ``plan``
+        with the removed statement ID as its one change.
+
+        Raises:
+            InvalidRequestError: the statement ID, generation or reason is malformed.
+            ResourceNotFoundError: no live artifact has ``statement_id``.
+            ConflictError: the artifact's generation differs from ``expected_generation``,
+                or a capacity eviction targets a STATIC artifact.
+        """
         if not isinstance(statement_id, str) or not statement_id:
             raise InvalidRequestError("repository statement_id must be a non-empty string")
         expected = positive_int(expected_generation, "expected artifact generation")
@@ -539,6 +558,13 @@ class ArtifactRepository:
             return result
 
     def atomic_replace(self, candidate: dict, expected_state_generation: int) -> dict:
+        """Validate ``candidate`` against the live state, publish it, and return the published snapshot.
+
+        Raises:
+            InvalidRequestError: the candidate is not a valid repository state.
+            ConflictError: the live generation is not ``expected_state_generation``,
+                or the candidate does not advance it by exactly one.
+        """
         expected = positive_int(expected_state_generation, "expected repository state_generation")
         with self.internal_lock:
             validated_candidate = validate_repository_state(candidate, self.internal_state.get("artifacts", {}))
@@ -600,13 +626,13 @@ class ArtifactRepository:
         """
         try:
             signature = trusted_scoped_retrieval_key_signature(validate_scoped_retrieval_key(key))
-        except IdentityValidationError as error:
-            raise InvalidRequestError("contextual exact key must be a ScopedRetrievalKey") from error
+        except IdentityValidationError as err:
+            raise InvalidRequestError("contextual exact key must be a ScopedRetrievalKey") from err
         with self.internal_lock:
             artifacts = self.internal_state.get("artifacts", {})
             # The key index tracks the live state, so every owner names a stored artifact.
             owners = self.internal_key_owners.get(signature, ())
             carriers = {statement_id: artifacts.get(statement_id, {}) for statement_id in owners}
-            lookup = ContextualExactLookup(carriers, trusted_artifacts=True).exact_lookup(key, context)
+            lookup = contextual_exact_lookup(carriers, key, context, trusted_artifacts=True)
             result = lookup
             return result

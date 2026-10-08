@@ -286,7 +286,6 @@ def test_nlp_extraction_does_not_hide_dependency_failures(monkeypatch, extractor
     def fail_tokenization(internal_text):
         raise RuntimeError("injected tokenizer failure")
 
-    monkeypatch.setattr(nlp, "ensure_nltk_data", lambda: False)
     monkeypatch.setattr(nlp, "word_tokenize", fail_tokenization)
 
     with pytest_raises(RuntimeError, match="injected tokenizer failure"):

@@ -55,20 +55,30 @@ BUDGETS_MS = {
     "chat_learn_at_capacity": 100.0,
     "evidence_trim": 100.0,
 }
-# Every scale engine disables polishing and lexical expansion so that only the measured
-# store work is timed; capacity, sparse retrieval and fact learning are set per engine.
-SCALE_CONFIG_OPTIONS = {
-    "polish_responses": False,
-    "use_lemmatization": False,
-    "use_spell_correction": False,
-    "use_stemming": False,
-    "use_synonyms": False,
-}
 # Read-only provenance shared by every synthetic accepted response; artifact validation copies it.
 SCALE_ARTIFACT_PROVENANCE = {"source_label": "scale:benchmark", "caller_id": "engineering", "accepted_at": "2026-09-27T00:00:00Z"}
 
 
 RECEIPTS = [10_000]
+
+
+def scale_engram_config(capacity: int, learn_user_facts: bool, sparse_enabled: bool) -> dict:
+    """Build one scale engine configuration.
+
+    Every scale engine disables polishing and lexical expansion so that only the measured
+    store work is timed; capacity, sparse retrieval and fact learning are set per engine.
+    """
+    config = engram_config(
+        capacity=capacity,
+        learn_user_facts=learn_user_facts,
+        sparse=sparse_config(enabled=sparse_enabled),
+        polish_responses=False,
+        use_lemmatization=False,
+        use_spell_correction=False,
+        use_stemming=False,
+        use_synonyms=False,
+    )
+    return config
 
 
 def seed_receipts(core: EngramCore, count: int) -> None:
@@ -144,14 +154,7 @@ def artifact_scenarios(size: int, iterations: int) -> dict:
     # one with sparse retrieval enabled; each ledger is seeded like a long-running process's.
     cores = []
     for sparse_enabled in (False, True):
-        engram = Engram(
-            config=engram_config(
-                capacity=max(size * 2, 100),
-                learn_user_facts=False,
-                sparse=sparse_config(enabled=sparse_enabled),
-                **SCALE_CONFIG_OPTIONS,
-            )
-        )
+        engram = Engram(config=scale_engram_config(max(size * 2, 100), False, sparse_enabled))
         selected_scope = scope_key()
         artifacts = []
         entries = [
@@ -231,14 +234,7 @@ def pattern_scenarios(size: int, iterations: int) -> dict:
     # to retire, and DYNAMIC ones with fact learning so a learning chat turn must evict.
     engines = []
     for tier, learn_user_facts in ((Tier.STATIC, False), (Tier.DYNAMIC, True)):
-        engine = Engram(
-            config=engram_config(
-                capacity=size + 1,
-                learn_user_facts=learn_user_facts,
-                sparse=sparse_config(enabled=False),
-                **SCALE_CONFIG_OPTIONS,
-            )
-        )
+        engine = Engram(config=scale_engram_config(size + 1, learn_user_facts, False))
         engine.store("Go on.", pattern="*", tier=Tier.STATIC)
         stored_ids = [engine.store(f"Scale reply {index}.", pattern=f"SCALE PATTERN {index} *", tier=tier) for index in range(size)]
         engines.append((engine, stored_ids))
@@ -259,9 +255,7 @@ class TrimEngram(Engram):
     """Engram whose structured graph reads return fixed synthetic projections."""
 
     def __init__(self, projections: list[dict]) -> None:
-        super().__init__(
-            config=engram_config(capacity=100, learn_user_facts=False, sparse=sparse_config(enabled=False), **SCALE_CONFIG_OPTIONS)
-        )
+        super().__init__(config=scale_engram_config(100, False, False))
         self.scale_projections = projections
         # Revalidation reads each Proposition back as its current by-id projection.
         self.scale_current = {}

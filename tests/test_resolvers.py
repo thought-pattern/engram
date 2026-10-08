@@ -196,9 +196,31 @@ class ReadyEmbeddingModel(SentenceTransformer):
         return True
 
 
+class ReadyGraphCapability:
+    """A connected graph double that implements every read and finds nothing."""
+
+    available = True
+
+    def empty_rows(self, *internal_args, **internal_kwargs) -> list:
+        result = []
+        return result
+
+    execute = empty_rows
+    vector_search_propositions = empty_rows
+    vector_search_proposition_projections = empty_rows
+    structured_proposition_projections = empty_rows
+    canonical_entity_matches = empty_rows
+    canonical_predicate_matches = empty_rows
+    relation_one_hop_proposition_projections = empty_rows
+    proposition_projection_by_id = empty_rows
+
+    def disconnect(self) -> None:
+        self.available = False
+
+
 def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
     """Mark an injected graph capability ready for resolver-planning tests."""
-    client = type("ReadyGraphCapability", (), {"available": True})()
+    client = ReadyGraphCapability()
     engine.internal_graph_client = client
     assert "graph" in engine.config
     graph_config = engine.config.get("graph", {})
@@ -720,6 +742,7 @@ def test_support_semantic_proposition_discovery_fails_soft_and_cooperates_with_l
         "Ada", EMPTY_SCOPE_KEY, diagnostic_seed="test:Ada:"
     )
     lease = validate_resolver_budget({name: query_frame.get("budget", {}).get(name, 0) for name in RESOLVER_BUDGET_FIELDS})
+    monkeypatch.setattr(engine, "encode_graph_query", lambda internal_text: [0.0] * 384)
     monkeypatch.setattr(
         engine,
         "graph_vector_proposition_projections",

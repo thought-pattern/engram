@@ -12,8 +12,7 @@ from engram.constants import EARLIEST_UTC, EMPTY_CONFIG, GRAPH_TIMEOUT_SECONDS
 from engram.core import Engram
 from engram.graph import MemGraphConnection
 from engram.service import EngramCore
-
-from .bolt_stub import BoltStub, Structure
+from tests.bolt_stub import BoltStub, Structure
 
 # Room for thread wake-ups; Windows timers tick about every 16 ms.
 SLACK_SECONDS = 0.25

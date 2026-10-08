@@ -1,22 +1,16 @@
-"""Text substitution maps for ENGRAM.
+"""Text substitution and sentence splitting for ENGRAM.
 
-This module provides substitution maps for normalizing input text and
-performing pronoun/person transformations in templates.
+Applies word substitution maps to normalize input text and to perform
+pronoun/person transformations in templates; the maps themselves
+(``DEFAULT_CONTRACTIONS``, ``DEFAULT_GENDER``) belong to ``constants``. Also
+splits text into sentences with NLTK's punkt tokenizer, whose data
+``nltk_data.NLTK_RESOURCES`` requires and loads.
 """
-
-from functools import lru_cache
 
 from nltk.tokenize import sent_tokenize
 
 from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
-from engram.nltk_data import ensure_resource
-
-
-@lru_cache(maxsize=1)
-def ensure_punkt() -> None:
-    """Ensure the punkt tokenizers are present (cached, runs once)."""
-    ensure_resource("tokenizers/punkt", "punkt")
-    ensure_resource("tokenizers/punkt_tab", "punkt_tab")
+from engram.nltk_data import NLTK_RESOURCES
 
 
 def get_all_input_subs(maps: dict) -> dict[str, str]:
@@ -120,12 +114,15 @@ def split_sentences(text: str) -> list[str]:
 
     Returns:
         List of sentences (stripped of leading/trailing whitespace).
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
     if not text or not text.strip():
         result = []
         return result
 
-    ensure_punkt()
+    NLTK_RESOURCES.require()
     sentences = sent_tokenize(text)
 
     cleaned = [s.strip() for s in sentences if s.strip()]

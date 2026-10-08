@@ -7,8 +7,8 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 from engram.artifacts import validate_cached_response_artifact
 from engram.constants import EligibilityExclusionReason, ExactLookupOutcome, LifecycleState
 from engram.eligibility import (
-    ContextualExactLookup,
-    EligibilityContextCapture,
+    capture_standalone_eligibility_context,
+    contextual_exact_lookup,
     eligibility_context,
     eligibility_decision_context_signature,
     evaluate_artifact_eligibility,
@@ -36,7 +36,8 @@ def test_factory_captures_one_utc_process_snapshot() -> None:
         result = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)
         return result
 
-    captured = EligibilityContextCapture(clock).capture_standalone(
+    captured = capture_standalone_eligibility_context(
+        clock,
         scope_key(namespace="tenant-a"),
         True,
     )
@@ -149,12 +150,11 @@ def test_contextual_exact_lookup_scans_current_artifacts_without_secondary_state
     )[
         0
     ].get("key", {})
-    lookup = ContextualExactLookup(
-        {artifact.get("statement_id", ""): artifact},
-    )
+    artifacts = {artifact.get("statement_id", ""): artifact}
 
-    eligible = lookup.exact_lookup(key, current_context)
-    unavailable = lookup.exact_lookup(
+    eligible = contextual_exact_lookup(artifacts, key, current_context)
+    unavailable = contextual_exact_lookup(
+        artifacts,
         key,
         eligibility_context(**{**CONTEXT_VALUES, "artifact_repository_available": False}),
     )

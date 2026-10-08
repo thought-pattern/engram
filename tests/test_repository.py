@@ -13,7 +13,7 @@ from engram.constants import (
     RepositoryRemovalReason,
     Tier,
 )
-from engram.eligibility import ContextualExactLookup, eligibility_context
+from engram.eligibility import contextual_exact_lookup, eligibility_context
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key, scoped_retrieval_key_from_text
 from engram.repository import (
@@ -346,8 +346,8 @@ def test_repository_concurrent_swap_has_one_winner_and_never_partial_state() -> 
         barrier.wait()
         try:
             successes.append(repository.atomic_replace(candidate, expected))
-        except ConflictError as error:
-            conflicts.append(str(error))
+        except ConflictError as err:
+            conflicts.append(str(err))
 
     threads = [threading_Thread(target=publish, args=(candidate,)) for candidate in candidates]
     for thread in threads:
@@ -770,8 +770,8 @@ def test_exact_key_index_follows_every_state_change_and_matches_a_full_scan() ->
     requests = (shared, "Question for stmt-1?", "Question for stmt-1 changed?", "Question for stmt-3?", "Alias for stmt-4")
     for request in requests:
         key = scoped_retrieval_key_from_text(TENANT_A_SCOPE, request)
-        scanned = ContextualExactLookup(repository.trusted_artifacts(), trusted_artifacts=True).exact_lookup(
-            key, eligibility_context(**LOOKUP_CONTEXT_VALUES)
+        scanned = contextual_exact_lookup(
+            repository.trusted_artifacts(), key, eligibility_context(**LOOKUP_CONTEXT_VALUES), trusted_artifacts=True
         )
         assert repository.exact_lookup(key, eligibility_context(**LOOKUP_CONTEXT_VALUES)) == scanned
     shared_key = scoped_retrieval_key_from_text(TENANT_A_SCOPE, shared)

@@ -8,7 +8,14 @@ from pytest import raises as pytest_raises
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, CostClass, LifecycleState, QueryOperator, Tier
+from engram.constants import (
+    INITIAL_ARTIFACT_STATISTICS,
+    CostClass,
+    LifecycleState,
+    QueryOperator,
+    RewriteStopReason,
+    Tier,
+)
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
@@ -21,7 +28,6 @@ from engram.resolution import (
 )
 from engram.rewrite import (
     RewriteEngine,
-    RewriteStopReason,
     apply_rewrites_to_frame,
     lint_rewrite_corpus,
     load_default_rewrite_corpus,

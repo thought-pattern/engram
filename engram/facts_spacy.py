@@ -5,8 +5,8 @@ handles copula sentences ("X is Y"). This module uses spaCy's dependency parse
 to pull subject-predicate-object triples from arbitrary declarative sentences,
 which can feed opt-in local fact learning and read-only graph recall.
 
-Opt-in via the use_spacy_facts config flag. The model is loaded lazily; if it
-cannot be loaded, extraction returns an empty list rather than failing.
+Opt-in via the use_spacy_facts config flag. The model is loaded on first use
+and is a hard requirement: a missing model raises ``RuntimeError``.
 
 Triple conventions:
     "Paris is the capital of France"      -> (Paris, is, capital of France)
@@ -137,15 +137,15 @@ def extract_facts(text: str) -> list:
 
     Returns:
         List of fact dicts (subject, predicate, obj, original). Empty list if
-        nothing is extractable or the spaCy model is unavailable.
+        nothing is extractable.
+
+    Raises:
+        RuntimeError: the spaCy model is not installed.
     """
     if not text or not text.strip():
         result = []
         return result
     nlp = SPACY_PIPELINES.pipeline()
-    if not nlp:
-        result = []
-        return result
     doc = nlp(text)
     facts = []
     for sent in doc.sents:

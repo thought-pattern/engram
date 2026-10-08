@@ -6,7 +6,7 @@ graph access, model loading, resource download, or transport work.
 """
 
 from json import dumps as json_dumps
-from re import fullmatch as re_fullmatch, search as re_search
+from re import Match, fullmatch as re_fullmatch, search as re_search
 from unicodedata import normalize as unicodedata_normalize
 
 from engram.constants import (
@@ -38,6 +38,7 @@ from engram.constants import (
     MAX_CANONICAL_ID_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_ENTITIES,
+    MAX_ENUM_WIRE_BYTES,
     MAX_IDENTITY_SURFACE_BYTES,
     MAX_LEXICAL_TERM_BYTES,
     MAX_LEXICAL_TERMS,
@@ -109,9 +110,9 @@ def dump_json(data: dict) -> str:
     return result
 
 
-def expand_contraction(match) -> str:
+def expand_contraction(match: Match) -> str:
     """Expand one IDENTITY_CONTRACTION_RE match; the pattern matches only contraction keys."""
-    contraction = match.group(0)
+    contraction: str = match.group(0)
     result = DEFAULT_CONTRACTIONS.get(contraction, contraction)
     return result
 
@@ -339,11 +340,11 @@ def identity_qualifier_from_dict(value: object) -> dict:
 
     data = require_mapping(value, "IdentityQualifier")
     require_exact_keys(data, IDENTITY_QUALIFIER_FIELDS, "IdentityQualifier")
-    kind_value = identity_text(data.get("kind", ""), "qualifier kind", 32, allow_empty=False)
+    kind_value = identity_text(data.get("kind", ""), "qualifier kind", MAX_ENUM_WIRE_BYTES, allow_empty=False)
     try:
         kind = QualifierKind(kind_value)
-    except ValueError as error:
-        raise IdentityValidationError(f"unsupported qualifier kind: {kind_value}") from error
+    except ValueError as err:
+        raise IdentityValidationError(f"unsupported qualifier kind: {kind_value}") from err
     result = identity_qualifier(kind, data.get("value", ""))
     return result
 
@@ -362,8 +363,8 @@ def scoped_retrieval_key(
 
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("scoped retrieval key scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("scoped retrieval key scope must be a ScopeKey") from err
     validated_normalized_key = identity_text(
         normalized_key,
         "normalized retrieval key",
@@ -461,8 +462,8 @@ def retrieval_key_binding(
 
     try:
         validated_key = validate_scoped_retrieval_key(key)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("retrieval binding key must be a ScopedRetrievalKey") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("retrieval binding key must be a ScopedRetrievalKey") from err
     if not isinstance(origin, RetrievalOrigin):
         raise IdentityValidationError("retrieval binding origin must be a RetrievalOrigin")
     validated_representation = identity_raw_text(
@@ -618,23 +619,23 @@ def query_identity(
         raise IdentityValidationError(f"identity entities exceed the limit of {MAX_ENTITIES}")
     try:
         validated_entities = tuple(validate_entity_reference(entity) for entity in entities)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("identity entities must be a tuple of EntityReference values") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("identity entities must be a tuple of EntityReference values") from err
     entity_keys = tuple(entity_reference_key(entity) for entity in validated_entities)
     if len(set(entity_keys)) != len(entity_keys):
         raise IdentityValidationError("identity entities must be unique")
     try:
         validated_relation = validate_relation_reference(relation)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("identity relation must be a RelationReference") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("identity relation must be a RelationReference") from err
     if not isinstance(qualifiers, tuple):
         raise IdentityValidationError("identity qualifiers must be a tuple of IdentityQualifier values")
     if len(qualifiers) > MAX_QUALIFIERS:
         raise IdentityValidationError(f"identity qualifiers exceed the limit of {MAX_QUALIFIERS}")
     try:
         validated_qualifiers = tuple(validate_identity_qualifier(qualifier) for qualifier in qualifiers)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("identity qualifiers must be a tuple of IdentityQualifier values") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("identity qualifiers must be a tuple of IdentityQualifier values") from err
     qualifier_keys = tuple(identity_qualifier_key(qualifier) for qualifier in validated_qualifiers)
     if len(set(qualifier_keys)) != len(qualifier_keys):
         raise IdentityValidationError("identity qualifiers must be unique")
@@ -659,8 +660,8 @@ def query_identity(
         raise IdentityValidationError("identity lexical_terms must be unique")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("identity scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("identity scope must be a ScopeKey") from err
     result: dict = {
         "canonical_form": validated_canonical_form,
         "operator": operator,
@@ -724,11 +725,11 @@ def query_identity_from_dict(value: object) -> dict:
 
     data = require_mapping(value, "QueryIdentity")
     require_exact_keys(data, QUERY_IDENTITY_FIELDS, "QueryIdentity")
-    operator_value = identity_text(data.get("operator", ""), "identity operator", 32, allow_empty=False)
+    operator_value = identity_text(data.get("operator", ""), "identity operator", MAX_ENUM_WIRE_BYTES, allow_empty=False)
     try:
         operator = QueryOperator(operator_value)
-    except ValueError as error:
-        raise IdentityValidationError(f"unsupported identity operator: {operator_value}") from error
+    except ValueError as err:
+        raise IdentityValidationError(f"unsupported identity operator: {operator_value}") from err
     entities = require_list(data.get("entities", []), "identity entities")
     qualifiers = require_list(data.get("qualifiers", []), "identity qualifiers")
     lexical_terms = require_list(data.get("lexical_terms", []), "identity lexical_terms")
@@ -911,8 +912,8 @@ def extract_relation_surface(
     try:
         for entity in entities:
             validate_entity_reference(entity)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("relation extraction entities must be EntityReference values") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("relation extraction entities must be EntityReference values") from err
     if operator in {QueryOperator.LOOKUP, QueryOperator.HOW_MANY, QueryOperator.COUNT, QueryOperator.COMPARE, QueryOperator.EXISTS}:
         result = relation_reference()
         return result
@@ -951,8 +952,8 @@ def extract_standalone_identity(request: str, scope: object = EMPTY_SCOPE_KEY) -
     """Extract a conservative validated identity from request surfaces with no external I/O."""
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("standalone identity scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("standalone identity scope must be a ScopeKey") from err
     raw = identity_raw_text(request, "identity request", MAX_CANONICAL_FORM_BYTES, allow_empty=False)
     canonical_form = normalize_retrieval_key(raw)
     if not canonical_form:
@@ -986,12 +987,12 @@ def validate_authoritative_identity(
     """Validate cross-contract consistency without rewriting authoritative data."""
     try:
         validated_identity = validate_query_identity(identity)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("authoritative identity must be a QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("authoritative identity must be a QueryIdentity") from err
     try:
         validated_retrieval = validate_retrieval_representation(retrieval)
-    except IdentityValidationError as error:
-        raise IdentityValidationError("authoritative retrieval must be a RetrievalRepresentation") from error
+    except IdentityValidationError as err:
+        raise IdentityValidationError("authoritative retrieval must be a RetrievalRepresentation") from err
     scoped_retrieval_key_from_text(
         validated_identity.get("scope", {}),
         validated_retrieval.get("canonical", ""),

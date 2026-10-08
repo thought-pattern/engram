@@ -18,6 +18,7 @@ from engram.constants import (
     Tier,
 )
 from engram.core import Engram
+from engram.graph import MemGraphConnection
 from engram.errors import (
     ConflictError,
     ConversationOwnershipError,
@@ -28,6 +29,26 @@ from engram.errors import (
 )
 from engram.identity import extract_standalone_identity, scope_key
 from engram.service import EngramCore
+
+
+class EmptyReadGraph(MemGraphConnection):
+    """A connected graph double whose fixed reads find nothing without reaching ``execute``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.available = True
+
+    def empty_rows(self, *internal_args, **internal_kwargs) -> list:
+        result = []
+        return result
+
+    structured_proposition_projections = empty_rows
+    canonical_entity_matches = empty_rows
+    canonical_predicate_matches = empty_rows
+    relation_one_hop_proposition_projections = empty_rows
+    proposition_projection_by_id = empty_rows
+    vector_search_propositions = empty_rows
+    vector_search_proposition_projections = empty_rows
 
 
 def test_core_reports_process_memory_operation() -> None:
@@ -62,9 +83,7 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     entered = threading_Event()
     release = threading_Event()
 
-    class BlockingGraph:
-        available = True
-
+    class BlockingGraph(EmptyReadGraph):
         def structured_proposition_projections(self, internal_value, *, projection_id, limit, basis_window):
             del internal_value, basis_window
             entered.set()
@@ -157,9 +176,7 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
     entered = threading_Event()
     release = threading_Event()
 
-    class BlockingGraph:
-        available = True
-
+    class BlockingGraph(EmptyReadGraph):
         def execute(self, internal_query, internal_parameters=()):
             del internal_query, internal_parameters
             entered.set()
@@ -306,10 +323,11 @@ def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
 @pytest_mark.parametrize("failure_site", ["context", "metrics"])
 def test_unknown_user_start_restores_existing_session_after_initialization_failure(monkeypatch, failure_site: str) -> None:
     core = EngramCore()
-    prior_session = sessions.get_session(core.engram, "0")
-    prior_session["previous_response"] = "prior response"
-    prior_session["predicates"] = {"preserved": "value"}
-    prior_values = deepcopy(prior_session)
+    with core.engram.session_lock:
+        prior_session = sessions.get_session(core.engram, "0")
+        prior_session["previous_response"] = "prior response"
+        prior_session["predicates"] = {"preserved": "value"}
+        prior_values = deepcopy(prior_session)
     expected = RuntimeError(f"{failure_site} initialization failed")
     cause = ValueError(f"{failure_site} cause")
     replacement_sessions = []

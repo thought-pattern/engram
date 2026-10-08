@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from json import loads as json_loads
 from threading import Event
 
 from pytest import mark, raises
@@ -281,8 +282,8 @@ def test_prepare_drains_active_work_and_rejects_late_learning_and_other_owners(k
         {"visibility_scope": SCOPES.get("public", {})},
         {"visibility_scope": {}},
         {"dependency_ids": "all"},
-        # A JSON null inside the external command envelope; the validator must refuse it.
-        {"dependency_ids": [None]},
+        # A JSON null decoded from the external command envelope; the validator must refuse it.
+        {"dependency_ids": json_loads("[null]")},
         {"extra": True},
     ],
 )

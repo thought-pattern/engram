@@ -1,5 +1,7 @@
 """Deterministic working-memory accounting shared by request-local operations."""
 
+from engram.errors import WorkingMemoryExceededError
+
 
 def estimate_working_bytes(value: object, seen=()) -> int:
     """Return a conservative, bounded-size estimate for request working data."""
@@ -31,6 +33,6 @@ def estimate_working_bytes(value: object, seen=()) -> int:
 
 
 def require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
-    """Raise before retaining work that exceeds a request's memory estimate."""
+    """Raise ``WorkingMemoryExceededError`` before retaining work that exceeds a request's memory estimate."""
     if maximum_bytes and estimated_bytes > maximum_bytes:
-        raise MemoryError("resolution working-memory estimate exceeded")
+        raise WorkingMemoryExceededError("resolution working-memory estimate exceeded")

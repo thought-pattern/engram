@@ -2,10 +2,9 @@
 
 from random import Random
 
-from engram import eviction
 from engram.config import engram_config
-from engram.constants import EARLIEST_UTC, Tier
-from engram.core import Engram
+from engram.constants import Tier
+from engram.core import Engram, lru_entry
 from engram.metrics import get_dynamic_count
 from engram.models import record_statement_hit
 
@@ -90,11 +89,11 @@ def test_evicting_every_carrier_of_a_shared_pattern_leaves_no_dead_entry() -> No
     engram = Engram()
     engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
     first = engram.store("First.", pattern="SHARED PATTERN", tier=Tier.DYNAMIC)
-    engram.store("Second.", pattern="SHARED PATTERN", tier=Tier.DYNAMIC)
+    second = engram.store("Second.", pattern="SHARED PATTERN", tier=Tier.DYNAMIC)
 
     assert engram.retire_statement(first)
     assert engram.pattern_query("shared pattern")[2] == "Second."
-    assert eviction.clear_dynamic(engram) == 1
+    assert engram.retire_statement(second)
 
     # A leftover entry would still win the walk and answer with nothing.
     assert len(engram.pattern_matcher) == 1
@@ -102,14 +101,14 @@ def test_evicting_every_carrier_of_a_shared_pattern_leaves_no_dead_entry() -> No
 
 
 def test_lru_heap_evicts_what_a_full_scan_would() -> None:
+    # The scan applies the production LRU key to every DYNAMIC statement, so this
+    # checks only the lazy heap against an exhaustive minimum, not the policy itself.
     def scan_choice(engram: Engram) -> str:
-        def key(item: tuple[int, dict]) -> tuple:
-            idx, statement = item
-            last_hit = statement.get("last_hit", "")
-            result = (last_hit or statement.get("created_at", EARLIEST_UTC), 1 if last_hit else 0, idx)
-            return result
-
-        result = min(eviction.get_eviction_candidates(engram), key=key)[1].get("id", "")
+        entries = [
+            lru_entry(engram.statement_by_id.get(statement_id, {}), engram.statement_sequence.get(statement_id, 0))
+            for statement_id in engram.dynamic_statement_ids
+        ]
+        result = min(entries)[3]
         return result
 
     random = Random(20260928)
@@ -123,14 +122,15 @@ def test_lru_heap_evicts_what_a_full_scan_would() -> None:
         if action < 0.35 and dynamic:
             hit_statement = engram.statement_by_id.get(random.choice(dynamic), {})
             assert hit_statement
-            record_statement_hit(hit_statement)
+            record_statement_hit(hit_statement, engram.clock())
         elif action < 0.55:
             engram.store(f"Later fact {step}.", pattern=f"LATER {step}", tier=Tier.DYNAMIC)
         elif action < 0.65 and dynamic:
             assert engram.retire_statement(random.choice(dynamic))
         elif dynamic:
             expected = scan_choice(engram)
-            assert eviction.evict_dynamic(engram)
+            with engram.mutation_lock, engram.statement_lock:
+                assert engram.evict_least_recent_dynamic()
             assert expected not in engram.statement_by_id
             assert set(engram.dynamic_statement_ids) == set(dynamic) - {expected}
         positions = engram.statement_index

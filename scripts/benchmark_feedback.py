@@ -53,7 +53,7 @@ def internal_latency(values: list[float]) -> dict[str, float]:
     return result
 
 
-def internal_time(call) -> tuple[object, float]:
+def internal_time(call):
     started = time_perf_counter_ns()
     value = call()
     result = value, (time_perf_counter_ns() - started) / 1_000_000

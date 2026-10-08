@@ -198,6 +198,22 @@ def test_bounded_retention_creates_tombstone_and_then_expires_tombstone_horizon(
         ledger.record(mutation_receipt(**{**COMPLETED_RECEIPT_FIELDS, "request_id": "request-2", "sequence": 5}))
 
 
+def test_oversized_ledger_state_is_refused_before_its_entries_are_decoded() -> None:
+    # The entries are malformed; the count bound must refuse the state before any is decoded.
+    oversized_state = {
+        "max_receipts": 1,
+        "max_tombstones": 1,
+        "next_sequence": 3,
+        "receipts": ["malformed", "malformed"],
+        "tombstones": [],
+    }
+
+    with pytest_raises(InvalidRequestError, match="retention bounds"):
+        MutationReceiptLedger(state=oversized_state)
+    with pytest_raises(InvalidRequestError, match="retention bounds"):
+        MutationReceiptLedger(max_receipts=1, receipts=("malformed", "malformed"), next_sequence=3)
+
+
 def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
     ledger = MutationReceiptLedger()
     first = mutation_receipt(**{**COMPLETED_RECEIPT_FIELDS, "request_id": "request-a"})
@@ -210,8 +226,8 @@ def test_concurrent_same_sequence_record_has_one_identity_winner() -> None:
         barrier.wait()
         try:
             successes.append(ledger.record(receipt))
-        except ConflictError as error:
-            conflicts.append(str(error))
+        except ConflictError as err:
+            conflicts.append(str(err))
 
     threads = [threading_Thread(target=record, args=(receipt,)) for receipt in (first, second)]
     for thread in threads:

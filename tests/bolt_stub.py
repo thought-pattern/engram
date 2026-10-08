@@ -66,9 +66,16 @@ class Structure:
         self.fields = fields
 
 
+class PackStreamNull:
+    """The PackStream null a Bolt peer sent, decoded apart from every false value the codec also carries."""
+
+
+PACKSTREAM_NULL = PackStreamNull()
+
+
 def pack(value) -> bytes:
     """Encode one value as PackStream; Python None is the PackStream null the Bolt peer sends and expects."""
-    if value is None:
+    if value is None or isinstance(value, PackStreamNull):
         encoded = b"\xc0"
     elif value is True:
         encoded = b"\xc3"
@@ -116,7 +123,7 @@ def unpack(data: bytes, offset: int = 0) -> tuple:
         width = struct_calcsize(fixed_form)
         decoded = (struct_unpack(fixed_form, data[offset : offset + width])[0], offset + width)
     elif marker == 0xC0:
-        decoded = (None, offset)
+        decoded = (PACKSTREAM_NULL, offset)
     elif marker in (0xC2, 0xC3):
         decoded = (marker == 0xC3, offset)
     elif sized_form:

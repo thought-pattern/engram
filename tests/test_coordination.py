@@ -206,6 +206,35 @@ def test_stale_candidate_is_rejected_without_changing_live_state() -> None:
     assert set(coordinator.snapshot().get("repository", {}).get("artifacts", {})) == {"stmt-current"}
 
 
+def test_planned_candidate_changed_before_execution_is_refused() -> None:
+    coordinator = AtomicMutationCoordinator(ArtifactRepository(), MutationReceiptLedger())
+    repository_candidate = coordinator.repository.candidate_with_artifact(
+        {
+            **ACCEPTED_ARTIFACT_FIELDS,
+            "statement_id": "stmt-1",
+            "query_identity": extract_standalone_identity("Question for stmt-1?", TENANT_SCOPE),
+            "retrieval": retrieval_representation("Question for stmt-1?", ("GitHub acquirer",)),
+        }
+    )
+    candidate = coordinator.build_candidate(
+        repository_candidate,
+        {
+            **COMMITTED_RECEIPT_FIELDS,
+            "sequence": coordinator.next_receipt_sequence,
+            "request_id": "request-1",
+            "payload_signature": canonical_payload_signature({"statement_id": "stmt-1"}),
+            "affected_generations": ({"statement_id": "stmt-1", "before_generation": 0, "after_generation": 1},),
+            "result": {"statement_id": "stmt-1", "result_code": MutationResultCode.CREATED.value},
+        },
+    )
+    candidate.get("after", {}).get("repository", {})["state_generation"] = 7
+
+    with pytest_raises(ConflictError, match="changed after it was planned"):
+        coordinator.execute(candidate)
+
+    assert coordinator.snapshot().get("repository", {}).get("artifacts", {}) == {}
+
+
 def test_candidate_and_execution_contracts_reject_extra_or_unpublished_fields() -> None:
     coordinator = AtomicMutationCoordinator(ArtifactRepository(), MutationReceiptLedger())
     repository_candidate = coordinator.repository.candidate_with_artifact(

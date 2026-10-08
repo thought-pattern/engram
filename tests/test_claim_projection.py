@@ -302,7 +302,7 @@ def test_transport_neutral_structured_projection_caps_zero_row_query_attempts(mo
     )
 
 
-def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_full(monkeypatch, caplog) -> None:
+def test_transport_neutral_vector_projection_fails_soft_and_logs_only_the_failure_class(monkeypatch, caplog) -> None:
     sensitive_proposition_id = "proposition:sensitive-customer-identifier"
     calls = 0
 
@@ -329,9 +329,9 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_the_failure_in_
 
     assert engine.graph_vector_proposition_projections("query", limit=3) == []
     assert calls == 1
-    # The operator log has the whole exception; the caller only sees no rows.
+    # The operator log names the failure class and origin, never the graph values in its message.
     assert "InvalidRequestError" in caplog.text
-    assert sensitive_proposition_id in caplog.text
+    assert sensitive_proposition_id not in caplog.text
 
     projection = proposition_projection_from_graph_row(
         dict(SEMANTIC_PROPOSITION_ROW),

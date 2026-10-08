@@ -235,8 +235,8 @@ def main() -> int:
     """Regenerate protocol sources and report handled failures."""
     try:
         regenerate()
-    except (CalledProcessError, OSError, SyntaxError, UnicodeError, ValueError) as error:
-        print(f"protocol regeneration failed: {error}", file=stderr)
+    except (CalledProcessError, OSError, SyntaxError, UnicodeError, ValueError) as err:
+        print(f"protocol regeneration failed: {err}", file=stderr)
         return 1
     print("Engram protocol sources regenerated and normalized.")
     return 0

@@ -1,6 +1,5 @@
 """Closed contracts and bounded execution for one- and two-hop graph composition."""
 
-from concurrent.futures import CancelledError
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from logging import getLogger as logging_getLogger
@@ -9,6 +8,7 @@ from re import compile as re_compile
 from engram.constants import (
     COMPOSITION_DATE_SECONDS_FRACTION,
     COMPOSITION_PLAN_FIELDS,
+    COMPOSITION_PREDICATE_ROW_FIELDS,
     COMPOSITION_STEP_FIELDS,
     DATETIME_FRACTION_DIGITS,
     MAX_COMPOSITION_BINDING_BYTES,
@@ -18,6 +18,7 @@ from engram.constants import (
     MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_COMPOSITION_ROWS,
     MAX_COMPOSITION_TEXT_BYTES,
+    MAX_REQUEST_BYTES,
     CanonicalResolutionStatus,
     CompositionReason,
     ExpectedObjectType,
@@ -25,7 +26,7 @@ from engram.constants import (
     PredicateCardinality,
     QueryOperator,
 )
-from engram.errors import InvalidRequestError, ResolutionCancelledError
+from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import validate_proposition_eligibility_decision
 from engram.graph import validate_relation_proposition_projection
 from engram.relation import canonical_resolution, validate_canonical_resolution
@@ -405,15 +406,14 @@ PREDICATE_STOP_WORDS = {
     "who",
     "whose",
 }
-COMPOSITION_PREDICATE_ROW_FIELDS = set({"canonical_id", "primary_label", "object_type"})
 
 
 def bounded_predicate_surfaces(text: object, excluded_words: object = ()) -> tuple[tuple[int, str], ...]:
     """Return deterministic one- to three-token Predicate lookup surfaces."""
-    request = require_text(text, "composition request", 16_384)
-    if not isinstance(excluded_words, tuple):
-        raise InvalidRequestError("composition excluded_words must be a tuple")
-    excluded = {str(value).casefold() for value in excluded_words}
+    request = require_text(text, "composition request", MAX_REQUEST_BYTES)
+    if not isinstance(excluded_words, tuple) or not all(isinstance(value, str) for value in excluded_words):
+        raise InvalidRequestError("composition excluded_words must be a tuple of strings")
+    excluded = {value.casefold() for value in excluded_words}
     tokens = [(match.start(), match.group(0).casefold()) for match in TOKEN.finditer(request)]
     values = []
     for index, (position, token) in enumerate(tokens):
@@ -615,12 +615,11 @@ def execute_composition_plan(
                 query_limit = min(sentinel_limit, remaining)
                 try:
                     raw_rows = query(state_entity_id, step_predicate_id, query_limit)
-                except (ResolutionCancelledError, CancelledError, MemoryError):
-                    # Cancellation and the request's working-memory budget belong to the caller;
-                    # only an ordinary graph failure becomes partial dependency evidence.
-                    raise
-                except Exception as error:
-                    logger.warning("Composition graph step failed", exc_info=error)
+                except (RuntimeError, ValueError) as err:
+                    # A graph failure or a malformed boundary collection becomes partial dependency
+                    # evidence. Cancellation, the request's working-memory budget and programming
+                    # errors are not caught and belong to the caller.
+                    logger.warning("Composition graph step failed (%s)", failure_origin(err))
                     branch_failed = True
                     reasons.add(CompositionReason.DEPENDENCY_FAILED)
                     if state_path:
@@ -806,20 +805,23 @@ def execute_composition_plan(
             direct = True
     elif operator in {GraphCompositionOperator.MIN, GraphCompositionOperator.MAX, GraphCompositionOperator.ORDER}:
         if known_complete and terminal_consistent and terminal_labels:
-            try:
-                keyed = tuple(
-                    (typed_order_value(label, object_type), label)
-                    for label, object_type in zip(terminal_labels, terminal_types, strict=True)
-                )
-                # Exact NUMBER and DATE keys are not mutually ordered.
-                if len(set(terminal_types)) != 1:
-                    raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value)
-            except InvalidRequestError as error:
-                reasons.add(
-                    CompositionReason.TYPE_UNAVAILABLE
-                    if str(error) == CompositionReason.TYPE_UNAVAILABLE.value
-                    else CompositionReason.TYPE_MISMATCH
-                )
+            keyed_values = []
+            order_failure = ""
+            for label, object_type in zip(terminal_labels, terminal_types, strict=True):
+                if object_type not in (ExpectedObjectType.NUMBER, ExpectedObjectType.DATE):
+                    order_failure = CompositionReason.TYPE_UNAVAILABLE
+                    break
+                try:
+                    keyed_values.append((typed_order_value(label, object_type), label))
+                except InvalidRequestError:
+                    order_failure = CompositionReason.TYPE_MISMATCH
+                    break
+            # Exact NUMBER and DATE keys are not mutually ordered.
+            if not order_failure and len(set(terminal_types)) != 1:
+                order_failure = CompositionReason.TYPE_MISMATCH
+            keyed = tuple(keyed_values)
+            if order_failure:
+                reasons.add(CompositionReason(order_failure))
             else:
                 ordered = sorted(
                     keyed,

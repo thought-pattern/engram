@@ -60,7 +60,7 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict:
     baseline_hits = 0
     rewritten_hits = 0
     false_direct_answers = 0
-    final_owners: dict[str, str] = {}
+    final_owners: dict[tuple, str] = {}
     semantic_collisions = 0
     category_counts = Counter()
     for raw_case in cases:

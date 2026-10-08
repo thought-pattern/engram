@@ -6,7 +6,7 @@ from math import log as math_log
 from pytest import approx as pytest_approx
 
 from engram.constants import SYNONYM_OVERLAP_WEIGHT
-from engram.models import statement
+from engram.models import record_statement_hit, statement as model_statement
 from engram.scoring import (
     calculate_average_hit_rate,
     calculate_overlap,
@@ -15,6 +15,15 @@ from engram.scoring import (
     keyword_match_weights,
     score_statement_components,
 )
+
+NOW = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)
+
+
+def statement(text: str, **fields) -> dict:
+    """Build a statement created at NOW, the scoring snapshot these tests use."""
+    result = model_statement(text, statement_id=f"stmt-{text}", created_at=NOW, **fields)
+    return result
+
 
 """Tests for inverse document frequency weighting."""
 
@@ -115,36 +124,33 @@ def test_calculate_overlap_empty_query() -> None:
 
 def test_calculate_recency_fresh_statement_is_one() -> None:
     stmt = statement("fresh")
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(1.0, abs=0.01)
+    assert calculate_recency(stmt, 3600.0, NOW) == pytest_approx(1.0)
 
 
 def test_calculate_recency_one_half_life_is_half() -> None:
     stmt = statement("aging")
-    stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=3600)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(0.5, abs=0.01)
+    assert calculate_recency(stmt, 3600.0, NOW + timedelta(seconds=3600)) == pytest_approx(0.5)
 
 
 def test_calculate_recency_two_half_lives_is_quarter() -> None:
     stmt = statement("old")
-    stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(0.25, abs=0.01)
+    assert calculate_recency(stmt, 3600.0, NOW + timedelta(seconds=7200)) == pytest_approx(0.25)
 
 
 def test_calculate_recency_hit_refreshes_recency() -> None:
     stmt = statement("revived")
-    stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=7200)
-    stmt["last_hit"] = datetime.now(UTC)
-    assert calculate_recency(stmt, half_life_seconds=3600.0) == pytest_approx(1.0, abs=0.01)
+    record_statement_hit(stmt, NOW + timedelta(seconds=7200))
+    assert calculate_recency(stmt, 3600.0, NOW + timedelta(seconds=7200)) == pytest_approx(1.0)
 
 
 def test_calculate_recency_stable_under_store_changes() -> None:
     # Recency depends only on the statement's own timestamps, so it does
     # not shift when other statements are stored or evicted.
     stmt = statement("stable")
-    stmt["created_at"] = datetime.now(UTC) - timedelta(seconds=1800)
-    first = calculate_recency(stmt, half_life_seconds=3600.0)
-    second = calculate_recency(stmt, half_life_seconds=3600.0)
-    assert first == pytest_approx(second, abs=0.01)
+    first = calculate_recency(stmt, 3600.0, NOW + timedelta(seconds=1800))
+    statement("another")
+    second = calculate_recency(stmt, 3600.0, NOW + timedelta(seconds=1800))
+    assert first == second
 
 
 """Tests for average hit rate calculation."""
@@ -188,6 +194,7 @@ def score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), t
         weight_recency=0.3,
         weight_hit_rate=0.2,
         recency_half_life_seconds=604800.0,
+        current_time=NOW,
         synonyms=synonyms,
     )
     assert "score" in components
@@ -237,7 +244,7 @@ def test_score_statement_synonym_only_match_scores_positive() -> None:
 def test_score_statement_older_statement_scores_lower() -> None:
     fresh = statement("fresh entry", keywords=["shared", "topic"])
     stale = statement("stale entry", keywords=["shared", "topic"])
-    stale["created_at"] = datetime.now(UTC) - timedelta(days=30)
+    stale["created_at"] = NOW - timedelta(days=30)
     assert score_statement_score(fresh, ["shared", "topic"]) > score_statement_score(stale, ["shared", "topic"])
 
 
@@ -265,6 +272,7 @@ def test_score_statement_custom_weights_still_calibrated() -> None:
         weight_recency=1.0,
         weight_hit_rate=1.0,
         recency_half_life_seconds=604800.0,
+        current_time=NOW,
     )
     score = components.get("score", 0.0)
     assert 0.0 < score <= 1.0

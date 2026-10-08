@@ -96,6 +96,15 @@ def test_reranker_rejects_malformed_internal_contract_values() -> None:
         reranker.rerank(({"statement_id": "", "base_score": 0.5, "features": {}},))
 
 
+def test_reranker_refuses_out_of_range_and_unknown_features_instead_of_clamping() -> None:
+    reranker = TransparentLogisticReranker(reranker_config(enabled=True))
+
+    with pytest_raises(InvalidRequestError, match="between 0 and 1"):
+        reranker.rerank(({"statement_id": "high", "base_score": 0.5, "features": {"semantic": 1.5}},))
+    with pytest_raises(InvalidRequestError, match="not part of the model"):
+        reranker.rerank(({"statement_id": "extra", "base_score": 0.5, "features": {"margin": 0.5}},))
+
+
 def test_semantic_and_reranker_readiness_are_independent() -> None:
     engine = Engram(config=engram_config(reranker=reranker_config(enabled=True)))
 

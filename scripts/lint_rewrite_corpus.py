@@ -42,8 +42,8 @@ def lint(cases_path: Path) -> dict[str, object]:
                 subject=str(case.get("subject", "")),
                 inherited_subject=case.get("inherited_subject", False) is True,
             )
-        except (KeyError, ValueError) as error:
-            regressions.append({"severity": "error", "code": "malformed_regression", "case_id": case_id, "detail": str(error)})
+        except (KeyError, ValueError) as err:
+            regressions.append({"severity": "error", "code": "malformed_regression", "case_id": case_id, "detail": str(err)})
             continue
         chain = execution.get("chain", ())
         if execution.get("final_text", "") != case.get("expected_final", ""):

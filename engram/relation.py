@@ -2,6 +2,8 @@
 
 from math import isfinite as math_isfinite
 
+from spacy.tokens import Doc
+
 from engram.constants import (
     CANONICAL_RESOLUTION_FIELDS,
     MAX_RELATION_CANDIDATES,
@@ -148,16 +150,14 @@ class RelationQuestion:
         # limit. Tabs and line breaks are whitespace here as in the frame text.
         self.resolved_text = resolved_text
         self.text = require_text(" ".join(resolved_text.split()), "relation question", maximum_bytes=MAX_REQUEST_BYTES)
-        self.internal_document: object = ()
-        self.internal_parsed = False
+        # Holds the one parse once it has run.
+        self.internal_parse: tuple[Doc, ...] = ()
 
-    def document(self):
-        """Return the parsed question, or () when no parser is loaded."""
-        if not self.internal_parsed:
-            nlp = SPACY_PIPELINES.pipeline()
-            self.internal_document = nlp(self.text) if nlp else ()
-            self.internal_parsed = True
-        result = self.internal_document
+    def document(self) -> Doc:
+        """Return the parsed question, parsing it on first use; a missing spaCy model raises ``RuntimeError``."""
+        if not self.internal_parse:
+            self.internal_parse = (SPACY_PIPELINES.pipeline()(self.text),)
+        result = self.internal_parse[0]
         return result
 
 
@@ -170,8 +170,6 @@ def bound_question(question: object, frame: dict) -> RelationQuestion:
 
 def named_entity_surfaces(question: RelationQuestion) -> tuple[str, ...]:
     document = question.document()
-    if not document:
-        return ()
     result = tuple(dict.fromkeys(entity.text.strip() for entity in document.ents if entity.text.strip()))
     result = result[:MAX_RELATION_SURFACES]
     return result
@@ -264,8 +262,6 @@ def resolve_canonical_subject(
 def dependency_predicate_surfaces(question: RelationQuestion) -> tuple[tuple[str, str, float], ...]:
     """Extract bounded verb-lemma and preposition candidates from the shared question parse."""
     document = question.document()
-    if not document:
-        return ()
     values: list[tuple[str, str, float]] = []
     auxiliaries = {"be", "do", "have", "can", "could", "will", "would", "should", "may", "might", "must"}
     for token in document:

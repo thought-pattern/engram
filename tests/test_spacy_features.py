@@ -1,6 +1,6 @@
 """Tests for spaCy-backed features: phrase keywords and context-aware lemmas."""
 
-from pytest import mark as pytest_mark, raises as pytest_raises
+from pytest import raises as pytest_raises
 
 from engram import spacy_setup
 from engram.config import engram_config
@@ -10,10 +10,8 @@ from engram.pattern import PatternMatcher
 from engram.spacy_setup import SPACY_PIPELINES, SpacyPipelines
 from engram.text import extract_keywords_spacy, lemmatize_text_spacy
 
-requires_model = pytest_mark.skipif(not SPACY_PIPELINES.pipeline(), reason="en_core_web_sm not installed")
 
-
-def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
+def test_missing_model_raises_without_a_runtime_download(monkeypatch):
     calls = []
 
     def missing_model(model_name, *, disable):
@@ -22,35 +20,36 @@ def test_missing_model_does_not_trigger_runtime_download(monkeypatch):
 
     monkeypatch.setattr(spacy_setup, "spacy_load", missing_model)
 
-    assert SpacyPipelines("missing_model").pipeline(("ner",)) == ()
+    with pytest_raises(RuntimeError, match="missing_model is not installed"):
+        SpacyPipelines("missing_model").pipeline(("ner",))
     assert calls == [("missing_model", ["ner"])]
 
 
-def test_enabled_spacy_feature_fails_transport_neutral_preflight(monkeypatch):
-    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", lambda disable=(): ())
+def test_enabled_spacy_feature_fails_preflight_without_the_model(monkeypatch):
+    def missing_model(disable=()):
+        raise RuntimeError("spaCy model en_core_web_sm is not installed")
 
-    with pytest_raises(ValueError, match="pre-provisioned English model"):
+    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", missing_model)
+
+    with pytest_raises(ValueError, match="component preflight failed: .* is not installed"):
         Engram(config=engram_config(use_spacy_facts=True))
 
 
 """Tests for noun-chunk phrase keyword extraction."""
 
 
-@requires_model
 def test_phrase_keywords_keeps_multiword_phrase():
     keywords = extract_keywords_spacy("machine learning models are powerful", DEFAULT_STOPWORDS)
     assert any(" " in kw for kw in keywords)
     assert "machine learning model" in keywords
 
 
-@requires_model
 def test_phrase_keywords_includes_single_lemmas():
     keywords = extract_keywords_spacy("the cats are running", DEFAULT_STOPWORDS)
     assert "cat" in keywords
     assert "run" in keywords
 
 
-@requires_model
 def test_phrase_keywords_empty():
     assert extract_keywords_spacy("", DEFAULT_STOPWORDS) == []
 
@@ -58,19 +57,16 @@ def test_phrase_keywords_empty():
 """Tests for spaCy context-aware lemmatization."""
 
 
-@requires_model
 def test_spacy_lemmatization_verb_context():
     # "saw" as a verb lemmatizes to "see" (WordNet heuristic cannot).
     assert "see" in lemmatize_text_spacy("i saw a movie").split()
 
 
-@requires_model
 def test_spacy_lemmatization_noun_context_preserved():
     # "saw" as a noun stays "saw".
     assert "saw" in lemmatize_text_spacy("the saw is sharp").split()
 
 
-@requires_model
 def test_spacy_lemmatization_matcher_uses_spacy_lemmas():
     pm = PatternMatcher(use_lemmatization=True, use_spacy_lemmatization=True)
     pm.add_pattern("I SEE *", "You see {star1}")
@@ -82,7 +78,6 @@ def test_spacy_lemmatization_matcher_uses_spacy_lemmas():
 """use_spacy_facts routes pattern_query fact learning through the dependency parser."""
 
 
-@requires_model
 def test_spacy_fact_learning_learns_relational_fact():
 
     config = engram_config(use_spacy_facts=True, learn_user_facts=True)
@@ -97,7 +92,6 @@ def test_spacy_fact_learning_learns_relational_fact():
     assert "EINSTEIN" in patterns
 
 
-@requires_model
 def test_spacy_fact_learning_default_extractor_skips_relational_fact():
 
     engram = Engram()

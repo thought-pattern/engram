@@ -1,15 +1,29 @@
 """Data models for ENGRAM.
 
-Models are plain dictionaries. Creation paths assign the domain identity and
-timestamps needed by live records; decoding paths validate external records.
-Module-level functions implement the records' behavior.
+Models are plain dictionaries. Creation paths take the domain identity and
+timestamps from the caller, which owns the identifier source and clock;
+decoding paths validate external records. Module-level functions implement
+the records' behavior.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import uuid4
 
-from engram.constants import Tier
+from engram.constants import (
+    DIALOGUE_ENTITY_LABEL_PRIORITY,
+    EARLIEST_UTC,
+    MAX_SESSION_ENTITIES,
+    NEUTRAL_HIT_RATE,
+    Tier,
+)
 from engram.substitutions import split_sentences
+
+
+def random_identifier() -> str:
+    """Return a fresh 12-hex-digit identifier, the default identifier source of ``Engram``."""
+    result = uuid4().hex[:12]
+    return result
+
 
 # =============================================================================
 # Statement
@@ -18,9 +32,11 @@ from engram.substitutions import split_sentences
 
 def statement(
     text: str,
+    *,
+    statement_id: str,
+    created_at: datetime,
     tier: Tier = Tier.DYNAMIC,
     keywords=(),
-    statement_id: str = "",
     pattern: str = "",
     pattern_aliases=(),
     that: str = "",
@@ -32,13 +48,15 @@ def statement(
 ) -> dict:
     """Build a Statement dict (atomic unit of storage, a pattern-template pair).
 
-    Generates an ID and creation timestamp. Eviction tracking fields start at zero.
+    The caller supplies the ID and creation time. Eviction tracking fields start at
+    zero; ``last_hit`` holds ``EARLIEST_UTC`` until ``last_hit_available`` records
+    the first hit.
     """
     stmt = {
-        "id": statement_id or f"stmt_{uuid4().hex[:12]}",
+        "id": statement_id,
         "text": text,  # Response text or template
         "tier": tier,
-        "created_at": datetime.now(UTC),
+        "created_at": created_at,
         "keywords": list(keywords or ()),
         "pattern": pattern,  # AIML-style pattern for matching
         "pattern_aliases": list(pattern_aliases or ()),  # Alternate patterns resolving to this statement
@@ -50,15 +68,17 @@ def statement(
         "source_label": source_label,
         "hit_count": 0,  # Number of times this statement was selected
         "query_count": 0,  # Number of times this statement was a candidate
-        "last_hit": "",  # Timestamp of most recent hit ("" when never hit)
+        "last_hit": EARLIEST_UTC,  # Time of the most recent hit, when last_hit_available
+        "last_hit_available": False,
     }
     return stmt
 
 
-def record_statement_hit(stmt: dict) -> None:
-    """Record a hit on this statement."""
+def record_statement_hit(stmt: dict, moment: datetime) -> None:
+    """Record a hit on this statement at ``moment``."""
     stmt["hit_count"] = stmt.get("hit_count", 0) + 1
-    stmt["last_hit"] = datetime.now(UTC)
+    stmt["last_hit"] = moment
+    stmt["last_hit_available"] = True
 
 
 def record_statement_query(stmt: dict) -> None:
@@ -72,9 +92,9 @@ def record_statement_query(stmt: dict) -> None:
 
 
 def keyword_entry_hit_rate(entry: dict) -> float:
-    """Calculate hit rate, defaulting to 0.5 when undefined."""
+    """Calculate hit rate, defaulting to NEUTRAL_HIT_RATE when undefined."""
     if entry.get("query_count", 0) == 0:
-        result = 0.5
+        result = NEUTRAL_HIT_RATE
         return result
     rate = entry.get("hit_count", 0) / entry.get("query_count", 0)
     return rate
@@ -86,21 +106,21 @@ def keyword_entry_hit_rate(entry: dict) -> float:
 
 
 def session(
-    session_id: str = "",
+    session_id: str,
+    created_at: datetime,
     metadata=(),
     history_size: int = 10,
 ) -> dict:
     """Build an independent conversation-context Session dict.
 
     Stores per-user state including predicates (variables), topic, and
-    conversation history. Generates an ID and timestamps.
+    conversation history. The caller supplies the ID and creation time.
     """
-    now = datetime.now(UTC)
     sess = {
-        "session_id": session_id or f"sess_{uuid4().hex[:12]}",
+        "session_id": session_id,
         "previous_response": "",  # Bot's most recent response (for that-matching and query expansion)
-        "created_at": now,
-        "last_active": now,
+        "created_at": created_at,
+        "last_active": created_at,
         "metadata": dict(metadata or ()),
         "predicates": {},
         "active_topic": "",
@@ -121,6 +141,8 @@ def session_update_context(
     session: dict,
     previous_response: str,
     user_input: str = "",
+    *,
+    moment: datetime,
 ) -> None:
     """Update the session's context after a turn.
 
@@ -128,9 +150,10 @@ def session_update_context(
         session: Session dict.
         previous_response: Bot's response text.
         user_input: User's input text (optional).
+        moment: The caller's time of the turn.
     """
     session["previous_response"] = previous_response
-    session["last_active"] = datetime.now(UTC)
+    session["last_active"] = moment
     history_size = session.get("history_size", 0)
 
     # Update response history
@@ -155,11 +178,11 @@ def session_update_context(
             input_history.pop()
 
 
-def session_record_input(session: dict, user_input: str) -> bool:
-    """Record an input without changing the previous bot response."""
+def session_record_input(session: dict, user_input: str, moment: datetime) -> bool:
+    """Record an input at ``moment`` without changing the previous bot response."""
     recorded = bool(user_input)
     if recorded:
-        session["last_active"] = datetime.now(UTC)
+        session["last_active"] = moment
         input_history = session.setdefault("input_history", [])
         input_history.insert(0, user_input)
         if len(input_history) > session.get("history_size", 0):
@@ -195,9 +218,9 @@ def session_update_dialogue(
             for existing in session.get("entities", [])
             if str(existing.get("text", "")).casefold() == entity_text.casefold()
         ]
-        label_priority = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
         for existing in matching:
-            if label_priority.get(str(existing.get("label", "")), 0) > label_priority.get(entity_label, 0):
+            existing_priority = DIALOGUE_ENTITY_LABEL_PRIORITY.get(str(existing.get("label", "")), 0)
+            if existing_priority > DIALOGUE_ENTITY_LABEL_PRIORITY.get(entity_label, 0):
                 entity_label = str(existing.get("label", ""))
         retained_entities = [
             existing
@@ -206,9 +229,9 @@ def session_update_dialogue(
         ]
         retained_entities.insert(0, {"text": entity_text, "label": entity_label})
         session["entities"] = retained_entities
-    del session.setdefault("entities", [])[20:]
+    del session.setdefault("entities", [])[MAX_SESSION_ENTITIES:]
 
 
-def session_touch(session: dict) -> None:
-    """Update last_active timestamp."""
-    session["last_active"] = datetime.now(UTC)
+def session_touch(session: dict, moment: datetime) -> None:
+    """Set the session's last_active time to ``moment``."""
+    session["last_active"] = moment

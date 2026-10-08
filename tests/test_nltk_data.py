@@ -1,9 +1,35 @@
 """Tests for the centralized NLTK data bootstrap."""
 
 from nltk import data as nltk_runtime_data
+from pytest import raises as pytest_raises
 
 from engram import nltk_data
-from engram.nltk_data import configure_path
+from engram.nltk_data import NltkResources, configure_path
+
+
+def test_resources_refuse_a_missing_package_without_loading(monkeypatch) -> None:
+    resources = NltkResources()
+    monkeypatch.setattr(nltk_data, "ensure_nltk_data", lambda download=False: [("corpora/words", "words")])
+
+    with pytest_raises(RuntimeError, match="required NLTK resources are unavailable: words"):
+        resources.require()
+    with pytest_raises(RuntimeError, match="required NLTK resources are unavailable: words"):
+        resources.is_english_word("word")
+    assert resources.loaded is False
+
+
+def test_availability_is_read_fresh_on_every_check(monkeypatch) -> None:
+    present = []
+
+    def find(path):
+        if not present:
+            raise LookupError(path)
+        return path
+
+    monkeypatch.setattr(nltk_runtime_data, "find", find)
+    assert nltk_data.is_available("corpora/fresh") is False
+    present.append(True)
+    assert nltk_data.is_available("corpora/fresh") is True
 
 
 def test_data_directory_configure_path_creates_and_registers():
@@ -69,5 +95,5 @@ def test_an_installed_package_leaves_nltk_locations_alone(tmp_path, monkeypatch)
     monkeypatch.setattr(nltk_data, "is_available", lambda internal_path: next(availability))
     monkeypatch.setattr(nltk_data, "nltk_download", lambda *args, **kwargs: calls.append(kwargs))
     assert nltk_data.ensure_resource("corpora/missing", "missing", download=True) is True
-    # NLTK's own None download_dir selects its default location; a missing keyword reads "" and fails.
-    assert calls[0].get("download_dir", "") is None
+    # Without a download_dir keyword, NLTK's own default selects its standard location.
+    assert "download_dir" not in calls[0]

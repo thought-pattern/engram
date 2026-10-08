@@ -1,6 +1,6 @@
 """Section 15 security and privacy boundary tests."""
 
-from logging import DEBUG, ERROR, WARNING
+from logging import DEBUG, ERROR
 
 from pytest import raises as pytest_raises
 
@@ -127,7 +127,7 @@ def test_core_graph_failure_is_logged_in_full_and_returns_no_rows(caplog) -> Non
     assert secret in caplog.text
 
 
-def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_type(caplog) -> None:
+def test_graph_query_failure_logs_and_raises_only_its_class(caplog) -> None:
     secret = "private-graph-driver-content"
     stub = BoltStub()
     stub.mode = "fail"
@@ -150,7 +150,7 @@ def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_
 
     assert secret in str(failure.value.__cause__)
     assert secret not in str(failure.value)
-    assert secret in caplog.text
+    assert secret not in caplog.text
     assert "DatabaseError" in caplog.text
 
 
@@ -192,12 +192,12 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
     core = EngramCore(engine)
     engine = core.engram
 
-    with caplog.at_level(WARNING, logger="engram.core"):
+    with caplog.at_level(DEBUG, logger="engram.core"):
         assert engine.canonical_entity_matches("France") == []
         assert engine.canonical_predicate_matches("capital") == []
         assert engine.relation_one_hop_proposition_projections("entity:france", "predicate:capital") == []
         assert engine.current_proposition_projection("proposition:paris") == ()
-        assert engine.structured_proposition_projections("France") == []
+        assert engine.structured_proposition_projections("France", row_limit=10) == []
         resolved = core.resolve_request("What is the capital of France?", "database-failure")
         started = core.start_conversation(user_id="alice")
         started_user_id = started.get("user_id", "")

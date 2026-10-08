@@ -90,8 +90,8 @@ def normalize_embedding(value: object, dimension: int) -> tuple[float, ...]:
             raise InvalidRequestError("semantic model returned a non-finite embedding")
         try:
             number = float(item)
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError("semantic model returned a non-finite embedding") from error
+        except (TypeError, ValueError) as err:
+            raise InvalidRequestError("semantic model returned a non-finite embedding") from err
         if not math_isfinite(number):
             raise InvalidRequestError("semantic model returned a non-finite embedding")
         numbers.append(number)
@@ -210,8 +210,8 @@ class StandaloneSemanticRetriever:
     ) -> None:
         try:
             self.internal_settings = semantic_config(**dict(settings))
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError(str(error)) from error
+        except (TypeError, ValueError) as err:
+            raise InvalidRequestError(str(err)) from err
         injected_model = model != ()
         settings = self.internal_settings
         self.internal_model: object = ()
@@ -270,10 +270,10 @@ class StandaloneSemanticRetriever:
                     "normalization_version": settings.get("normalization_version", 0),
                 }
                 self.internal_healthy = True
-            except Exception as error:
-                logger.warning("Semantic retrieval model is unavailable", exc_info=error)
+            except Exception as err:
+                logger.warning("Semantic retrieval model is unavailable", exc_info=err)
                 self.internal_healthy = False
-                self.internal_last_error = type(error).__name__
+                self.internal_last_error = type(err).__name__
         # statement_id -> (artifact, {(origin, ordinal): record}, {text: embedding}).
         # A record is a pure function of its artifact and this retriever's fixed
         # model, and a validated artifact never changes in place, so an entry

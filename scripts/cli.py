@@ -145,8 +145,8 @@ def main(argv=()) -> int:
                     chat.run()
                 finally:
                     core.stop_conversation(chat.session_id, conversation_token=chat.conversation_token)
-    except EngramCoreError as error:
-        print(f"Error: {error}", file=sys_stderr)
+    except EngramCoreError as err:
+        print(f"Error: {err}", file=sys_stderr)
         return 1
     return 0
 

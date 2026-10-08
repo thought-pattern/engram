@@ -4,9 +4,13 @@ from math import isfinite as math_isfinite
 
 from engram.constants import (
     COMPACT_QUERY_FRAME_FIELDS,
+    EMPTY_MAPPING,
+    MAX_CACHE_REQUEST_BYTES,
     MAX_CONTEXTUAL_SUBJECTS,
     MAX_CONTEXTUAL_TOPIC_BYTES,
+    MAX_CONTEXTUAL_TURN,
     MAX_CONTEXTUAL_TURN_DISTANCE,
+    MAX_ENUM_WIRE_BYTES,
     MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE,
     ExpectedObjectType,
     QualifierKind,
@@ -44,8 +48,8 @@ FOLLOW_UP_REFERENTS = set({"it", "its", "that", "this", "they", "them", "their",
 
 
 def internal_turn(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1_000_000:
-        raise InvalidRequestError(f"{name} must be an integer from 1 through 1000000")
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_CONTEXTUAL_TURN:
+        raise InvalidRequestError(f"{name} must be an integer from 1 through {MAX_CONTEXTUAL_TURN}")
     return value
 
 
@@ -83,8 +87,8 @@ def compact_query_frame(
         raise InvalidRequestError("compact query frame expected_object_type must be an ExpectedObjectType")
     try:
         validated_temporal = temporal_query() if temporal_query_value == () else validate_temporal_query(temporal_query_value)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("compact query frame temporal_query must be a TemporalQuery") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("compact query frame temporal_query must be a TemporalQuery") from err
     if not isinstance(subjects, tuple):
         raise InvalidRequestError("compact query frame subjects must be a tuple")
     if len(subjects) > MAX_CONTEXTUAL_SUBJECTS:
@@ -92,8 +96,8 @@ def compact_query_frame(
     try:
         validated_subjects = tuple(validate_entity_reference(value) for value in subjects)
         validated_relation = validate_relation_reference(relation)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("compact query frame identity fields are malformed") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("compact query frame identity fields are malformed") from err
     subject_keys = tuple((value.get("surface", "").casefold(), value.get("canonical_id", "")) for value in validated_subjects)
     if len(subject_keys) != len(set(subject_keys)):
         raise InvalidRequestError("compact query frame subjects must be unique")
@@ -101,8 +105,8 @@ def compact_query_frame(
         raise InvalidRequestError("compact query frame qualifiers must be a tuple")
     try:
         validated_qualifiers = tuple(validate_identity_qualifier(value) for value in qualifiers)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("compact query frame qualifiers are malformed") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("compact query frame qualifiers are malformed") from err
     qualifier_keys = tuple((value.get("kind", ""), value.get("value", "")) for value in validated_qualifiers)
     if len(qualifier_keys) != len(set(qualifier_keys)):
         raise InvalidRequestError("compact query frame qualifiers must be unique")
@@ -175,12 +179,14 @@ def compact_query_frame_from_dict(value: object) -> dict:
     if not isinstance(raw_subjects, list) or not isinstance(raw_qualifiers, list):
         raise InvalidRequestError("serialized compact query frame collections must be lists")
     try:
-        operator = QueryOperator(require_text(data.get("operator", ""), "compact operator", 32, allow_empty=False))
+        operator = QueryOperator(require_text(data.get("operator", ""), "compact operator", MAX_ENUM_WIRE_BYTES, allow_empty=False))
         expected = ExpectedObjectType(
-            require_text(data.get("expected_object_type", ""), "compact expected_object_type", 32, allow_empty=False)
+            require_text(
+                data.get("expected_object_type", ""), "compact expected_object_type", MAX_ENUM_WIRE_BYTES, allow_empty=False
+            )
         )
-    except ValueError as error:
-        raise InvalidRequestError("serialized compact query frame enum is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError("serialized compact query frame enum is unsupported") from err
     result = compact_query_frame(
         operator=operator,
         subjects=tuple(entity_reference_from_dict(internal_mapping(item, "compact subject")) for item in raw_subjects),
@@ -216,7 +222,7 @@ def infer_expected_object_type(operator: object) -> ExpectedObjectType:
 
 def is_elliptical_follow_up(request: object) -> bool:
     """Recognize bounded surface evidence for a context-dependent follow-up."""
-    text = require_text(request, "follow-up request", 4_096, allow_empty=False)
+    text = require_text(request, "follow-up request", MAX_CACHE_REQUEST_BYTES, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     tokens = normalized.split()
     if not tokens:
@@ -238,9 +244,9 @@ def is_elliptical_follow_up(request: object) -> bool:
     return result
 
 
-def classify_query_frame_operator(request: object, previous: object = {}) -> dict:
+def classify_query_frame_operator(request: object, previous: object = EMPTY_MAPPING) -> dict:
     """Classify or conservatively inherit the existing QueryOperator vocabulary."""
-    text = require_text(request, "operator request", 4_096, allow_empty=False)
+    text = require_text(request, "operator request", MAX_CACHE_REQUEST_BYTES, allow_empty=False)
     normalized = normalize_retrieval_key(text)
     contextual_text = normalized
     for lead in FOLLOW_UP_LEADS:
@@ -277,6 +283,11 @@ def classify_query_frame_operator(request: object, previous: object = {}) -> dic
 
 
 def topic_continues(previous: dict, topic: str, follow_up: bool) -> bool:
+    """Return whether the current turn stays on the prior frame's topic.
+
+    Two named topics must match after retrieval normalization; a newly named topic
+    breaks continuity; with no current topic, continuity follows the follow-up flag.
+    """
     prior_topic = normalize_retrieval_key(previous.get("topic", "")) if previous.get("topic", "") else ""
     current_topic = normalize_retrieval_key(topic) if topic else ""
     if prior_topic and current_topic:
@@ -288,6 +299,11 @@ def topic_continues(previous: dict, topic: str, follow_up: bool) -> bool:
 
 
 def frame_confidence(frame: dict, inherited_confidence: float = 0.0) -> float:
+    """Return the weakest of the fixed observations the frame supports, or 0.0 with none.
+
+    Each present field contributes one fixed confidence (operator, entities, relation,
+    expected type, and any inherited confidence), so one weak field caps the frame.
+    """
     # Callers pass a frame already accepted by validate_query_frame, so identity and relation are exact mappings.
     identity = frame.get("identity", {})
     entities = identity.get("entities", ())
@@ -310,7 +326,7 @@ def frame_confidence(frame: dict, inherited_confidence: float = 0.0) -> float:
 def enrich_query_frame(
     value: object,
     *,
-    previous: object = {},
+    previous: object = EMPTY_MAPPING,
     current_turn: object,
     topic: object = "",
 ) -> dict:

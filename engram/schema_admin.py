@@ -20,8 +20,8 @@ def execute_admin_statement(connection, statement: str, parameters: dict = DEFAU
     """Execute one explicit administrative statement."""
     try:
         execute_admin = connection.execute_admin
-    except AttributeError as error:
-        raise RuntimeError("graph database administrative connection is unavailable") from error
+    except AttributeError as err:
+        raise RuntimeError("graph database administrative connection is unavailable") from err
     result = execute_admin(statement, dict(parameters))
     return result
 

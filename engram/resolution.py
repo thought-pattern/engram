@@ -36,13 +36,21 @@ from engram.constants import (
     MAX_DIAGNOSTIC_ID_BYTES,
     MAX_DISCLOSURE_AUTHORITY_BYTES,
     MAX_DISCLOSURE_ENUM_BYTES,
+    MAX_ENUM_WIRE_BYTES,
+    MAX_EVIDENCE_ID_BYTES,
     MAX_EVIDENCE_PACKAGE_BYTES,
     MAX_EVIDENCE_PACKAGE_INPUT_RECORDS,
+    MAX_EVIDENCE_PACKAGE_RECORD_COUNT,
     MAX_EVIDENCE_PACKAGE_RECORDS,
     MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS,
     MAX_EXHAUSTED_DIMENSION_BYTES,
     MAX_EXHAUSTED_DIMENSIONS,
+    MAX_FEATURE_MAGNITUDE,
+    MAX_FEATURE_NAME_BYTES,
     MAX_FEATURES,
+    MAX_FROZEN_JSON_KEY_BYTES,
+    MAX_INHERITANCE_FIELD_NAME_BYTES,
+    MAX_INHERITANCE_SOURCE_TURN,
     MAX_JSON_BYTES,
     MAX_JSON_DEPTH,
     MAX_JSON_ITEMS,
@@ -68,13 +76,16 @@ from engram.constants import (
     MAX_RESOLVER_NAME_BYTES,
     MAX_RESOURCE_COUNTER,
     MAX_RESPONSE_BYTES,
+    MAX_REWRITE_RULE_ID_BYTES,
     MAX_STATEMENT_ID_BYTES,
     MAX_TRACE_STEPS,
+    MIN_EVIDENCE_PACKAGE_BYTES,
     MIN_RESOLUTION_CANDIDATES,
     MIN_RESOLUTION_OUTPUT_BYTES,
     MIN_RESOLUTION_RESOLVERS,
     PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
     PROPOSITION_EVIDENCE_RECORD_FIELDS,
+    PROPOSITION_PATH_FILTERS,
     PROPOSITION_TRUST_INPUTS_FIELDS,
     PROPOSITION_VALIDITY_INPUTS_FIELDS,
     QUERY_FRAME_FIELDS,
@@ -96,7 +107,7 @@ from engram.constants import (
     TemporalQueryOperator,
 )
 from engram.eligibility import (
-    EligibilityContextCapture,
+    capture_standalone_eligibility_context,
     eligibility_context_from_dict,
     eligibility_context_to_dict,
     validate_eligibility_context,
@@ -195,7 +206,7 @@ def freeze_json(value: object, name: str, depth: int = 0, count=()) -> object:
         frozen = {}
         # Keys are unique strings, so ordering the items never compares their values.
         for key, item in sorted(value.items()):
-            require_any_text(key, f"{name} key", 128, allow_empty=False)
+            require_any_text(key, f"{name} key", MAX_FROZEN_JSON_KEY_BYTES, allow_empty=False)
             frozen[key] = freeze_json(item, name, depth + 1, count)
         result = dict(frozen)
         return result
@@ -235,8 +246,8 @@ def load_json_mapping(value: str, name: str) -> dict[str, object]:
         raise InvalidRequestError(f"{name} must be a string")
     try:
         decoded = json_loads(value)
-    except json_JSONDecodeError as error:
-        raise InvalidRequestError(f"{name} must be valid JSON") from error
+    except json_JSONDecodeError as err:
+        raise InvalidRequestError(f"{name} must be valid JSON") from err
     if not isinstance(decoded, dict):
         raise InvalidRequestError(f"{name} must contain an object")
     return decoded
@@ -381,9 +392,9 @@ def resolution_budget_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionBudget", RESOLUTION_BUDGET_FIELDS)
     raw_costs = require_list(data.get("allowed_cost_classes", []), "allowed_cost_classes")
     try:
-        costs = tuple(CostClass(require_any_text(item, "cost class", 32, allow_empty=False)) for item in raw_costs)
-    except ValueError as error:
-        raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from error
+        costs = tuple(CostClass(require_any_text(item, "cost class", MAX_ENUM_WIRE_BYTES, allow_empty=False)) for item in raw_costs)
+    except ValueError as err:
+        raise InvalidRequestError("allowed_cost_classes contains an unsupported value") from err
     result = resolution_budget(
         max_resolvers=data.get("max_resolvers", 0),
         max_candidates=data.get("max_candidates", 0),
@@ -543,8 +554,8 @@ def budget_consumption_from_dict(value: object) -> dict:
 def inheritance_provenance(field_name: object, source_turn: object) -> dict:
     """Build concrete empty-capable contextual field provenance owned by Section 8."""
     result: dict = {
-        "field_name": require_any_text(field_name, "inheritance field_name", 64, allow_empty=False),
-        "source_turn": require_int(source_turn, "inheritance source_turn", 1, 1_000_000),
+        "field_name": require_any_text(field_name, "inheritance field_name", MAX_INHERITANCE_FIELD_NAME_BYTES, allow_empty=False),
+        "source_turn": require_int(source_turn, "inheritance source_turn", 1, MAX_INHERITANCE_SOURCE_TURN),
     }
     return result
 
@@ -575,7 +586,7 @@ def inheritance_provenance_from_dict(value: object) -> dict:
 def rewrite_trace_step(rule_id: object, input_text: object, output_text: object) -> dict:
     """Build an empty-capable rewrite trace whose rule semantics belong to Section 11."""
     result: dict = {
-        "rule_id": require_any_text(rule_id, "rewrite rule_id", 128, allow_empty=False),
+        "rule_id": require_any_text(rule_id, "rewrite rule_id", MAX_REWRITE_RULE_ID_BYTES, allow_empty=False),
         "input_text": require_any_text(input_text, "rewrite input_text", MAX_REQUEST_BYTES, allow_empty=False),
         "output_text": require_any_text(output_text, "rewrite output_text", MAX_REQUEST_BYTES, allow_empty=False),
     }
@@ -619,20 +630,20 @@ def query_frame(
     resolved = require_any_text(resolved_text, "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False)
     try:
         validated_identity = validate_query_identity(identity)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("frame identity must be a QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("frame identity must be a QueryIdentity") from err
     if not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("frame expected_object_type must be an ExpectedObjectType")
     try:
         validated_temporal = temporal_query() if temporal_query_value == () else validate_temporal_query(temporal_query_value)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("frame temporal_query must be a TemporalQuery") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("frame temporal_query must be a TemporalQuery") from err
     if not isinstance(inheritance, tuple):
         raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values")
     try:
         validated_inheritance = tuple(validate_inheritance_provenance(value) for value in inheritance)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("frame inheritance must be a tuple of InheritanceProvenance values") from err
     inheritance_signatures = tuple(inheritance_provenance_signature(value) for value in validated_inheritance)
     if len(validated_inheritance) > MAX_TRACE_STEPS or len(set(inheritance_signatures)) != len(validated_inheritance):
         raise InvalidRequestError("frame inheritance must be bounded and unique")
@@ -640,14 +651,14 @@ def query_frame(
         raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values")
     try:
         validated_rewrite_chain = tuple(validate_rewrite_trace_step(value) for value in rewrite_chain)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("frame rewrite_chain must be a tuple of RewriteTraceStep values") from err
     if len(validated_rewrite_chain) > MAX_TRACE_STEPS:
         raise InvalidRequestError(f"frame rewrite_chain exceeds the limit of {MAX_TRACE_STEPS}")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("frame scope must match identity scope") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("frame scope must match identity scope") from err
     if validated_identity.get("scope", {}) != validated_scope:
         raise InvalidRequestError("frame scope must match identity scope")
     frozen_metadata = freeze_mapping(required_metadata, "frame required_metadata")
@@ -659,12 +670,12 @@ def query_frame(
     )
     try:
         validated_budget = validate_resolution_budget(budget)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("frame budget must be a ResolutionBudget") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("frame budget must be a ResolutionBudget") from err
     try:
         validated_context = validate_eligibility_context(eligibility_context)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("frame eligibility_context must be an EligibilityContext") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("frame eligibility_context must be an EligibilityContext") from err
     if validated_context.get("namespace", "") != validated_scope.get("namespace", ""):
         raise InvalidRequestError("frame eligibility context namespace must match scope")
     validated_diagnostic_id = require_any_text(
@@ -747,10 +758,10 @@ def query_frame_from_dict(value: object) -> dict:
     rewrites = require_list(data.get("rewrite_chain", []), "frame rewrite_chain")
     try:
         expected_type = ExpectedObjectType(
-            require_any_text(data.get("expected_object_type", ""), "expected_object_type", 32, allow_empty=False)
+            require_any_text(data.get("expected_object_type", ""), "expected_object_type", MAX_ENUM_WIRE_BYTES, allow_empty=False)
         )
-    except ValueError as error:
-        raise InvalidRequestError("unsupported expected_object_type") from error
+    except ValueError as err:
+        raise InvalidRequestError("unsupported expected_object_type") from err
     result = query_frame(
         original_text=require_any_text(data.get("original_text", ""), "frame original_text", MAX_REQUEST_BYTES, allow_empty=False),
         resolved_text=require_any_text(data.get("resolved_text", ""), "frame resolved_text", MAX_REQUEST_BYTES, allow_empty=False),
@@ -794,13 +805,15 @@ def feature_set(
     validated_values = {}
     # Names are unique strings, so ordering the items never compares their values.
     for name, item in sorted(values.items()):
-        key = require_any_text(name, "feature name", 96, allow_empty=False)
-        validated_values[key] = require_float(item, f"feature {key}", -1_000_000.0, 1_000_000.0)
+        key = require_any_text(name, "feature name", MAX_FEATURE_NAME_BYTES, allow_empty=False)
+        validated_values[key] = require_float(item, f"feature {key}", -MAX_FEATURE_MAGNITUDE, MAX_FEATURE_MAGNITUDE)
     if len(validated_values) > MAX_FEATURES:
         raise InvalidRequestError(f"feature values exceed the limit of {MAX_FEATURES}")
     if not isinstance(unavailable, tuple):
         raise InvalidRequestError("unavailable features must be a tuple")
-    normalized_unavailable = tuple(require_any_text(name, "unavailable feature", 96, allow_empty=False) for name in unavailable)
+    normalized_unavailable = tuple(
+        require_any_text(name, "unavailable feature", MAX_FEATURE_NAME_BYTES, allow_empty=False) for name in unavailable
+    )
     if normalized_unavailable != tuple(sorted(set(normalized_unavailable))):
         raise InvalidRequestError("unavailable features must be unique and sorted")
     if set(validated_values).intersection(normalized_unavailable):
@@ -836,8 +849,13 @@ def feature_set_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeatureSet", FEATURE_SET_FIELDS)
     unavailable = require_list(data.get("unavailable", []), "unavailable features")
     raw_values = freeze_mapping(data.get("values", {}), "feature values")
-    values = {name: require_float(item, f"feature {name}", -1_000_000.0, 1_000_000.0) for name, item in raw_values.items()}
-    normalized_unavailable = tuple(require_any_text(item, "unavailable feature", 96, allow_empty=False) for item in unavailable)
+    values = {
+        name: require_float(item, f"feature {name}", -MAX_FEATURE_MAGNITUDE, MAX_FEATURE_MAGNITUDE)
+        for name, item in raw_values.items()
+    }
+    normalized_unavailable = tuple(
+        require_any_text(item, "unavailable feature", MAX_FEATURE_NAME_BYTES, allow_empty=False) for item in unavailable
+    )
     result = feature_set(values, normalized_unavailable)
     return result
 
@@ -1069,8 +1087,8 @@ def proposition_validity_inputs_from_dict(value: object) -> dict:
     try:
         decoded["temporal_operator"] = TemporalQueryOperator(str(decoded.get("temporal_operator", "")))
         decoded["temporal_axis"] = TemporalAxis(str(decoded.get("temporal_axis", "")))
-    except ValueError as error:
-        raise InvalidRequestError("Proposition validity temporal enum is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError("Proposition validity temporal enum is unsupported") from err
     result = validate_proposition_validity_inputs(decoded)
     return result
 
@@ -1136,8 +1154,8 @@ def disclosure_decision(
         raise InvalidRequestError("disclosure basis must be a DisclosureBasis")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("disclosure scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("disclosure scope must be a ScopeKey") from err
     normalized_authority_available = require_bool(authority_available, "disclosure authority_available")
     if normalized_authority_available:
         normalized_authority = require_identifier(authority, "disclosure authority", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
@@ -1188,8 +1206,8 @@ def disclosure_decision_from_dict(value: object) -> dict:
         basis = DisclosureBasis(
             require_any_text(data.get("basis", ""), "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
         )
-    except ValueError as error:
-        raise InvalidRequestError("unsupported disclosure ownership or basis") from error
+    except ValueError as err:
+        raise InvalidRequestError("unsupported disclosure ownership or basis") from err
     result = disclosure_decision(
         ownership,
         basis,
@@ -1198,15 +1216,6 @@ def disclosure_decision_from_dict(value: object) -> dict:
         data.get("authority_available", False),
     )
     return result
-
-
-PROPOSITION_PATH_FILTERS = {
-    "canonical_identity",
-    "temporal_eligibility",
-    "visibility",
-    "publication_revalidation",
-    "object_type",
-}
 
 
 def path_binding(value: object, name: str) -> str:
@@ -1312,10 +1321,10 @@ def proposition_evidence_path_step_from_dict(value: object) -> dict:
     data = exact_mapping(value, "PropositionEvidencePathStep", PROPOSITION_EVIDENCE_PATH_STEP_FIELDS)
     try:
         operator = GraphCompositionOperator(
-            require_any_text(data.get("operator", ""), "Proposition evidence path operator", 16, allow_empty=False)
+            require_any_text(data.get("operator", ""), "Proposition evidence path operator", MAX_ENUM_WIRE_BYTES, allow_empty=False)
         )
-    except ValueError as error:
-        raise InvalidRequestError("Proposition evidence path operator is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError("Proposition evidence path operator is unsupported") from err
     raw_filters = require_list(data.get("filters", []), "Proposition evidence path filters")
     raw_aggregation = require_list(data.get("aggregation_inputs", []), "Proposition evidence path aggregation_inputs")
     result = proposition_evidence_path_step(
@@ -1381,24 +1390,24 @@ def proposition_evidence_record(
     else:
         try:
             validated_features = validate_feature_set(features)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("Proposition evidence features must be a FeatureSet") from err
         try:
             validated_references = validate_canonical_proposition_references(canonical_references)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("Proposition evidence canonical_references must be CanonicalPropositionReferences") from err
         try:
             validated_validity = validate_proposition_validity_inputs(validity)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("Proposition evidence validity must be PropositionValidityInputs") from err
         try:
             validated_trust = validate_proposition_trust_inputs(trust)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from err
         try:
             validated_disclosure = validate_disclosure_decision(disclosure)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from err
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
     # A direct record's path is its own Proposition ID; a composed record's path is its steps.
@@ -1619,15 +1628,15 @@ def evidence_package(
         raise InvalidRequestError(f"evidence package records exceeds the limit of {MAX_EVIDENCE_PACKAGE_RECORDS}")
     try:
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("evidence package records must be a tuple of PropositionEvidenceRecord values") from err
     identifiers = tuple(record.get("proposition_id", "") for record in validated_records)
     if identifiers != tuple(sorted(identifiers)):
         raise InvalidRequestError("evidence package records must use canonical Proposition-ID order")
     if len(set(identifiers)) != len(identifiers):
         raise InvalidRequestError("evidence package records must have unique Proposition IDs")
-    retained = require_int(retained_count, "evidence package retained_count", 0, 2_147_483_647)
-    omitted = require_int(omitted_count, "evidence package omitted_count", 0, 2_147_483_647)
+    retained = require_int(retained_count, "evidence package retained_count", 0, MAX_EVIDENCE_PACKAGE_RECORD_COUNT)
+    omitted = require_int(omitted_count, "evidence package omitted_count", 0, MAX_EVIDENCE_PACKAGE_RECORD_COUNT)
     if retained != len(validated_records):
         raise InvalidRequestError("evidence package retained_count must equal the number of records")
     normalized_truncated = require_bool(truncated, "evidence package truncated")
@@ -1692,8 +1701,8 @@ def canonical_proposition_evidence_records(records: object) -> tuple[tuple[dict,
         raise InvalidRequestError(f"evidence package input exceeds the limit of {MAX_EVIDENCE_PACKAGE_INPUT_RECORDS}")
     try:
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("evidence package input must be a tuple of PropositionEvidenceRecord values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("evidence package input must be a tuple of PropositionEvidenceRecord values") from err
     by_proposition_id: dict[str, dict] = {}
     duplicate_count = 0
     for record in validated_records:
@@ -1718,7 +1727,7 @@ def build_evidence_package(
 ) -> dict:
     """Canonicalize, deduplicate, and fit full-Proposition evidence to configured bounds."""
     retained_limit = require_int(max_records, "evidence package max_records", 0, MAX_EVIDENCE_PACKAGE_RECORDS)
-    byte_limit = require_int(max_bytes, "evidence package max_bytes", 256, MAX_EVIDENCE_PACKAGE_BYTES)
+    byte_limit = require_int(max_bytes, "evidence package max_bytes", MIN_EVIDENCE_PACKAGE_BYTES, MAX_EVIDENCE_PACKAGE_BYTES)
     canonical, duplicate_count = canonical_proposition_evidence_records(records)
     reasons: set[EvidencePackageTruncationReason] = set()
     omitted = duplicate_count
@@ -1775,8 +1784,8 @@ def evidence_package_from_dict(value: object) -> dict:
                     allow_empty=False,
                 )
             )
-        except ValueError as error:
-            raise InvalidRequestError("unsupported evidence package truncation reason") from error
+        except ValueError as err:
+            raise InvalidRequestError("unsupported evidence package truncation reason") from err
         reasons.append(reason)
     decoded_records = tuple(
         proposition_evidence_record_from_dict(freeze_mapping(record, "evidence package record")) for record in records
@@ -1825,14 +1834,14 @@ def evidence_reference(
     diagnostics: object = EMPTY_MAPPING,
 ) -> dict:
     """Build one minimal stable evidence reference safe for Section 4 results."""
-    normalized_id = require_any_text(evidence_id, "evidence_id", 256, allow_empty=False)
+    normalized_id = require_any_text(evidence_id, "evidence_id", MAX_EVIDENCE_ID_BYTES, allow_empty=False)
     normalized_resolver = require_any_text(resolver, "evidence resolver", MAX_RESOLVER_NAME_BYTES, allow_empty=False)
     if not isinstance(kind, EvidenceKind):
         raise InvalidRequestError("evidence kind must be an EvidenceKind")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("evidence scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("evidence scope must be a ScopeKey") from err
     result: dict = {
         "evidence_id": normalized_id,
         "resolver": normalized_resolver,
@@ -1882,9 +1891,9 @@ def evidence_reference_from_dict(value: object) -> dict:
     """Decode one evidence reference from its exact serialized form."""
     data = exact_mapping(value, "EvidenceReference", EVIDENCE_REFERENCE_FIELDS)
     try:
-        kind = EvidenceKind(require_any_text(data.get("kind", ""), "evidence kind", 32, allow_empty=False))
-    except ValueError as error:
-        raise InvalidRequestError("unsupported evidence kind") from error
+        kind = EvidenceKind(require_any_text(data.get("kind", ""), "evidence kind", MAX_ENUM_WIRE_BYTES, allow_empty=False))
+    except ValueError as err:
+        raise InvalidRequestError("unsupported evidence kind") from err
     result = evidence_reference(
         data.get("evidence_id", ""),
         data.get("resolver", ""),
@@ -1919,20 +1928,20 @@ def candidate(
         raise InvalidRequestError("candidate source must be a CandidateSource")
     try:
         validated_features = validate_feature_set(features)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("candidate features must be a FeatureSet") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("candidate features must be a FeatureSet") from err
     if not isinstance(evidence, tuple):
         raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values")
     try:
         validated_evidence = tuple(validate_evidence_reference(item) for item in evidence)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("candidate evidence must be a tuple of EvidenceReference values") from err
     if len(validated_evidence) > MAX_RESOLUTION_VALUES:
         raise InvalidRequestError(f"candidate evidence exceeds the limit of {MAX_RESOLUTION_VALUES}")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("candidate scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("candidate scope must be a ScopeKey") from err
     if not isinstance(lifecycle, LifecycleState):
         raise InvalidRequestError("candidate lifecycle must be a LifecycleState")
     result: dict = {
@@ -2038,10 +2047,14 @@ def trusted_candidate_to_dict(current: dict) -> dict[str, object]:
 def candidate_from_dict(value: object) -> dict:
     data = exact_mapping(value, "Candidate", CANDIDATE_FIELDS)
     try:
-        source = CandidateSource(require_any_text(data.get("source", ""), "candidate source", 32, allow_empty=False))
-        lifecycle = LifecycleState(require_any_text(data.get("lifecycle", ""), "candidate lifecycle", 32, allow_empty=False))
-    except ValueError as error:
-        raise InvalidRequestError("candidate source or lifecycle is unsupported") from error
+        source = CandidateSource(
+            require_any_text(data.get("source", ""), "candidate source", MAX_ENUM_WIRE_BYTES, allow_empty=False)
+        )
+        lifecycle = LifecycleState(
+            require_any_text(data.get("lifecycle", ""), "candidate lifecycle", MAX_ENUM_WIRE_BYTES, allow_empty=False)
+        )
+    except ValueError as err:
+        raise InvalidRequestError("candidate source or lifecycle is unsupported") from err
     evidence = require_list(data.get("evidence", []), "candidate evidence")
     result = candidate(
         candidate_id=data.get("candidate_id", ""),
@@ -2161,20 +2174,20 @@ def resolver_result(
         raise InvalidRequestError(f"resolver output exceeds the item limit of {MAX_RESOLUTION_VALUES}")
     try:
         validated_candidates = tuple(validate_candidate(value) for value in candidates)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver candidates must be a tuple of Candidate values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver candidates must be a tuple of Candidate values") from err
     try:
         validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver evidence must be a tuple of EvidenceReference values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver evidence must be a tuple of EvidenceReference values") from err
     try:
         validated_proposition_evidence = tuple(validate_proposition_evidence_record(value) for value in proposition_evidence)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver proposition_evidence must be a tuple of PropositionEvidenceRecord values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver proposition_evidence must be a tuple of PropositionEvidenceRecord values") from err
     try:
         validated_accounting = tuple(validate_accounting_observation(value) for value in accounting)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver accounting must be a tuple of AccountingObservation values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver accounting must be a tuple of AccountingObservation values") from err
     if state != ResolverState.COMPLETED and (
         validated_candidates or validated_evidence or validated_proposition_evidence or validated_accounting
     ):
@@ -2189,8 +2202,8 @@ def resolver_result(
         raise InvalidRequestError("resolver consumption must be a BudgetConsumption")
     try:
         validated_consumption = budget_consumption() if not consumption else validate_budget_consumption(consumption)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver consumption must be a BudgetConsumption") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver consumption must be a BudgetConsumption") from err
     result: dict = {
         "resolver": resolver_name,
         "state": state,
@@ -2265,9 +2278,9 @@ def resolver_result_to_json(value: object) -> str:
 def resolver_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
     try:
-        state = ResolverState(require_any_text(data.get("state", ""), "resolver state", 32, allow_empty=False))
-    except ValueError as error:
-        raise InvalidRequestError("unsupported resolver state") from error
+        state = ResolverState(require_any_text(data.get("state", ""), "resolver state", MAX_ENUM_WIRE_BYTES, allow_empty=False))
+    except ValueError as err:
+        raise InvalidRequestError("unsupported resolver state") from err
     candidates = require_list(data.get("candidates", []), "resolver candidates")
     evidence = require_list(data.get("evidence", []), "resolver evidence")
     proposition_evidence = require_list(data.get("proposition_evidence", []), "resolver Proposition evidence")
@@ -2319,8 +2332,8 @@ def resolution_result(
         raise InvalidRequestError("resolution outcome must be a ResolutionOutcome")
     try:
         validated_selected_candidate = validate_candidate(selected_candidate)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("selected_candidate must be a Candidate") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("selected_candidate must be a Candidate") from err
     if (
         not isinstance(selected_candidate_available, bool)
         or not isinstance(confidence_available, bool)
@@ -2340,12 +2353,12 @@ def resolution_result(
         raise InvalidRequestError(f"resolver_results exceeds the limit of {MAX_RESOLUTION_REASON_CODES}")
     try:
         validated_response_candidates = tuple(validate_candidate(value) for value in response_candidates)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("response_candidates must be a tuple of Candidate values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("response_candidates must be a tuple of Candidate values") from err
     try:
         validated_evidence = tuple(validate_evidence_reference(value) for value in evidence)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolution evidence must be a tuple of EvidenceReference values") from err
     validated_confidence = require_float(confidence, "resolution confidence", 0.0, 1.0)
     if not isinstance(reason_codes, tuple):
         raise InvalidRequestError("reason_codes must be a tuple")
@@ -2359,22 +2372,22 @@ def resolution_result(
     frozen_diagnostics = freeze_mapping(frame_diagnostics, "frame diagnostics")
     try:
         validated_resolver_results = tuple(validate_resolver_result(value) for value in resolver_results)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolver_results must be a tuple of ResolverResult values") from err
     if any(value.get("proposition_evidence", ()) for value in validated_resolver_results):
         raise InvalidRequestError("resolution resolver_results cannot expose unpackaged Proposition evidence")
     try:
         validated_budget = validate_budget_consumption(budget)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("resolution budget must be a BudgetConsumption") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("resolution budget must be a BudgetConsumption") from err
     if not isinstance(evidence_package, dict):
         raise InvalidRequestError("evidence_package must be an EvidencePackage")
     try:
         validated_evidence_package = (
             empty_evidence_package() if not evidence_package else validate_evidence_package(evidence_package)
         )
-    except InvalidRequestError as error:
-        raise InvalidRequestError("evidence_package must be an EvidencePackage") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("evidence_package must be an EvidencePackage") from err
     concrete_empty_package = empty_evidence_package()
     if not evidence_package_available and validated_evidence_package != concrete_empty_package:
         raise InvalidRequestError("unavailable evidence_package must use the concrete empty package")
@@ -2532,9 +2545,11 @@ def trusted_resolution_result_to_json(value: dict) -> str:
 def resolution_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolutionResult", RESOLUTION_RESULT_FIELDS)
     try:
-        outcome = ResolutionOutcome(require_any_text(data.get("outcome", ""), "resolution outcome", 32, allow_empty=False))
-    except ValueError as error:
-        raise InvalidRequestError("unsupported resolution outcome") from error
+        outcome = ResolutionOutcome(
+            require_any_text(data.get("outcome", ""), "resolution outcome", MAX_ENUM_WIRE_BYTES, allow_empty=False)
+        )
+    except ValueError as err:
+        raise InvalidRequestError("unsupported resolution outcome") from err
     selected_available = data.get("selected_candidate_available", False)
     if not isinstance(selected_available, bool):
         raise InvalidRequestError("selected_candidate_available must be a boolean")
@@ -2594,11 +2609,26 @@ class QueryFrameBuilder:
         diagnostic_seed: str = "",
         budget: dict[str, object] = EMPTY_MAPPING,
     ) -> dict:
+        """Build the base QueryFrame for one request.
+
+        A supplied ``identity`` is validated and must be authoritative for the
+        request; without one, the standalone identity is extracted from the
+        text. A supplied ``budget`` is re-captured against the monotonic clock;
+        without one, the default budget is captured. Contractions are expanded
+        into the resolved text when ``expand_contractions`` is configured, the
+        eligibility context is captured from the UTC clock, and the diagnostic ID
+        is the SHA-256 of ``diagnostic_seed`` or, without one, of the identity
+        and resolved text.
+
+        Raises:
+            InvalidRequestError: the request, scope, identity, budget or seed is
+                malformed, or the identity's scope differs from ``scope``.
+        """
         original = require_any_text(request, "request", MAX_REQUEST_BYTES, allow_empty=False)
         try:
             scope = validate_scope_key(scope)
-        except IdentityValidationError as error:
-            raise InvalidRequestError("scope must be a ScopeKey") from error
+        except IdentityValidationError as err:
+            raise InvalidRequestError("scope must be a ScopeKey") from err
         if not isinstance(identity, dict):
             raise InvalidRequestError("identity must be an object")
         if not isinstance(budget, dict):
@@ -2606,8 +2636,8 @@ class QueryFrameBuilder:
         if identity:
             try:
                 selected_identity = validate_query_identity(identity)
-            except IdentityValidationError as error:
-                raise InvalidRequestError("identity must be a QueryIdentity") from error
+            except IdentityValidationError as err:
+                raise InvalidRequestError("identity must be a QueryIdentity") from err
             validate_authoritative_identity(selected_identity, retrieval_representation(original))
         else:
             selected_identity = extract_standalone_identity(original, scope)
@@ -2616,14 +2646,14 @@ class QueryFrameBuilder:
         if budget:
             try:
                 selected_budget = recapture_resolution_budget(budget, self.internal_monotonic_clock_ns)
-            except InvalidRequestError as error:
-                raise InvalidRequestError("budget must be a ResolutionBudget") from error
+            except InvalidRequestError as err:
+                raise InvalidRequestError("budget must be a ResolutionBudget") from err
         else:
             selected_budget = capture_resolution_budget(self.internal_monotonic_clock_ns)
         resolved = original
         if self.internal_engram.config.get("expand_contractions", False):
             resolved = expand_contractions(original, self.internal_engram.substitution_maps.get("contractions", {}))
-        eligibility = EligibilityContextCapture(self.internal_utc_clock).capture_standalone(scope, True)
+        eligibility = capture_standalone_eligibility_context(self.internal_utc_clock, scope, True)
         seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
         require_any_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
         diagnostic_id = f"resolution:sha256:{hashlib_sha256(seed.encode('utf-8')).hexdigest()}"
@@ -2651,8 +2681,8 @@ class BudgetLedger:
     def __init__(self, budget: dict) -> None:
         try:
             validated_budget = validate_resolution_budget(budget)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("ledger budget must be a ResolutionBudget") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("ledger budget must be a ResolutionBudget") from err
         self.internal_budget = validated_budget
         self.internal_lock = threading_RLock()
         self.totals = budget_consumption()
@@ -2673,10 +2703,19 @@ class BudgetLedger:
             return result
 
     def add(self, consumption: dict) -> dict:
+        """Add one BudgetConsumption to the running totals and return a copy of the new totals.
+
+        Each counted dimension is summed; a dimension whose total passes its
+        budget limit is marked exhausted, and exhausted dimensions accumulate.
+        The totals stay measured only while every added consumption was measured.
+
+        Raises:
+            InvalidRequestError: ``consumption`` is not a BudgetConsumption.
+        """
         try:
             validated_consumption = validate_budget_consumption(consumption)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("ledger consumption must be a BudgetConsumption") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("ledger consumption must be a BudgetConsumption") from err
         with self.internal_lock:
             values = {}
             for name in (

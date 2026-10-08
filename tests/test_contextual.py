@@ -226,10 +226,12 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     assert topic_frame.get("inheritance", ()) == ()
     assert "operator" in topic_identity
     assert topic_identity.get("operator", QueryOperator.UNKNOWN) == QueryOperator.UNKNOWN
-    expiring_session = core.engram.sessions.get("Sarah", {})
-    assert "last_active" in expiring_session
-    expiring_session["last_active"] = expiring_session.get("last_active", EARLIEST_UTC) - timedelta(days=1)
-    assert sessions.expire_sessions(core.engram, timedelta(hours=1)) == 1
+    with core.engram.session_lock:
+        expiring_session = sessions.get_session(core.engram, "Sarah", create_if_missing=False)
+        assert "last_active" in expiring_session
+        last_active = expiring_session.get("last_active", EARLIEST_UTC)
+        expiring_session["last_active"] = last_active - timedelta(days=1)
+    assert sessions.expire_sessions(core.engram, last_active, timedelta(hours=1)) == 1
     assert "Sarah" not in core.engram.sessions
 
 

@@ -4,7 +4,7 @@ Every module checks its fields through these, so a size limit or character
 rule means the same thing everywhere and each failure reads the same way.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from functools import lru_cache
 from re import compile as re_compile
@@ -52,8 +52,8 @@ def require_text(
             raise error(f"{name} must contain non-whitespace text")
     try:
         size = len(value.encode("utf-8"))
-    except UnicodeEncodeError as encoding_error:
-        raise error(f"{name} must contain valid Unicode") from encoding_error
+    except UnicodeEncodeError as err:
+        raise error(f"{name} must contain valid Unicode") from err
     if size > maximum_bytes:
         raise error(f"{name} exceeds the limit of {maximum_bytes} UTF-8 bytes")
     if characters == Characters.TEXT and CONTROL_CHARACTERS.search(value):
@@ -119,8 +119,8 @@ def parse_utc_timestamp(text: str, name: str) -> datetime:
         raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp ending in Z")
     try:
         parsed = datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from error
+    except ValueError as err:
+        raise InvalidRequestError(f"{name} must be a canonical RFC 3339 UTC timestamp") from err
     if parsed.isoformat().replace("+00:00", "Z") != text:
         raise InvalidRequestError(f"{name} must use the canonical RFC 3339 UTC representation")
     return parsed
@@ -130,6 +130,18 @@ def utc_datetime(text: str) -> datetime:
     """Parse a timestamp already validated as canonical RFC 3339 UTC."""
     result = datetime.fromisoformat(text[:-1] + "+00:00")
     return result
+
+
+def utc_now() -> datetime:
+    """Return the current aware UTC datetime: the default clock injected into clock owners."""
+    current = datetime.now(UTC)
+    return current
+
+
+def format_utc_timestamp(moment: datetime) -> str:
+    """Return the canonical RFC 3339 UTC text, such as ``2026-09-28T12:00:00Z``, for an aware datetime."""
+    text = moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return text
 
 
 def require_utc_timestamp(

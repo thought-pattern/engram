@@ -64,7 +64,8 @@ def test_concurrent_session_updates() -> None:
             for i in range(ITERATIONS):
                 session_id = sessions.start_session(engram, session_id=f"sess_{n}_{i}")
                 sessions.update_session_context(engram, session_id, f"response {n} {i}")
-                sessions.get_session(engram, session_id, create_if_missing=False)
+                with engram.session_lock:
+                    sessions.get_session(engram, session_id, create_if_missing=False)
                 sessions.delete_session(engram, session_id)
         except Exception as err:
             errors.append(err)

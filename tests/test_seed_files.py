@@ -52,7 +52,7 @@ def test_empty_seed_files_leave_the_statement_store_empty():
     engram = Engram(config=engram_config(conversation=conversation_config(bot_name="Mara")))
 
     assert engram.statements == []
-    assert engram.bot_properties.get("name", "") == "Mara"
+    assert engram.pattern_matcher.bot_properties().get("name", "") == "Mara"
 
 
 def test_missing_malformed_and_pairless_seeds_fail_before_statements_exist(tmp_path):
@@ -343,9 +343,10 @@ def test_bot_name_wins_over_the_properties_file(tmp_path):
     )
     engram = Engram(config=engram_config(conversation=conversation_config(bot_name="Mara", properties_file=properties)))
 
-    assert engram.bot_properties.get("name", "") == "Mara"
-    assert engram.bot_properties.get("version", "") == VERSION
-    assert engram.bot_properties.get("city", "") == "Kyoto"
+    bot_properties = engram.pattern_matcher.bot_properties()
+    assert bot_properties.get("name", "") == "Mara"
+    assert bot_properties.get("version", "") == VERSION
+    assert bot_properties.get("city", "") == "Kyoto"
 
 
 def test_custom_substitution_applies_before_the_pattern_walk(tmp_path):

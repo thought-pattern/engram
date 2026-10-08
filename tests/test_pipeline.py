@@ -1,9 +1,12 @@
 """Tests for the tiered response pipeline."""
 
+from pytest import raises as pytest_raises
+
 from engram import pipeline
 from engram.config import engram_config
 from engram.constants import Tier
 from engram.core import Engram
+from engram.errors import InvalidRequestError
 
 
 def counting_llm(response: str = "Generated answer."):
@@ -41,6 +44,26 @@ def test_pattern_tier_configured_fallback_does_not_preempt() -> None:
 
     assert result.get("source", "") == "llm"
     assert len(calls) == 1
+
+
+def test_pipeline_rejects_non_numeric_policy_values() -> None:
+    engram = Engram()
+
+    for high_confidence in (True, float("nan"), "0.7", 1.5):
+        with pytest_raises(ValueError, match="high_confidence"):
+            pipeline.respond(engram, "hello", high_confidence=high_confidence)
+    for context_limit in (True, 2.0, -1):
+        with pytest_raises(ValueError, match="context_limit"):
+            pipeline.respond(engram, "hello", context_limit=context_limit)
+
+
+def test_pipeline_rejects_an_llm_response_that_is_not_bounded_text() -> None:
+    engram = Engram()
+
+    with pytest_raises(InvalidRequestError, match="llm_fn response"):
+        pipeline.respond(engram, "something entirely new", llm_fn=lambda text, context: ["not", "text"])
+    with engram.session_lock:
+        assert not engram.sessions
 
 
 def test_statement_tier_confident_match_answers_without_llm() -> None:

@@ -19,22 +19,26 @@ from threading import TIMEOUT_MAX, Event as threading_Event, Lock as threading_L
 
 from google.protobuf import empty_pb2, json_format, struct_pb2
 from google.protobuf.message import Message as protobuf_Message
-from grpc import (
-    StatusCode as grpc_StatusCode,
-    server as grpc_server,
-    ssl_server_credentials as grpc_ssl_server_credentials,
-)
+from grpc import StatusCode as grpc_StatusCode, server as grpc_server, ssl_server_credentials as grpc_ssl_server_credentials
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
-from engram import engram_pb2, engram_pb2_grpc
+from engram import engram_pb2
 from engram.config import load_config
 from engram.constants import (
     DEFAULT_BIND_ADDRESS,
     DEFAULT_GRACE_SECONDS,
+    DEFAULT_LEARNED_SOURCE_LABEL,
     DEFAULT_MAX_WORKERS,
+    DEFAULT_PROPOSE_LIMIT,
     GRPC_REGULATOR_OUTCOME_NAMES,
     MAX_RETIREMENT_BATCH_ENTRIES,
     SHUTDOWN_DRAIN_MARGIN_SECONDS,
+)
+from engram.engram_pb2_grpc import (
+    EngramEvidenceServiceServicer,
+    EngramServiceServicer,
+    add_EngramEvidenceServiceServicer_to_server,
+    add_EngramServiceServicer_to_server,
 )
 from engram.errors import (
     ConflictError,
@@ -45,6 +49,7 @@ from engram.errors import (
     ResolutionCancelledError,
     ResourceExhaustedError,
     ResourceNotFoundError,
+    failure_origin,
 )
 from engram.identity import query_identity_from_dict
 from engram.resolution import resolution_budget_from_dict, resolution_result_to_dict
@@ -207,7 +212,8 @@ def require_grace_seconds(grace: object) -> float:
     Both waits are platform timed waits, so the period plus the drain margin must
     stay within threading.TIMEOUT_MAX; infinity and NaN fail every comparison.
     """
-    if type(grace) not in (int, float):
+    # The exact-type test also refuses bool and numeric subclasses.
+    if type(grace) not in (int, float) or not isinstance(grace, (int, float)):
         raise InvalidRequestError("grace must be a non-negative number")
     if not 0 <= grace <= TIMEOUT_MAX - SHUTDOWN_DRAIN_MARGIN_SECONDS:
         raise InvalidRequestError(
@@ -236,7 +242,7 @@ def retirement_entries_from_request(request: engram_pb2.RetireResponsesRequest) 
     return entries
 
 
-class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
+class EngramGrpcService(EngramServiceServicer):
     """Translate protobuf requests into calls on one shared core."""
 
     def __init__(
@@ -262,6 +268,13 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         self.health_servicer.set(EVIDENCE_SERVICE_NAME, serving_status)
 
     def invoke(self, context, operation: object) -> protobuf_Message:
+        """Run one RPC operation and translate its failure into a gRPC status.
+
+        An ``EngramCoreError`` aborts the context with its mapped status code, logged at
+        that code's level with the error class and origin and returned with an
+        ``engram-error-type`` trailer; any other failure aborts as INTERNAL. After every
+        RPC, successful or not, the graph reconnect is attempted and health is resynced.
+        """
         if not callable(operation):
             raise InvalidRequestError("gRPC operation must be callable")
         try:
@@ -269,23 +282,20 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
             if not isinstance(result, protobuf_Message):
                 raise InvalidRequestError("gRPC operation returned a non-message result")
             return result
-        except EngramCoreError as error:
+        except EngramCoreError as err:
             # Keep expected lifecycle outcomes visible without a fault traceback.
-            code = status_code(error, context)
+            code = status_code(err, context)
             level = REQUEST_ERROR_LOG_LEVELS.get(code, WARNING)
-            LOGGER.log(
-                level,
-                "Engram gRPC request ended with %s (%s)",
-                code.name,
-                type(error).__name__,
-                exc_info=error if level != INFO else False,
-            )
-            metadata: list[tuple[str, str]] = [("engram-error-type", type(error).__name__)]
+            LOGGER.log(level, "Engram gRPC request ended with %s (%s)", code.name, failure_origin(err))
+            metadata: list[tuple[str, str]] = [("engram-error-type", type(err).__name__)]
             context.set_trailing_metadata(tuple(metadata))
-            context.abort(code, str(error))
-        except Exception as error:
-            LOGGER.error("Unhandled Engram gRPC operation failure", exc_info=error)
+            context.abort(code, str(err))
+            # ServicerContext.abort always raises; the original failure propagates if a context ever returns.
+            raise
+        except Exception as err:
+            LOGGER.error("Unhandled Engram gRPC operation failure (%s)", failure_origin(err))
             context.abort(grpc_StatusCode.INTERNAL, "internal Engram failure")
+            raise
         finally:
             self.core.reconnect_graph_after_turn()
             self.sync_health()
@@ -381,7 +391,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def Propose(self, request: engram_pb2.ProposeRequest, context) -> struct_pb2.Struct:
-        limit = request.limit if request.HasField("limit") else 1
+        limit = request.limit if request.HasField("limit") else DEFAULT_PROPOSE_LIMIT
         message = self.invoke(
             context,
             lambda: to_struct(
@@ -417,7 +427,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
     def LearnResponse(self, request: engram_pb2.LearnResponseRequest, context) -> struct_pb2.Struct:
-        source_label = request.source_label or "unknown"
+        source_label = request.source_label or DEFAULT_LEARNED_SOURCE_LABEL
         message = self.invoke(
             context,
             lambda: to_struct(
@@ -471,7 +481,7 @@ class EngramGrpcService(engram_pb2_grpc.EngramServiceServicer):
         return result
 
 
-class EngramEvidenceGrpcService(engram_pb2_grpc.EngramEvidenceServiceServicer):
+class EngramEvidenceGrpcService(EngramEvidenceServiceServicer):
     """Expose unified resolution as an additional Engram service."""
 
     def __init__(self, adapter: EngramGrpcService) -> None:
@@ -539,8 +549,8 @@ class EngramGrpcServer:
         self.internal_server = grpc_server(executor)
         bound = False
         try:
-            engram_pb2_grpc.add_EngramServiceServicer_to_server(self.service, self.internal_server)
-            engram_pb2_grpc.add_EngramEvidenceServiceServicer_to_server(self.evidence_service, self.internal_server)
+            add_EngramServiceServicer_to_server(self.service, self.internal_server)
+            add_EngramEvidenceServiceServicer_to_server(self.evidence_service, self.internal_server)
             health_pb2_grpc.add_HealthServicer_to_server(self.health_servicer, self.internal_server)
 
             if tls_certificate and tls_private_key:
@@ -621,8 +631,8 @@ def read_tls_files(parser: argparse_ArgumentParser, certificate_path: str, priva
     try:
         result = Path(certificate_path).read_bytes(), Path(private_key_path).read_bytes()
         return result
-    except OSError as error:
-        parser.error(f"unable to read TLS files: {error}")
+    except OSError as err:
+        parser.error(f"unable to read TLS files: {err}")
 
 
 def main(argv: tuple[str, ...] = ()) -> int:

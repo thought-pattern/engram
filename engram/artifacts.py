@@ -97,10 +97,19 @@ def require_nonnegative_int(value: object, name: str) -> int:
 
 
 def freeze_json_value(value: object, name: str, depth: int, item_count: list[int]) -> object:
+    """Validate one JSON metadata value and return its frozen copy.
+
+    Lists and tuples become tuples, mapping keys are sorted, and strings, depth and
+    item counts are bounded by the metadata limits. `item_count` is a one-element
+    counter shared across the whole walk; a container's children are charged before
+    any of them is copied, so an oversized container fails before allocation.
+    """
     if depth > MAX_METADATA_DEPTH:
         raise InvalidRequestError(f"{name} exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
     item_count[0] += 1
     if item_count[0] > MAX_METADATA_ITEMS:
+        raise InvalidRequestError(f"{name} exceeds the metadata item limit of {MAX_METADATA_ITEMS}")
+    if isinstance(value, (dict, list, tuple)) and item_count[0] + len(value) > MAX_METADATA_ITEMS:
         raise InvalidRequestError(f"{name} exceeds the metadata item limit of {MAX_METADATA_ITEMS}")
     if isinstance(value, bool):
         return value
@@ -131,7 +140,9 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
 
 def freeze_lifecycle_audit(value: object) -> dict:
     """Validate the reserved lifecycle audit a terminal transition writes into metadata."""
-    fields = set(value) if isinstance(value, dict) else set()
+    if not isinstance(value, dict):
+        raise InvalidRequestError("artifact lifecycle_audit has invalid fields")
+    fields = set(value)
     supersession = fields == LIFECYCLE_AUDIT_FIELDS | {"replacement_statement_id"}
     if fields != LIFECYCLE_AUDIT_FIELDS and not supersession:
         raise InvalidRequestError("artifact lifecycle_audit has invalid fields")
@@ -161,13 +172,19 @@ def freeze_lifecycle_audit(value: object) -> dict:
 
 
 def freeze_metadata(value: object) -> dict:
+    """Validate artifact metadata and return its frozen, key-sorted copy.
+
+    Caller metadata is bounded by the metadata item and byte limits. The reserved
+    lifecycle-audit key is validated by its own exact field set and is excluded from
+    those limits, so a terminal transition can always record its audit.
+    """
     if not isinstance(value, dict):
         raise InvalidRequestError("artifact metadata must be an object")
     if "visibility_scope" in value:
         try:
             validate_support_visibility(value.get("visibility_scope", {}))
-        except ValueError as error:
-            raise InvalidRequestError(str(error)) from error
+        except ValueError as err:
+            raise InvalidRequestError(str(err)) from err
     # Caller metadata carries the item and byte limits; the reserved lifecycle audit is
     # bounded by its own fields, so writing it never pushes an admitted artifact over.
     caller_metadata = {key: item for key, item in value.items() if key != LIFECYCLE_AUDIT_KEY}
@@ -184,6 +201,7 @@ def freeze_metadata(value: object) -> dict:
 
 
 def thaw_json_value(value: object) -> object:
+    """Return a JSON-native copy of a frozen value: tuples become lists, mappings are copied."""
     if isinstance(value, dict):
         result = {key: thaw_json_value(item) for key, item in value.items()}
         return result
@@ -281,12 +299,12 @@ def validate_cached_response_artifact(value: object) -> dict:
     response = require_response(data.get("response", ""))
     try:
         query_identity = validate_query_identity(data.get("query_identity", {}))
-    except IdentityValidationError as error:
-        raise InvalidRequestError("artifact query_identity must be a QueryIdentity") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("artifact query_identity must be a QueryIdentity") from err
     try:
         retrieval = validate_retrieval_representation(data.get("retrieval", {}))
-    except IdentityValidationError as error:
-        raise InvalidRequestError("artifact retrieval must be a RetrievalRepresentation") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("artifact retrieval must be a RetrievalRepresentation") from err
     validate_authoritative_identity(query_identity, retrieval)
     tier = data.get("tier", Tier.DYNAMIC)
     if not isinstance(tier, Tier):
@@ -294,8 +312,8 @@ def validate_cached_response_artifact(value: object) -> dict:
     lifecycle = require_lifecycle(data.get("lifecycle", LifecycleState.RETIRED), "artifact lifecycle")
     try:
         scope = validate_scope_key(data.get("scope", {}))
-    except IdentityValidationError as error:
-        raise InvalidRequestError("artifact scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("artifact scope must be a ScopeKey") from err
     if scope != query_identity.get("scope", {}):
         raise InvalidRequestError("artifact scope must match query_identity scope")
     raw_support = data.get("support_references", ())
@@ -305,8 +323,8 @@ def validate_cached_response_artifact(value: object) -> dict:
         raise InvalidRequestError(f"artifact support_references exceed the limit of {MAX_SUPPORT_REFERENCES}")
     try:
         support_references = validate_support_references(raw_support)
-    except ValueError as error:
-        raise InvalidRequestError(str(error)) from error
+    except ValueError as err:
+        raise InvalidRequestError(str(err)) from err
     valid_from, valid_from_available = require_available_utc_timestamp(
         data.get("valid_from", ""),
         data.get("valid_from_available", False),
@@ -385,12 +403,12 @@ def cached_response_artifact_from_dict(value: object) -> dict:
     lifecycle_value = require_text(data.get("lifecycle", ""), "artifact lifecycle", MAX_ARTIFACT_ENUM_BYTES, allow_empty=False)
     try:
         tier = Tier(tier_value)
-    except ValueError as error:
-        raise InvalidRequestError(f"unsupported artifact tier: {tier_value}") from error
+    except ValueError as err:
+        raise InvalidRequestError(f"unsupported artifact tier: {tier_value}") from err
     try:
         lifecycle = LifecycleState(lifecycle_value)
-    except ValueError as error:
-        raise InvalidRequestError(f"unsupported artifact lifecycle: {lifecycle_value}") from error
+    except ValueError as err:
+        raise InvalidRequestError(f"unsupported artifact lifecycle: {lifecycle_value}") from err
     raw_support = data.get("support_references", [])
     if not isinstance(raw_support, list):
         raise InvalidRequestError("artifact support_references must be an array")

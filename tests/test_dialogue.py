@@ -4,8 +4,7 @@ from json import loads as json_loads
 from pathlib import Path
 
 from engram import pipeline
-from engram.core import Engram
-from engram.dialogue import (
+from engram.constants import (
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_CLOSING,
     DIALOGUE_FACT,
@@ -13,6 +12,11 @@ from engram.dialogue import (
     DIALOGUE_QUESTION,
     DIALOGUE_STATEMENT,
     DIALOGUE_TOPIC_SHIFT,
+    EARLIEST_UTC,
+    Tier,
+)
+from engram.core import Engram
+from engram.dialogue import (
     classify_dialogue_act,
     conversational_fact_admission,
     explicit_topic,
@@ -22,7 +26,7 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
-from engram.models import Tier, session as make_session, session_update_dialogue
+from engram.models import session as make_session, session_update_dialogue
 from engram.nlp import extract_fact
 
 SEED_PATH = Path(__file__).resolve().parent.parent / "engram" / "data" / "seed.json"
@@ -175,7 +179,7 @@ def test_topic_and_entity_interpretation_explicit_ambiguous_topic_name_remains_a
 
 
 def test_topic_and_entity_interpretation_session_entities_are_canonical_by_surface() -> None:
-    session = make_session("speaker")
+    session = make_session("speaker", EARLIEST_UTC)
     session_update_dialogue(session, DIALOGUE_STATEMENT, entities=[{"text": "Alice", "label": "PROPER_NOUN"}])
     session_update_dialogue(session, DIALOGUE_FACT, active_topic="Alice", entities=[{"text": "Alice", "label": "SUBJECT"}])
 

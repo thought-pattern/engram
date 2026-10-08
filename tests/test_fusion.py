@@ -40,8 +40,7 @@ from engram.resolution import (
     validate_evidence_reference,
     validate_resolution_budget,
 )
-
-from .support_fixtures import PROPOSITION_REFERENCE_A
+from tests.support_fixtures import PROPOSITION_REFERENCE_A
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 START_NS = 1_000_000_000

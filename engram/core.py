@@ -1,10 +1,15 @@
-"""Core ENGRAM implementation."""
+"""The Engram engine: the statement store and the conversational pattern pipeline.
+
+``Engram`` owns the statement store and its keyword and pattern indexes, the
+session map, the graph client and its embedding model, and the local retrieval
+components (sparse index, standalone semantic retriever, reranker, utility
+registry). It sits above the retrieval, graph, template and dialogue modules and
+below ``engram.service``, which is its only transport-neutral owner.
+"""
 
 from bisect import bisect_left
-from concurrent.futures import CancelledError
 from copy import deepcopy
-from datetime import UTC, datetime
-from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from heapq import heappop as heapq_heappop, heappush as heapq_heappush, heapreplace as heapq_heapreplace
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from logging import getLogger as logging_getLogger
 from os import path as os_path
@@ -14,22 +19,31 @@ from time import monotonic_ns as time_monotonic_ns
 
 from sentence_transformers import SentenceTransformer
 
-from engram import eviction as eviction_mod, sessions as sessions_mod
-from engram.config import engram_config
+from engram import sessions as sessions_mod
+from engram.config import validated_config
 from engram.constants import (
+    CONVERSATION_DUPLICATE_POLICIES,
+    DEFAULT_BOT_NAME,
+    DEFAULT_CAPACITY,
     DEFAULT_CONTRACTIONS,
+    DEFAULT_CONVERSATION_DUPLICATE_POLICY,
+    DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
+    DEFAULT_SRAI_DEPTH_LIMIT,
     DEFAULT_GENDER,
     DEFAULT_PERSON,
     DEFAULT_PERSON2,
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_EMOTION,
     DIALOGUE_OPINION,
+    EARLIEST_UTC,
     EMPTY_CONFIG,
     GRAPH_ENTITY_FACTS_QUERY,
     GRAPH_KEYWORD_FACTS_QUERY,
     KIND_STATEMENT,
     MAX_FACT_SENTENCE_WORDS,
+    MAX_GRAPH_VECTOR_LIMIT,
     MAX_PATTERN_WORDS,
+    MAX_PROPOSITION_PROJECTION_ROWS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_PLAN_ROWS,
     MAX_REQUEST_BYTES,
@@ -50,7 +64,7 @@ from engram.dialogue import (
     topic_from_statement_pattern,
     topic_is_referenced,
 )
-from engram.errors import InvalidRequestError, ResolutionCancelledError
+from engram.errors import InvalidRequestError, ResourceExhaustedError, VectorSupportScanExceededError, failure_origin
 from engram.facts_spacy import extract_facts
 from engram.feedback import FeedbackStore
 from engram.graph import (
@@ -65,6 +79,7 @@ from engram.graph import (
     validate_relation_proposition_projection,
 )
 from engram.models import (
+    random_identifier,
     record_statement_hit,
     record_statement_query,
     session_record_input,
@@ -75,7 +90,7 @@ from engram.models import (
 )
 from engram.mutations import MutationReceiptLedger
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, fact_subject_upper, input_kind
-from engram.nltk_data import ensure_nltk_data
+from engram.nltk_data import NLTK_RESOURCES
 from engram.pattern import PatternMatcher, normalize_pattern, pattern_word_count
 from engram.phrasing import phrase_facts
 from engram.polish import polish_response
@@ -96,13 +111,25 @@ from engram.text import (
     extract_keywords,
     extract_keywords_spacy,
     get_synonyms,
-    initialize_nltk_readers,
     normalize,
     restore_capture_case,
 )
 from engram.utilities import UtilityRegistry
+from engram.validation import format_utc_timestamp, utc_now
 
 logger = logging_getLogger(__name__)
+
+
+def lru_entry(statement: dict, sequence: int) -> tuple:
+    """Return a DYNAMIC statement's LRU heap entry: its eviction key, then its id.
+
+    The key is (last used, whether it was ever hit, store order). Equal
+    timestamps keep store order, as list positions did.
+    """
+    hit = statement.get("last_hit_available", False)
+    last_used = statement.get("last_hit", EARLIEST_UTC) if hit else statement.get("created_at", EARLIEST_UTC)
+    result = (last_used, 1 if hit else 0, sequence, statement.get("id", ""))
+    return result
 
 
 class OwnedRLock:
@@ -178,11 +205,12 @@ def format_graph_facts(facts: list[tuple[str, str, str]]) -> str:
 
 
 def failed_graph_read(operation: str, error: BaseException, empty):
-    """Log a database failure in full and return the same empty result as no rows.
+    """Log a database failure in full at debug level and return the same empty result as no rows.
 
-    The caller sees an ordinary empty result, never the failure text.
+    A failed read only withholds graph recall from the turn; the caller sees an ordinary empty
+    result, never the failure text.
     """
-    logger.warning("Graph read failed (%s)", operation, exc_info=error)
+    logger.debug("Graph read failed (%s)", operation, exc_info=error)
     result = empty
     return result
 
@@ -224,8 +252,8 @@ def read_seed_file(path: str) -> list:
     try:
         with open(seed_path, encoding="utf-8") as handle:
             data = json_load(handle)
-    except json_JSONDecodeError as error:
-        raise ValueError(f"seed file {seed_path} is not valid JSON") from error
+    except json_JSONDecodeError as err:
+        raise ValueError(f"seed file {seed_path} is not valid JSON") from err
     # A missing pairs key leaves the tuple default, which the list check rejects.
     pairs = data.get("pairs", ()) if isinstance(data, dict) else ()
     if not isinstance(pairs, list):
@@ -234,7 +262,7 @@ def read_seed_file(path: str) -> list:
     return result
 
 
-def load_seed_files(paths, duplicate_policy: str = "error") -> list:
+def load_seed_files(paths, duplicate_policy: str = DEFAULT_CONVERSATION_DUPLICATE_POLICY) -> list:
     """
     Read seed files in listed order and return one concatenated pair list.
 
@@ -242,7 +270,7 @@ def load_seed_files(paths, duplicate_policy: str = "error") -> list:
     """
     if isinstance(paths, str) or not isinstance(paths, (list, tuple)):
         raise ValueError("seed files must be a list of paths")
-    if duplicate_policy not in {"error", "last", "first"}:
+    if duplicate_policy not in CONVERSATION_DUPLICATE_POLICIES:
         raise ValueError("conversation duplicate_policy must be error, last, or first")
     pairs: list[dict] = []
     origins: dict[tuple[str, str, str], str] = {}
@@ -283,8 +311,8 @@ def read_json_object(path: str, label: str) -> dict:
     try:
         with open(table_path, encoding="utf-8") as handle:
             data = json_load(handle)
-    except json_JSONDecodeError as error:
-        raise ValueError(f"{label} file {table_path} is not valid JSON") from error
+    except json_JSONDecodeError as err:
+        raise ValueError(f"{label} file {table_path} is not valid JSON") from err
     if not isinstance(data, dict):
         raise ValueError(f"{label} file {table_path} requires an object")
     return data
@@ -338,15 +366,16 @@ SUBSTITUTION_KEYS = {"contractions", "person", "person2", "gender", "custom"}
 
 
 def read_substitution_file(path: str) -> dict[str, dict[str, str]]:
-    """Read optional contraction, person, gender, and custom substitution tables."""
+    """Read optional contraction, person, gender, and custom substitution tables.
+
+    An unknown table name raises ``ValueError`` naming it and the file.
+    """
     data = read_json_object(path, "substitution")
     unknown = sorted(str(key) for key in data if key not in SUBSTITUTION_KEYS)
     if unknown:
-        logger.warning("Ignoring unknown substitution table(s) in %s: %s", path, ", ".join(unknown))
+        raise ValueError(f"substitution file {path} has unknown table(s): {', '.join(unknown)}")
     result = {}
     for key, value in data.items():
-        if key not in SUBSTITUTION_KEYS:
-            continue
         if not isinstance(value, dict):
             raise ValueError(f"substitution file {path} tables must be objects of strings")
         table = {}
@@ -358,38 +387,6 @@ def read_substitution_file(path: str) -> dict[str, dict[str, str]]:
     return result
 
 
-def load_conversation_tables(engram, settings: dict) -> None:
-    """Load properties, sets, maps, predicates, and substitutions before categories.
-
-    A later file replaces the same set name, map name, or property. Substitutions
-    merge over the built-in tables. ``bot_name`` and the library version win
-    over a properties file. ``settings`` is the validated ``conversation_config``
-    section, whose file lists and optional paths are always present.
-    """
-    properties_file = settings.get("properties_file", "")
-    if properties_file:
-        engram.bot_properties.update(read_string_map(properties_file, "properties"))
-    bot_name = settings.get("bot_name", "ENGRAM")
-    engram.bot_properties["name"] = bot_name.strip() if isinstance(bot_name, str) else bot_name
-    engram.bot_properties["version"] = VERSION
-    for path in settings.get("set_files", []):
-        for name, members in read_set_file(path).items():
-            engram.sets[name] = members
-    for path in settings.get("map_files", []):
-        for name, table in read_map_file(path).items():
-            engram.maps[name] = table
-    predicate_file = settings.get("predicate_file", "")
-    if predicate_file:
-        engram.default_predicates.update(read_string_map(predicate_file, "predicate"))
-    substitution_file = settings.get("substitution_file", "")
-    if substitution_file:
-        for key, table in read_substitution_file(substitution_file).items():
-            # Only SUBSTITUTION_KEYS tables reach here, and the built-in maps hold each of them.
-            merged_table = dict(engram.substitution_maps.get(key, {}))
-            merged_table.update(table)
-            engram.substitution_maps[key] = merged_table
-
-
 class Engram:
     """Keyword-indexed statement store with hit-rate tracking.
 
@@ -398,18 +395,32 @@ class Engram:
     common statement pool.
     """
 
-    def __init__(self, config: dict = EMPTY_CONFIG) -> None:
+    def __init__(
+        self,
+        config: dict = EMPTY_CONFIG,
+        clock: object = utc_now,
+        identifier_source: object = random_identifier,
+    ) -> None:
         """Initialize ENGRAM instance.
 
         Args:
-            config: Configuration options. Uses defaults if not provided. A
-                supplied config is the complete record ``engram_config``
-                validates, so its reads below carry only false-value defaults.
+            config: Configuration options, validated here through ``validated_config``;
+                missing keys take their defaults and an unknown key is refused.
                 ``conversation.seed_files`` is read once here, before serving.
+            clock: Returns the current aware UTC datetime. Statement and session
+                timestamps, hits, graph lookup and the pattern pipeline read it.
+            identifier_source: Returns a fresh identifier for a statement or session
+                that the caller did not name.
         """
         if not isinstance(config, dict):
             raise ValueError("config must be an object")
-        self.config = dict(config) if config else engram_config()
+        if not callable(clock):
+            raise ValueError("clock must be callable")
+        if not callable(identifier_source):
+            raise ValueError("identifier_source must be callable")
+        self.config = validated_config(config, "Engram config")
+        self.clock = clock
+        self.identifier_source = identifier_source
 
         # Core data structures
         self.statements: list[dict] = []
@@ -430,26 +441,19 @@ class Engram:
         # store order, so matching and eviction never scan every statement.
         self.pattern_statements: dict[str, list[str]] = {}
 
-        # Bot properties and data (public for direct access). The persona name
-        # is applied before patterns are added, so {bot:name} follows config
-        # even when no seed file is loaded.
+        # The pattern matcher owns the word sets and bot properties; load_conversation_tables
+        # publishes the configured ones. The persona name is applied before patterns are
+        # added, so {bot:name} follows config even when no seed file is loaded.
         conversation_settings = self.config.get("conversation", {})
-        bot_name = conversation_settings.get("bot_name", "ENGRAM")
-        if not isinstance(bot_name, str) or not bot_name.strip():
-            raise ValueError("conversation bot_name must be a non-empty string")
-        self.bot_properties: dict[str, str] = {
-            "name": bot_name.strip(),
-            "version": VERSION,
-        }
         seed_files = conversation_settings.get("seed_files", [])
-        duplicate_policy = conversation_settings.get("duplicate_policy", "error")
-        self.sets: dict[str, list[str]] = {}
+        duplicate_policy = conversation_settings.get("duplicate_policy", DEFAULT_CONVERSATION_DUPLICATE_POLICY)
         self.maps: dict[str, dict[str, str]] = {}
 
-        # Pattern matcher with access to sets and bot properties
         self.pattern_matcher = PatternMatcher(
-            sets=self.sets,
-            bot_properties=self.bot_properties,
+            bot_properties={
+                "name": conversation_settings.get("bot_name", DEFAULT_BOT_NAME),
+                "version": VERSION,
+            },
             use_stemming=self.config.get("use_stemming", False),
             use_lemmatization=self.config.get("use_lemmatization", False),
             use_spacy_lemmatization=self.config.get("use_spacy_lemmatization", False),
@@ -465,7 +469,7 @@ class Engram:
         self.default_predicates: dict[str, str] = {}
 
         # Template processor
-        self.template_processor = TemplateProcessor(srai_limit=self.config.get("srai_depth_limit", 100))
+        self.template_processor = TemplateProcessor(srai_limit=self.config.get("srai_depth_limit", DEFAULT_SRAI_DEPTH_LIMIT))
 
         # Concurrency control. Mutations acquire locks in this order:
         # mutation_lock, statement_lock, then keyword_lock. statement_lock also guards the pattern matcher
@@ -498,7 +502,7 @@ class Engram:
         # connection and before any statement is stored. Tables load first so
         # categories can use them. Indexing waits until preflight has confirmed
         # the NLTK readers.
-        load_conversation_tables(self, conversation_settings)
+        self.load_conversation_tables(conversation_settings)
         static_pairs = load_seed_files(seed_files, duplicate_policy=duplicate_policy) if seed_files else []
 
         # Graph tooling is optional even when configured. Construction records
@@ -524,28 +528,87 @@ class Engram:
         # so every later failure releases it here before propagating.
         try:
             if graph_config.get("vector_enabled", False):
+                # A missing or unloadable local model leaves vector recall unready, which
+                # component status reports; graph and keyword recall keep serving.
                 try:
                     self.load_graph_embedding_model()
-                except Exception as error:
+                except (OSError, ValueError, RuntimeError) as err:
                     self.graph_embedding_model = ()
-                    logger.warning("Optional graph vector model is unavailable", exc_info=error)
+                    logger.warning("Optional graph vector model is unavailable (%s)", failure_origin(err))
             try:
                 self.component_status = self.preflight_components()
-            except RuntimeError as error:
-                raise ValueError(f"component preflight failed: {error}") from error
+            except RuntimeError as err:
+                raise ValueError(f"component preflight failed: {err}") from err
             if static_pairs:
                 self.load_static_data(static_pairs)
         except BaseException:
-            disconnect = getattr(self.internal_graph_client, "disconnect", ())
-            if callable(disconnect):
-                disconnect()
+            if self.internal_graph_client:
+                self.graph_operation("disconnect")()
             self.internal_graph_client = ()
             raise
+
+    def load_conversation_tables(self, settings: dict) -> None:
+        """Load properties, sets, maps, predicates, and substitutions before categories.
+
+        A later file replaces the same set name, map name, or property. Substitutions
+        merge over the built-in tables. ``bot_name`` and the library version win
+        over a properties file. ``settings`` is the validated ``conversation_config``
+        section, whose file lists and optional paths are always present.
+        """
+        bot_properties = self.pattern_matcher.bot_properties()
+        properties_file = settings.get("properties_file", "")
+        if properties_file:
+            bot_properties.update(read_string_map(properties_file, "properties"))
+        bot_properties["name"] = settings.get("bot_name", DEFAULT_BOT_NAME).strip()
+        bot_properties["version"] = VERSION
+        word_sets = self.pattern_matcher.word_sets()
+        for path in settings.get("set_files", []):
+            for name, members in read_set_file(path).items():
+                word_sets[name] = members
+        self.pattern_matcher.replace_bot_properties(bot_properties)
+        self.pattern_matcher.replace_sets(word_sets)
+        for path in settings.get("map_files", []):
+            for name, table in read_map_file(path).items():
+                self.maps[name] = table
+        predicate_file = settings.get("predicate_file", "")
+        if predicate_file:
+            self.default_predicates.update(read_string_map(predicate_file, "predicate"))
+        substitution_file = settings.get("substitution_file", "")
+        if substitution_file:
+            for key, table in read_substitution_file(substitution_file).items():
+                # Only SUBSTITUTION_KEYS tables reach here, and the built-in maps hold each of them.
+                merged_table = dict(self.substitution_maps.get(key, {}))
+                merged_table.update(table)
+                self.substitution_maps[key] = merged_table
 
     @property
     def graph_client(self):
         """Return the graph client created during Engram initialization."""
         result = self.internal_graph_client
+        return result
+
+    def graph_operation(self, name: str):
+        """Return the present graph client's ``name`` operation.
+
+        Every graph client implements the full ``MemGraphConnection`` contract, so a client
+        that lacks an operation is a defect and raises ``TypeError`` instead of reading as
+        an empty graph.
+        """
+        operation = getattr(self.graph_client, name, ())
+        if not callable(operation):
+            raise TypeError(f"graph client does not implement {name}")
+        return operation
+
+    def graph_client_available(self) -> bool:
+        """Return whether a graph client is present and reports its connection available."""
+        client = self.graph_client
+        if not client:
+            result = False
+            return result
+        available = getattr(client, "available", ())
+        if not isinstance(available, bool):
+            raise TypeError("graph client does not report a boolean available")
+        result = available
         return result
 
     def preflight_components(self) -> dict:
@@ -557,25 +620,24 @@ class Engram:
         spacy_full_enabled = any(
             self.config.get(name, False) for name in ("use_spacy_facts", "use_spacy_lemmatization", "use_phrase_keywords")
         )
-        missing_nltk = ensure_nltk_data(download=False)
-
-        if missing_nltk:
-            missing_names = ", ".join(download_name for _, download_name in missing_nltk)
-            raise RuntimeError(f"required NLTK resources are unavailable: {missing_names}")
-        initialize_nltk_readers()
+        # Availability is re-checked for every construction; the shared readers load once per
+        # process, before any concurrent request can race their lazy first load.
+        NLTK_RESOURCES.verify()
+        NLTK_RESOURCES.require()
         if vector_enabled and not graph_enabled:
             raise RuntimeError("vector recall requires graph access to be enabled")
-        graph_ready = bool(graph_enabled and self.internal_graph_client and getattr(self.internal_graph_client, "available", True))
-        spacy_phrasing_enabled = graph_ready
+        graph_ready = graph_enabled and self.graph_client_available()
         vector_ready = False
         if vector_enabled and graph_ready and self.graph_embedding_model:
             try:
                 vector_ready = self.warm_vector_recall()
-            except Exception as error:
-                logger.warning("Optional graph vector recall is unavailable", exc_info=error)
-        if spacy_full_enabled and not SPACY_PIPELINES.pipeline():
-            raise RuntimeError("enabled spaCy features require the pre-provisioned English model")
-        spacy_ready = bool(SPACY_PIPELINES.pipeline()) if spacy_full_enabled or spacy_phrasing_enabled else False
+            except (RuntimeError, ValueError) as err:
+                logger.warning("Optional graph vector recall is unavailable (%s)", failure_origin(err))
+        # Every spaCy consumer requires the pre-provisioned model; loading it here makes a
+        # missing install fail Engram construction instead of the first request using it.
+        spacy_ready = spacy_full_enabled or graph_enabled
+        if spacy_ready:
+            SPACY_PIPELINES.pipeline()
 
         result = {
             "nltk": {"enabled": True, "ready": True},
@@ -599,9 +661,7 @@ class Engram:
         """Return current readiness without contacting optional dependencies."""
         result = {name: dict(value) for name, value in self.component_status.items()}
         graph = result.get("graph", {})
-        graph["ready"] = bool(
-            graph.get("enabled", False) and self.internal_graph_client and getattr(self.internal_graph_client, "available", True)
-        )
+        graph["ready"] = bool(graph.get("enabled", False)) and self.graph_client_available()
         vector = result.get("vector", {})
         vector_was_ready = vector.get("ready", False)
         vector["ready"] = bool(
@@ -638,19 +698,18 @@ class Engram:
         if is_write_cypher(cypher):
             raise ValueError("ENGRAM graph access is read-only")
 
-        client = self.graph_client
-        if not client:
+        if not self.graph_client:
             result = []
             return result
-        execute = getattr(client, "execute", ())
-        if not callable(execute):
-            return []
+        execute = self.graph_operation("execute")
+        # A failed read raises RuntimeError; parameters the connection refuses (such as a
+        # template rebinding a visibility binding) raise ValueError. Both withhold recall.
         try:
             records = execute(cypher, params)
             if not isinstance(records, list):
                 raise RuntimeError("graph read capability returned an invalid collection")
             return records
-        except RuntimeError as err:
+        except (RuntimeError, ValueError) as err:
             if raise_on_failure:
                 raise
             result = failed_graph_read("graph_query", err, [])
@@ -707,27 +766,25 @@ class Engram:
         unavailable.
         """
         graph_config = self.config.get("graph", {})
-        client = self.graph_client
-        if not client or not graph_config.get("enabled", False) or not graph_config.get("vector_enabled", False):
+        if not self.graph_client or not graph_config.get("enabled", False) or not graph_config.get("vector_enabled", False):
             result = []
             return result
-        search = getattr(client, "vector_search_propositions", ())
-        if not callable(search):
-            result = []
-            return result
+        search = self.graph_operation("vector_search_propositions")
+        row_limit = max(1, min(MAX_GRAPH_VECTOR_LIMIT, limit)) if limit else graph_config.get("vector_limit", 0)
         try:
             embedding = self.encode_graph_query(text)
             rows = search(
                 embedding,
                 index_name=graph_config.get("vector_index_name", ""),
-                limit=(max(1, min(1000, int(limit))) if limit else int(graph_config.get("vector_limit", 0))),
+                limit=row_limit,
                 min_similarity=float(graph_config.get("vector_min_similarity", 0.0)),
-                evaluation_time=evaluation_time,
+                evaluation_time=evaluation_time or format_utc_timestamp(self.clock()),
             )
-            result = rows if isinstance(rows, list) else []
-            return result
-        except Exception as err:
-            logger.warning("Vector graph recall unavailable; using keyword fallback", exc_info=err)
+            if not isinstance(rows, list):
+                raise RuntimeError("vector Proposition search returned an invalid collection")
+            return rows
+        except (RuntimeError, ValueError) as err:
+            logger.warning("Vector graph recall unavailable; using keyword fallback (%s)", failure_origin(err))
             result = []
             return result
 
@@ -746,20 +803,16 @@ class Engram:
         (``engram.evidence.assertion_basis_window``).
         """
         graph_config = self.config.get("graph", {})
-        client = self.graph_client
-        if not client or not graph_config.get("enabled", False) or not graph_config.get("vector_enabled", False):
+        if not self.graph_client or not graph_config.get("enabled", False) or not graph_config.get("vector_enabled", False):
             result = []
             return result
-        search = getattr(client, "vector_search_proposition_projections", ())
-        if not callable(search):
-            result = []
-            return result
+        search = self.graph_operation("vector_search_proposition_projections")
+        row_limit = max(1, min(MAX_GRAPH_VECTOR_LIMIT, limit)) if limit else graph_config.get("vector_limit", 0)
         try:
             run_cooperative_check(cooperative_check)
             embedding = self.encode_graph_query(text)
             require_working_memory(estimate_working_bytes(embedding), max_working_memory_bytes)
             run_cooperative_check(cooperative_check)
-            row_limit = max(1, min(1000, int(limit))) if limit else int(graph_config.get("vector_limit", 0))
             rows = search(
                 embedding,
                 index_name=graph_config.get("vector_index_name", ""),
@@ -777,12 +830,10 @@ class Engram:
             )
             run_cooperative_check(cooperative_check)
             return validated_rows
-        except (TimeoutError, MemoryError, ResolutionCancelledError, CancelledError):
-            # Deadlines, the request's memory budget and caller cancellation belong
-            # to the caller; only an ordinary capability failure omits the evidence.
-            raise
-        except Exception as err:
-            logger.warning("Vector Proposition projection unavailable; omitting response-less evidence", exc_info=err)
+        except (RuntimeError, ValueError) as err:
+            # Only an ordinary model or graph failure omits the evidence; deadlines, the
+            # request's memory budget, cancellation and programming errors propagate.
+            logger.warning("Vector Proposition projection unavailable; omitting response-less evidence (%s)", failure_origin(err))
             result = []
             return result
 
@@ -795,15 +846,14 @@ class Engram:
 
         ``basis_window`` selects the same request-eligible Assertion basis as discovery.
         """
-        client = self.graph_client
-        lookup = getattr(client, "proposition_projection_by_id", ())
-        if not client or not callable(lookup):
+        if not self.graph_client:
             result = ()
             return result
+        lookup = self.graph_operation("proposition_projection_by_id")
         try:
             rows = lookup(proposition_id, basis_window)
-        except RuntimeError as error:
-            result = failed_graph_read("current_proposition_projection", error, ())
+        except RuntimeError as err:
+            result = failed_graph_read("current_proposition_projection", err, ())
             return result
         if not isinstance(rows, list) or len(rows) > 1:
             raise ValueError("Proposition projection revalidation boundary returned an invalid collection")
@@ -816,21 +866,18 @@ class Engram:
         if not graph_config.get("vector_enabled", False):
             result = False
             return result
-        client = self.graph_client
-        search = getattr(client, "vector_search_propositions", ())
-        if not client or not callable(search):
-            raise RuntimeError("configured graph client lacks vector Proposition search")
+        if not self.graph_client:
+            raise RuntimeError("vector recall requires a graph client")
+        search = self.graph_operation("vector_search_propositions")
         embedding = self.encode_graph_query("Engram vector recall readiness")
         search(
             embedding,
             index_name=graph_config.get("vector_index_name", ""),
             limit=1,
             min_similarity=0.0,
+            evaluation_time=format_utc_timestamp(self.clock()),
         )
-        if getattr(client, "available", True) is False:
-            result = False
-            return result
-        result = True
+        result = self.graph_client_available()
         return result
 
     def sparse_candidates(
@@ -959,12 +1006,18 @@ class Engram:
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> list[dict]:
+        """Rank scoped cached responses by their best supporting Proposition similarity.
+
+        Raises ``VectorSupportScanExceededError`` when the matching support references exceed
+        ``graph.vector_support_scan_limit`` and ``WorkingMemoryExceededError`` past the
+        request's working-memory budget, so a truncated scan never reads as a miss.
+        """
         if not support_scores:
             result = []
             return result
         graph_settings = self.config.get("graph", {})
         vector_weight = float(graph_settings.get("vector_weight", 0.0))
-        scan_limit = int(graph_settings.get("vector_support_scan_limit", 100_000))
+        scan_limit = int(graph_settings.get("vector_support_scan_limit", DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT))
         if limit < 1:
             result = []
             return result
@@ -984,12 +1037,9 @@ class Engram:
                     continue
                 edge_count += 1
                 if edge_count > scan_limit:
-                    logger.warning(
-                        "vector_support_scan_incomplete: relevant response support fan-out %s exceeds configured limit %s",
-                        edge_count,
-                        scan_limit,
+                    raise VectorSupportScanExceededError(
+                        f"relevant response support fan-out exceeds the configured limit of {scan_limit}"
                     )
-                    return []
                 similarities.append(support_scores.get(reference_id, 0.0))
             if not similarities:
                 continue
@@ -1042,7 +1092,7 @@ class Engram:
             result = ""
             return result
         started_ns = time_monotonic_ns()
-        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        selected_evaluation_time = evaluation_time or format_utc_timestamp(self.clock())
         projection_timestamp(selected_evaluation_time, True, "graph lookup evaluation time")
         result = ""
         failed = False
@@ -1087,7 +1137,7 @@ class Engram:
             result = failed_graph_read("graph_lookup", err, "")
             return result
         finally:
-            available = bool(getattr(client, "available", True))
+            available = self.graph_client_available()
             outcome = "failure" if failed or not available else "hit" if result else "miss"
             with self.count_lock:
                 record_graph_recall(self.operational_metrics, outcome, time_monotonic_ns() - started_ns)
@@ -1177,9 +1227,10 @@ class Engram:
 
         stmt = statement(
             text=text,
+            statement_id=statement_id or f"stmt_{self.identifier_source()}",
+            created_at=self.clock(),
             tier=tier,
             keywords=keywords,
-            statement_id=statement_id,
             pattern=pattern or "",
             pattern_aliases=aliases,
             that=that or "",
@@ -1196,7 +1247,13 @@ class Engram:
 
             if replace_learned and pattern and tier == Tier.DYNAMIC:
                 for replaced_id in self.replaceable_statement_ids(pattern, that or "", topic or ""):
-                    eviction_mod.evict_statement_at(self, self.statement_position(replaced_id))
+                    self.evict_statement(replaced_id)
+
+            # Capacity is made before anything is registered, so a refusal leaves no partial statement.
+            if tier == Tier.DYNAMIC:
+                while len(self.dynamic_statement_ids) >= self.config.get("capacity", DEFAULT_CAPACITY):
+                    if not self.evict_least_recent_dynamic():
+                        raise ResourceExhaustedError("DYNAMIC statement capacity is full and no statement can be evicted")
 
             # Register the pattern under the same lock that guards matching,
             # so a concurrent pattern_query never sees a half-updated matcher.
@@ -1204,11 +1261,6 @@ class Engram:
                 for registered_pattern in [pattern, *aliases]:
                     self.pattern_matcher.add_pattern(registered_pattern, text, that=that or "", topic=topic or "")
                     self.pattern_to_statement[registered_pattern] = stmt_id
-
-            if tier == Tier.DYNAMIC:
-                while len(self.dynamic_statement_ids) >= self.config.get("capacity", 0):
-                    if not eviction_mod.evict_dynamic(self):
-                        break
 
             sequence = self.next_statement_sequence
             self.next_statement_sequence += 1
@@ -1218,7 +1270,7 @@ class Engram:
             self.statement_sequence[stmt_id] = sequence
             if tier == Tier.DYNAMIC:
                 self.dynamic_statement_ids.add(stmt_id)
-                heapq_heappush(self.dynamic_lru, eviction_mod.lru_entry(stmt, sequence))
+                heapq_heappush(self.dynamic_lru, lru_entry(stmt, sequence))
             if pattern:
                 for registered_pattern in [pattern, *aliases]:
                     self.pattern_statements.setdefault(registered_pattern, []).append(stmt_id)
@@ -1252,11 +1304,13 @@ class Engram:
         text: str,
         limit: int = 5,
         statement_filter=(),
-        reference_time=(),
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
     ) -> dict:
-        """Discover lexical candidates without accounting or session mutation."""
+        """Discover lexical candidates without accounting or session mutation.
+
+        Recency is scored against one read of the Engram clock for the whole call.
+        """
         if limit < 1:
             raise ValueError("limit must be at least 1")
         if statement_filter and not callable(statement_filter):
@@ -1268,6 +1322,7 @@ class Engram:
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
 
+        reference_time = self.clock()
         run_cooperative_check(cooperative_check)
         normalized = normalize(text)
         uncorrected = normalized
@@ -1469,25 +1524,24 @@ class Engram:
         self,
         text: str,
         *,
-        row_limit: int = 10,
+        row_limit: int,
         cooperative_check=(),
         max_working_memory_bytes: int = 0,
         basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
         """Run only fixed structured Proposition projections and reject conflicting rows."""
-        if not isinstance(row_limit, int) or isinstance(row_limit, bool) or not 0 <= row_limit <= 1_000:
-            raise ValueError("row_limit must be an integer from 0 through 1000")
+        if not isinstance(row_limit, int) or isinstance(row_limit, bool) or not 0 <= row_limit <= MAX_PROPOSITION_PROJECTION_ROWS:
+            raise ValueError(f"row_limit must be an integer from 0 through {MAX_PROPOSITION_PROJECTION_ROWS}")
         if (
             isinstance(max_working_memory_bytes, bool)
             or not isinstance(max_working_memory_bytes, int)
             or max_working_memory_bytes < 0
         ):
             raise ValueError("max_working_memory_bytes must be a nonnegative integer")
-        client = self.graph_client
-        search = getattr(client, "structured_proposition_projections", ())
-        if not row_limit or not client or not callable(search):
+        if not row_limit or not self.graph_client:
             result = []
             return result
+        search = self.graph_operation("structured_proposition_projections")
         run_cooperative_check(cooperative_check)
         requests: list[tuple[PropositionProjectionQuery, str]] = []
         entities = extract_entities(text)
@@ -1510,8 +1564,8 @@ class Engram:
                 break
             try:
                 rows = search(value, projection_id=projection_id, limit=remaining, basis_window=basis_window)
-            except RuntimeError as error:
-                result = failed_graph_read("structured_proposition_projections", error, [])
+            except RuntimeError as err:
+                result = failed_graph_read("structured_proposition_projections", err, [])
                 return result
             if not isinstance(rows, list) or len(rows) > remaining:
                 raise ValueError("structured Proposition projection boundary returned an invalid collection")
@@ -1537,15 +1591,15 @@ class Engram:
         cooperative_check=(),
     ) -> list[dict]:
         """Resolve an entity surface through the fixed graph capability."""
-        client = self.graph_client
-        search = getattr(client, "canonical_entity_matches", ())
-        if not client or not callable(search):
-            return []
+        if not self.graph_client:
+            result = []
+            return result
+        search = self.graph_operation("canonical_entity_matches")
         run_cooperative_check(cooperative_check)
         try:
             rows = search(surface, limit=limit)
-        except RuntimeError as error:
-            result = failed_graph_read("canonical_entity_matches", error, [])
+        except RuntimeError as err:
+            result = failed_graph_read("canonical_entity_matches", err, [])
             return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical entity boundary returned an invalid collection")
@@ -1561,15 +1615,15 @@ class Engram:
         cooperative_check=(),
     ) -> list[dict]:
         """Resolve a Predicate surface through the fixed graph capability."""
-        client = self.graph_client
-        search = getattr(client, "canonical_predicate_matches", ())
-        if not client or not callable(search):
-            return []
+        if not self.graph_client:
+            result = []
+            return result
+        search = self.graph_operation("canonical_predicate_matches")
         run_cooperative_check(cooperative_check)
         try:
             rows = search(surface, limit=limit)
-        except RuntimeError as error:
-            result = failed_graph_read("canonical_predicate_matches", error, [])
+        except RuntimeError as err:
+            result = failed_graph_read("canonical_predicate_matches", err, [])
             return result
         if not isinstance(rows, list) or len(rows) > limit:
             raise ValueError("canonical Predicate boundary returned an invalid collection")
@@ -1593,10 +1647,10 @@ class Engram:
             raise ValueError(f"relation row_limit must be an integer from 0 through {MAX_RELATION_PLAN_ROWS}")
         if not isinstance(include_historical, bool):
             raise ValueError("relation include_historical must be a boolean")
-        client = self.graph_client
-        search = getattr(client, "relation_one_hop_proposition_projections", ())
-        if not row_limit or not client or not callable(search):
-            return []
+        if not row_limit or not self.graph_client:
+            result = []
+            return result
+        search = self.graph_operation("relation_one_hop_proposition_projections")
         run_cooperative_check(cooperative_check)
         try:
             rows = search(
@@ -1606,8 +1660,8 @@ class Engram:
                 include_historical=include_historical,
                 basis_window=basis_window,
             )
-        except RuntimeError as error:
-            result = failed_graph_read("relation_one_hop_proposition_projections", error, [])
+        except RuntimeError as err:
+            result = failed_graph_read("relation_one_hop_proposition_projections", err, [])
             return result
         if not isinstance(rows, list) or len(rows) > row_limit:
             raise ValueError("relation one-hop boundary returned an invalid collection")
@@ -1682,10 +1736,10 @@ class Engram:
                 get_all_input_subs(self.substitution_maps),
             )
         if context_id:
-            session = sessions_mod.get_session(self, context_id, create_if_missing=True)
-            if session:
-                with self.session_lock:
-                    session_touch(session)
+            with self.session_lock:
+                session = sessions_mod.get_session(self, context_id, create_if_missing=True)
+                if session:
+                    session_touch(session, self.clock())
                     expanded_text = expand_query(
                         expanded_text,
                         session.get("previous_response", ""),
@@ -1699,12 +1753,14 @@ class Engram:
                 if keyword in self.keywords:
                     keyword_entry = self.keywords.get(keyword, {})
                     keyword_entry["query_count"] = keyword_entry.get("query_count", 0) + 1
-        if record_candidates:
-            with self.statement_lock:
+        with self.statement_lock:
+            if record_candidates:
                 for statement_value, _ in matches:
                     record_statement_query(statement_value)
+            # Callers receive isolated statements; the store's own records stay owned here.
+            isolated_matches = [(deepcopy(statement_value), score) for statement_value, score in matches]
         result = {
-            "matches": matches,
+            "matches": isolated_matches,
             "keywords": keywords,
             "resolved_query": discovery.get("resolved_query", ""),
         }
@@ -1817,7 +1873,9 @@ class Engram:
             result = ()
             return result
 
-        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        # One clock read per turn stamps hits and session activity and supplies the default evaluation time.
+        turn_moment = self.clock()
+        selected_evaluation_time = evaluation_time or format_utc_timestamp(turn_moment)
         projection_timestamp(selected_evaluation_time, True, "pattern query evaluation time")
 
         session = {}
@@ -1825,9 +1883,9 @@ class Engram:
         topic = ""
         active_topic = ""
         if context_id:
-            session = sessions_mod.get_session(self, context_id, create_if_missing=True)
-            if session:
-                with self.session_lock:
+            with self.session_lock:
+                session = sessions_mod.get_session(self, context_id, create_if_missing=True)
+                if session:
                     that = session.get("previous_response", "")
                     topic = session.get("predicates", {}).get("topic", "")
                     active_topic = session.get("active_topic", "")
@@ -1941,9 +1999,9 @@ class Engram:
                         # Pattern selection is a query and a hit in one step
                         # (there is no later confirmation on this path), so
                         # record both -- this is what keeps frequently used
-                        # patterns alive under LRU / LFU / HIT_RATE eviction.
+                        # patterns alive under least-recently-used eviction.
                         record_statement_query(selected)
-                        record_statement_hit(selected)
+                        record_statement_hit(selected, turn_moment)
 
                         final_response = self.process_statement_template(
                             selected,
@@ -1985,7 +2043,7 @@ class Engram:
                 if session:
                     with self.session_lock:
                         session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
-                        session_update_context(session, graph_response, text)
+                        session_update_context(session, graph_response, text, moment=turn_moment)
                 graph_result_tuple = ({}, [], graph_response)
                 return graph_result_tuple
 
@@ -1994,13 +2052,13 @@ class Engram:
                 if session:
                     with self.session_lock:
                         session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
-                        session_update_context(session, fallback_response, text)
+                        session_update_context(session, fallback_response, text, moment=turn_moment)
                 fallback_tuple = ({}, [], fallback_response)
                 return fallback_tuple
             if session:
                 with self.session_lock:
                     session_update_dialogue(session, selected_act, active_topic, turn_entities, turn_fact_admissions)
-                    session_record_input(session, text)
+                    session_record_input(session, text, turn_moment)
             result = ()
             return result
 
@@ -2026,9 +2084,11 @@ class Engram:
                     turn_entities,
                     turn_fact_admissions,
                 )
-                session_update_context(session, combined_response, text)
+                session_update_context(session, combined_response, text, moment=turn_moment)
 
-        match_tuple = (returned_stmt, returned_captured, combined_response)
+        with self.statement_lock:
+            returned_copy = deepcopy(returned_stmt)
+        match_tuple = (returned_copy, returned_captured, combined_response)
         return match_tuple
 
     def process_statement_template(
@@ -2063,7 +2123,7 @@ class Engram:
             topicstars=topicstars or (),
             input_text=input_text,
             request_text=input_text,
-            bot=self.bot_properties,
+            bot=self.pattern_matcher.bot_properties(),
             maps=self.maps,
             person_subs=self.substitution_maps.get("person", {}),
             person2_subs=self.substitution_maps.get("person2", {}),
@@ -2153,6 +2213,8 @@ class Engram:
                     structured_template = {"sequence": template}
                 elif isinstance(template, str):
                     text = template
+                else:
+                    raise ValueError("a learned template must be an object, a sequence, or text")
                 # An explicit teaching replaces what was learned before on this path.
                 self.store(
                     text=text,
@@ -2201,7 +2263,7 @@ class Engram:
         if statement_id:
             with self.statement_lock:
                 if statement_id in self.statement_by_id:
-                    record_statement_hit(self.statement_by_id.get(statement_id, {}))
+                    record_statement_hit(self.statement_by_id.get(statement_id, {}), self.clock())
 
     def learn_fact(
         self,
@@ -2356,20 +2418,19 @@ class Engram:
             statement_id: Statement ID.
 
         Returns:
-            Statement dict if found, {} otherwise.
+            An isolated copy of the statement dict if found, {} otherwise.
         """
         with self.statement_lock:
-            result = self.statement_by_id.get(statement_id, {})
+            result = deepcopy(self.statement_by_id.get(statement_id, {}))
         return result
 
     def retire_statement(self, statement_id: str) -> bool:
         """Remove a statement from the store by id.
 
         Unlike capacity eviction, this is a deliberate removal of a specific
-        conversational statement.
-        evict_statement_at cleans the keyword index, the pattern matcher, and the
-        pattern map alongside the statement itself. Returns False when no
-        statement carries the id.
+        conversational statement. ``evict_statement`` cleans the keyword index,
+        the pattern matcher, and the pattern map alongside the statement itself.
+        Returns False when no statement carries the id.
 
         Args:
             statement_id: The id of the statement to remove.
@@ -2381,8 +2442,106 @@ class Engram:
             if statement_id not in self.statement_by_id:
                 result = False
                 return result
-            result = eviction_mod.evict_statement_at(self, self.statement_position(statement_id))
+            self.evict_statement(statement_id)
+            result = True
             return result
+
+    def require_store_locks(self) -> None:
+        """Refuse a statement-store change unless the caller holds mutation_lock and statement_lock."""
+        if not (self.mutation_lock.held_by_current_thread() and self.statement_lock.held_by_current_thread()):
+            raise RuntimeError("statement store changes require mutation_lock and statement_lock")
+
+    def evict_statement(self, statement_id: str) -> None:
+        """Remove one stored statement and every index entry that refers to it.
+
+        The caller holds ``mutation_lock`` and ``statement_lock`` and passes the id of a
+        stored statement. Positions come from the store-order sequence, so nothing is
+        renumbered; the statement's LRU heap entry is dropped when it reaches the top.
+        """
+        self.require_store_locks()
+        position = self.statement_position(statement_id)
+        stmt = self.statements[position]
+        self.detach_statement(stmt)
+        self.statements.pop(position)
+        self.statement_sequences.pop(position)
+        del self.statement_by_id[statement_id]
+        del self.statement_sequence[statement_id]
+        self.dynamic_statement_ids.discard(statement_id)
+        self.eviction_count += 1
+
+    def detach_statement(self, stmt: dict) -> None:
+        """Remove a statement's keywords and pattern registrations, leaving the statement list alone.
+
+        The caller holds ``mutation_lock`` and ``statement_lock``. store() registered one
+        matcher entry per pattern, so exactly one goes. A surviving statement carrying the
+        same pattern keeps its own entry and becomes the map target; keeping this entry for
+        a survivor instead would leave a dead entry behind once the last carrier is evicted.
+        """
+        self.require_store_locks()
+        stmt_id = stmt.get("id", "")
+        with self.keyword_lock:
+            for keyword in stmt.get("keywords", []):
+                if keyword in self.keywords:
+                    statement_ids = self.keywords.get(keyword, {}).get("statement_ids", set())
+                    statement_ids.discard(stmt_id)
+                    if not statement_ids:
+                        del self.keywords[keyword]
+        registered_patterns = [pattern for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])] if pattern]
+        for pattern in registered_patterns:
+            survivors = [
+                carrier
+                for carrier in (
+                    self.statement_by_id.get(statement_id, {})
+                    for statement_id in self.pattern_statements.get(pattern, ())
+                    if statement_id != stmt_id and statement_id in self.statement_by_id
+                )
+                if carrier.get("that", "") == stmt.get("that", "") and carrier.get("topic", "") == stmt.get("topic", "")
+            ]
+            self.pattern_matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
+            if self.pattern_to_statement.get(pattern, "") == stmt_id:
+                del self.pattern_to_statement[pattern]
+                if survivors:
+                    self.pattern_to_statement[pattern] = survivors[0].get("id", "")
+        for pattern in registered_patterns:
+            carriers = self.pattern_statements.get(pattern, [])
+            if stmt_id in carriers:
+                carriers.remove(stmt_id)
+                if not carriers:
+                    del self.pattern_statements[pattern]
+
+    def evict_least_recent_dynamic(self) -> bool:
+        """Evict the least-recently-used DYNAMIC statement; return False when there is none.
+
+        The caller holds ``mutation_lock`` and ``statement_lock``. The heap holds one entry
+        per DYNAMIC statement, recorded when it was stored or last checked. Hits only move a
+        statement's key later, so an entry whose key is still current at the top of the heap
+        is the true minimum; a stale entry is refreshed and pushed back, and an entry for a
+        removed statement is dropped.
+        """
+        self.require_store_locks()
+        heap = self.dynamic_lru
+        while heap:
+            entry = heap[0]
+            statement_id = entry[3]
+            sequence = entry[2]
+            live = (
+                statement_id in self.dynamic_statement_ids
+                and statement_id in self.statement_sequence
+                and self.statement_sequence.get(statement_id, 0) == sequence
+            )
+            if not live:
+                heapq_heappop(heap)
+                continue
+            current = lru_entry(self.statement_by_id.get(statement_id, {}), sequence)
+            if current != entry:
+                heapq_heapreplace(heap, current)
+                continue
+            heapq_heappop(heap)
+            self.evict_statement(statement_id)
+            result = True
+            return result
+        result = False
+        return result
 
     # =========================================================================
     # Initialization Patterns

@@ -107,8 +107,8 @@ def validate_base_response_artifact(artifact: dict) -> dict:
     """Validate the stricter invariants for a new accepted response."""
     try:
         validated_artifact = validate_cached_response_artifact(artifact)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("commit artifact must be a CachedResponseArtifact") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("commit artifact must be a CachedResponseArtifact") from err
     if validated_artifact.get("lifecycle", LifecycleState.RETIRED) != LifecycleState.ACTIVE:
         raise InvalidRequestError("base commit requires an ACTIVE artifact")
     if validated_artifact.get("generation", 0) != 1:
@@ -324,8 +324,8 @@ class AcceptedResponseService:
                 raise InvalidRequestError("learn response metadata support must be an array of objects")
             try:
                 support_references = tuple(validate_support_reference(record) for record in support_records)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
+            except ValueError as err:
+                raise InvalidRequestError(str(err)) from err
             raw_artifact = {
                 "statement_id": f"response_{uuid5(NAMESPACE_URL, f'engram:LearnResponse:{request_id}').hex}",
                 "generation": 1,

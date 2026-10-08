@@ -13,11 +13,11 @@ def conversation_seed_pairs_from_text(text: str) -> list[dict]:
         raise ValueError("conversation seed must be JSON text")
     try:
         data = json_loads(text)
-    except json_JSONDecodeError as error:
-        raise ValueError(f"conversation seed is invalid JSON: {error.msg}") from error
+    except json_JSONDecodeError as err:
+        raise ValueError(f"conversation seed is invalid JSON: {err.msg}") from err
     if not isinstance(data, dict) or set(data) != {"pairs"}:
         raise ValueError("conversation seed must be an object containing only pairs")
-    raw_pairs = data.get("pairs")
+    raw_pairs = data.get("pairs", [])
     if not isinstance(raw_pairs, list):
         raise ValueError("conversation seed pairs must be a list")
     if not all(isinstance(pair, dict) for pair in raw_pairs):
@@ -38,12 +38,13 @@ def load_conversation_pairs(path: str = "") -> list[dict]:
     if not isinstance(path, str):
         raise ValueError("conversation seed path must be a string")
     if not path:
-        return load_bundled_conversation_pairs()
+        bundled = load_bundled_conversation_pairs()
+        return bundled
     selected = Path(path)
     try:
         text = selected.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        raise ValueError(f"could not read conversation seed: {selected}") from error
+    except (OSError, UnicodeError) as err:
+        raise ValueError(f"could not read conversation seed: {selected}") from err
     result = conversation_seed_pairs_from_text(text)
     return result
 
@@ -52,8 +53,6 @@ def require_conversation_catch_all(pairs: list[dict]) -> None:
     """Require the deterministic wildcard needed for non-empty MCP replies."""
     if not isinstance(pairs, list):
         raise ValueError("conversation seed pairs must be a list")
-    for pair in pairs:
-        pattern = pair.get("pattern", "") if isinstance(pair, dict) else ""
-        if isinstance(pattern, str) and pattern.strip() == "*":
-            return
-    raise ValueError("conversational MCP static data requires a '*' catch-all pattern")
+    patterns = [pair.get("pattern", "") if isinstance(pair, dict) else "" for pair in pairs]
+    if not any(isinstance(pattern, str) and pattern.strip() == "*" for pattern in patterns):
+        raise ValueError("conversational MCP static data requires a '*' catch-all pattern")

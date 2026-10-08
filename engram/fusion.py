@@ -8,6 +8,7 @@ from math import isfinite as math_isfinite
 from engram.artifacts import LifecycleState
 from engram.constants import (
     CANDIDATE_ELIGIBILITY_FIELDS,
+    COMPOSITION_CANDIDATE_PROVENANCE_FIELDS,
     DEFAULT_FUSION_WEIGHTS,
     EARLIEST_UTC,
     FUSION_AMBIGUITY_MARGIN,
@@ -19,12 +20,18 @@ from engram.constants import (
     FUSION_REQUIRE_SUPPORT_FOR_NON_EXACT,
     FUSION_SOURCE_FAMILY,
     FUSION_SOURCE_ORDER,
+    GRAPH_COMPOSITION_PRODUCER,
+    MAX_COMPOSITION_HOPS,
     MAX_FUSION_CONTRIBUTIONS,
     MAX_FUSION_INDEPENDENT_SOURCES,
     MAX_FUSION_REPORT_BYTES,
     MAX_FUSION_REPORT_CANDIDATES,
     MAX_FUSION_REPORT_CONTRIBUTIONS,
     MIN_FUSION_INDEPENDENT_SOURCES,
+    RELATION_CANDIDATE_PROVENANCE_FIELDS,
+    RELATION_ONE_HOP_PRODUCER,
+    RERANKER_BASE_SCORE_FEATURE,
+    RERANKER_FEATURES,
     UTILITY_RESOLVER_PRODUCER,
     FusionFeature,
     FusionPolicyReason,
@@ -33,12 +40,12 @@ from engram.constants import (
     RelationSelectionReason,
 )
 from engram.eligibility import evaluate_artifact_eligibility
-from engram.errors import InvalidRequestError, ResolutionCancelledError
+from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import PropositionEligibilityEvaluator, assertion_basis_window
-from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint
+from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint, internal_fingerprint
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.relation import phrase_relation_result
-from engram.reranking import RERANKER_FEATURES, TransparentLogisticReranker
+from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
@@ -55,7 +62,7 @@ from engram.resolution import (
     validate_evidence_reference,
     validate_query_frame,
 )
-from engram.utilities import evaluate_named_utility
+from engram.utilities import evaluate_named_utility, utility_statement_id
 from engram.validation import require_bool
 
 logger = logging_getLogger(__name__)
@@ -349,10 +356,8 @@ class EngramCandidateAuthority:
         self.internal_engram = engram
         if feedback_store != () and not isinstance(feedback_store, FeedbackStore):
             raise InvalidRequestError("candidate feedback_store must be FeedbackStore")
-        if feedback_store != () and (
-            len(policy_fingerprint_value) != 64 or any(c not in "0123456789abcdef" for c in policy_fingerprint_value)
-        ):
-            raise InvalidRequestError("candidate feedback policy fingerprint must be lowercase SHA-256")
+        if feedback_store != ():
+            internal_fingerprint(policy_fingerprint_value, "candidate feedback policy fingerprint")
         self.internal_feedback_store = feedback_store
         self.internal_policy_fingerprint = policy_fingerprint_value
 
@@ -360,23 +365,62 @@ class EngramCandidateAuthority:
         result = self.evaluate(candidate, frame)
         return result
 
+    def current_relation_phrase(self, candidate: dict, provenance: dict, frame: dict) -> dict:
+        """Re-read a one-hop candidate's Proposition by ID and rebuild its phrase.
+
+        Returns the current projection, the phrase and the object type, or ``{}`` when the
+        Proposition is unavailable or malformed, no longer carries the recorded identity or
+        trust, or the recorded provenance is not a direct-answer selection. Only validation
+        failures (``ValueError``) count as unavailable; programming errors propagate.
+        """
+        try:
+            current_values = self.internal_engram.current_proposition_projection(
+                candidate.get("statement_id", ""), assertion_basis_window(frame)
+            )
+            if not isinstance(current_values, tuple) or len(current_values) != 1:
+                result = {}
+                return result
+            current = validate_proposition_projection(current_values[0])
+            response = phrase_relation_result(
+                provenance.get("subject_label", ""),
+                provenance.get("predicate_label", ""),
+                provenance.get("object_label", ""),
+            )
+            object_type = ExpectedObjectType(str(provenance.get("object_type", "")))
+            PredicateCardinality(str(provenance.get("predicate_cardinality", "")))
+            selection_reason = RelationSelectionReason(str(provenance.get("selection_reason", "")))
+        except ValueError:
+            result = {}
+            return result
+        identity = (
+            current.get("subject_entity_id", ""),
+            current.get("predicate_id", ""),
+            current.get("object_entity_id", ""),
+        )
+        expected_identity = (
+            provenance.get("subject_entity_id", ""),
+            provenance.get("predicate_id", ""),
+            provenance.get("object_entity_id", ""),
+        )
+        unchanged = (
+            current.get("projection_id", "") == PropositionProjectionQuery.BY_ID
+            and identity == expected_identity
+            and current.get("supplied_trust_available", False)
+            and current.get("supplied_trust", 0.0) == provenance.get("supplied_trust", 0.0)
+            and selection_reason
+            in {
+                RelationSelectionReason.SELECTED_UNIQUE,
+                RelationSelectionReason.SELECTED_LATEST,
+                RelationSelectionReason.SELECTED_TRUST_RANKED,
+            }
+        )
+        result = {"current": current, "response": response, "object_type": object_type} if unchanged else {}
+        return result
+
     def relation_candidate(self, candidate: dict, frame: dict) -> dict:
         """Revalidate a deterministic one-hop phrase against current Proposition state."""
         provenance = candidate.get("provenance", {})
-        required = {
-            "producer",
-            "subject_entity_id",
-            "subject_label",
-            "predicate_id",
-            "predicate_label",
-            "object_entity_id",
-            "object_label",
-            "object_type",
-            "predicate_cardinality",
-            "selection_reason",
-            "supplied_trust",
-        }
-        if set(provenance) != required or provenance.get("producer", "") != "relation_one_hop":
+        if set(provenance) != RELATION_CANDIDATE_PROVENANCE_FIELDS or provenance.get("producer", "") != RELATION_ONE_HOP_PRODUCER:
             result = candidate_eligibility(
                 False,
                 False,
@@ -401,46 +445,8 @@ class EngramCandidateAuthority:
                 (FusionPolicyReason.SUPPORT_REFERENCE_STALE,),
             )
             return result
-        try:
-            current_values = self.internal_engram.current_proposition_projection(
-                candidate.get("statement_id", ""), assertion_basis_window(frame)
-            )
-            if not isinstance(current_values, tuple) or len(current_values) != 1:
-                raise InvalidRequestError("current relation Proposition is unavailable")
-            current = validate_proposition_projection(current_values[0])
-            if current.get("projection_id", "") != PropositionProjectionQuery.BY_ID:
-                raise InvalidRequestError("current relation Proposition was not read by ID")
-            identity = (
-                current.get("subject_entity_id", ""),
-                current.get("predicate_id", ""),
-                current.get("object_entity_id", ""),
-            )
-            expected_identity = (
-                provenance.get("subject_entity_id", ""),
-                provenance.get("predicate_id", ""),
-                provenance.get("object_entity_id", ""),
-            )
-            if identity != expected_identity:
-                raise InvalidRequestError("current relation Proposition identity changed")
-            if not current.get("supplied_trust_available", False) or current.get("supplied_trust", 0.0) != provenance.get(
-                "supplied_trust", 0.0
-            ):
-                raise InvalidRequestError("current relation Proposition trust changed")
-            response = phrase_relation_result(
-                provenance.get("subject_label", ""),
-                provenance.get("predicate_label", ""),
-                provenance.get("object_label", ""),
-            )
-            object_type = ExpectedObjectType(str(provenance.get("object_type", "")))
-            PredicateCardinality(str(provenance.get("predicate_cardinality", "")))
-            selection_reason = RelationSelectionReason(str(provenance.get("selection_reason", "")))
-            if selection_reason not in {
-                RelationSelectionReason.SELECTED_UNIQUE,
-                RelationSelectionReason.SELECTED_LATEST,
-                RelationSelectionReason.SELECTED_TRUST_RANKED,
-            }:
-                raise InvalidRequestError("relation candidate selection reason is not direct-answer eligible")
-        except (InvalidRequestError, TypeError, ValueError):
+        rebuilt = self.current_relation_phrase(candidate, provenance, frame)
+        if not rebuilt:
             result = candidate_eligibility(
                 False,
                 False,
@@ -448,6 +454,9 @@ class EngramCandidateAuthority:
                 (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,),
             )
             return result
+        current = rebuilt.get("current", {})
+        response = rebuilt.get("response", "")
+        object_type = rebuilt.get("object_type", ExpectedObjectType.UNKNOWN)
         if response != candidate.get("response", ""):
             result = candidate_eligibility(
                 False,
@@ -476,26 +485,95 @@ class EngramCandidateAuthority:
         result = candidate_eligibility(True, True, True)
         return result
 
+    def current_composition_phrase(self, provenance: dict, chains: tuple, frame: dict) -> dict:
+        """Revalidate every Proposition of a composition and rebuild its phrase.
+
+        ``chains`` holds the provenance's Proposition IDs, identity chain, trust chain,
+        predicate labels, terminal labels and terminal types, already checked as tuples of
+        matching lengths. Returns the phrase and terminal object type, or ``{}`` when a
+        Proposition is unavailable, changed or no longer eligible, or the recorded result is
+        incomplete. Only validation failures (``ValueError``) count as unavailable;
+        programming errors propagate.
+        """
+        proposition_ids, identity_chain, trust_chain, predicate_labels, terminal_labels, terminal_types = chains
+        try:
+            operator = GraphCompositionOperator(str(provenance.get("operator", "")))
+            object_type = ExpectedObjectType(str(terminal_types[0])) if terminal_types else ExpectedObjectType.UNKNOWN
+        except ValueError:
+            result = {}
+            return result
+        evaluator = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ()))
+        for proposition_id, identity_value, trust in zip(proposition_ids, identity_chain, trust_chain, strict=True):
+            identity = identity_value if isinstance(identity_value, tuple) else ()
+            chain_valid = (
+                isinstance(proposition_id, str)
+                and bool(proposition_id)
+                and len(identity) == 3
+                and not isinstance(trust, bool)
+                and isinstance(trust, (int, float))
+            )
+            if not chain_valid:
+                result = {}
+                return result
+            try:
+                current_values = self.internal_engram.current_proposition_projection(proposition_id, assertion_basis_window(frame))
+                current = (
+                    validate_proposition_projection(current_values[0])
+                    if isinstance(current_values, tuple) and len(current_values) == 1
+                    else {}
+                )
+            except ValueError:
+                current = {}
+            current_identity = (
+                current.get("subject_entity_id", ""),
+                current.get("predicate_id", ""),
+                current.get("object_entity_id", ""),
+            )
+            # The eligibility evaluation runs last, only for a Proposition that is otherwise unchanged.
+            if (
+                not current
+                or current.get("projection_id", "") != PropositionProjectionQuery.BY_ID
+                or current_identity != identity
+                or not current.get("supplied_trust_available", False)
+                or current.get("supplied_trust", 0.0) != trust
+                or not evaluator.evaluate(current, frame).get("eligible", False)
+            ):
+                result = {}
+                return result
+        root_label = str(provenance.get("root_label", ""))
+        chain = " → ".join(str(value) for value in predicate_labels)
+        if operator == GraphCompositionOperator.LOOKUP:
+            if len(terminal_labels) != 1:
+                result = {}
+                return result
+            response = f"{root_label} — {chain}: {terminal_labels[0]}."
+        elif operator in {
+            GraphCompositionOperator.EXISTS,
+            GraphCompositionOperator.AND,
+            GraphCompositionOperator.OR,
+            GraphCompositionOperator.NOT,
+        }:
+            truth_value = provenance.get("truth_value", False)
+            if not provenance.get("truth_available", False) or not isinstance(truth_value, bool):
+                result = {}
+                return result
+            response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth_value else 'false'}."
+        else:
+            aggregate = provenance.get("aggregate_value", "")
+            if not provenance.get("aggregate_value_available", False) or not isinstance(aggregate, str) or not aggregate:
+                result = {}
+                return result
+            response = f"{root_label} — {operator.value.lower()} {chain}: {aggregate}."
+        result = {"response": response, "object_type": object_type}
+        return result
+
     def composition_candidate(self, candidate: dict, frame: dict) -> dict:
         """Revalidate every Proposition and reconstruct one bounded composition phrase."""
         provenance = candidate.get("provenance", {})
-        required = {
-            "producer",
-            "operator",
-            "root_entity_id",
-            "root_label",
-            "predicate_labels",
-            "proposition_ids",
-            "identity_chain",
-            "trust_chain",
-            "terminal_labels",
-            "terminal_types",
-            "truth_value",
-            "truth_available",
-            "aggregate_value",
-            "aggregate_value_available",
-        }
-        if set(provenance) != required or provenance.get("producer", "") != "graph_composition":
+        if (
+            set(provenance) != COMPOSITION_CANDIDATE_PROVENANCE_FIELDS
+            or provenance.get("producer", "") != GRAPH_COMPOSITION_PRODUCER
+        ):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
@@ -517,9 +595,7 @@ class EngramCandidateAuthority:
         identity_chain = tuple_values[1]
         trust_chain = tuple_values[2]
         predicate_labels = tuple_values[3]
-        terminal_labels = tuple_values[4]
-        terminal_types = tuple_values[5]
-        if not 1 <= len(proposition_ids) <= 2 or not (
+        if not 1 <= len(proposition_ids) <= MAX_COMPOSITION_HOPS or not (
             len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(proposition_ids)
         ):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
@@ -530,59 +606,12 @@ class EngramCandidateAuthority:
         ):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.SUPPORT_REFERENCE_STALE,))
             return result
-        try:
-            operator = GraphCompositionOperator(str(provenance.get("operator", "")))
-            evaluator = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ()))
-            for index, proposition_id in enumerate(proposition_ids):
-                if not isinstance(proposition_id, str) or not proposition_id:
-                    raise InvalidRequestError("composition Proposition ID is malformed")
-                current_values = self.internal_engram.current_proposition_projection(proposition_id, assertion_basis_window(frame))
-                if not isinstance(current_values, tuple) or len(current_values) != 1:
-                    raise InvalidRequestError("composition Proposition is unavailable")
-                current = validate_proposition_projection(current_values[0])
-                if current.get("projection_id", "") != PropositionProjectionQuery.BY_ID:
-                    raise InvalidRequestError("composition Proposition was not read by ID")
-                identity_value = identity_chain[index]
-                trust = trust_chain[index]
-                identity = identity_value if isinstance(identity_value, tuple) else ()
-                if len(identity) != 3 or isinstance(trust, bool) or not isinstance(trust, (int, float)):
-                    raise InvalidRequestError("composition provenance chain is malformed")
-                current_identity = (
-                    current.get("subject_entity_id", ""),
-                    current.get("predicate_id", ""),
-                    current.get("object_entity_id", ""),
-                )
-                if current_identity != identity:
-                    raise InvalidRequestError("composition Proposition identity changed")
-                if not current.get("supplied_trust_available", False) or current.get("supplied_trust", 0.0) != trust:
-                    raise InvalidRequestError("composition Proposition trust changed")
-                if not evaluator.evaluate(current, frame).get("eligible", False):
-                    raise InvalidRequestError("composition Proposition is no longer eligible")
-            root_label = str(provenance.get("root_label", ""))
-            chain = " → ".join(str(value) for value in predicate_labels)
-            if operator == GraphCompositionOperator.LOOKUP:
-                if len(terminal_labels) != 1:
-                    raise InvalidRequestError("composition terminal is not unique")
-                response = f"{root_label} — {chain}: {terminal_labels[0]}."
-            elif operator in {
-                GraphCompositionOperator.EXISTS,
-                GraphCompositionOperator.AND,
-                GraphCompositionOperator.OR,
-                GraphCompositionOperator.NOT,
-            }:
-                truth_value = provenance.get("truth_value", False)
-                if not provenance.get("truth_available", False) or not isinstance(truth_value, bool):
-                    raise InvalidRequestError("composition truth is unavailable")
-                response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth_value else 'false'}."
-            else:
-                aggregate = provenance.get("aggregate_value", "")
-                if not provenance.get("aggregate_value_available", False) or not isinstance(aggregate, str) or not aggregate:
-                    raise InvalidRequestError("composition aggregate is unavailable")
-                response = f"{root_label} — {operator.value.lower()} {chain}: {aggregate}."
-            object_type = ExpectedObjectType(str(terminal_types[0])) if terminal_types else ExpectedObjectType.UNKNOWN
-        except (InvalidRequestError, TypeError, ValueError):
+        rebuilt = self.current_composition_phrase(provenance, tuple_values, frame)
+        if not rebuilt:
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
+        response = rebuilt.get("response", "")
+        object_type = rebuilt.get("object_type", ExpectedObjectType.UNKNOWN)
         if response != candidate.get("response", ""):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH,))
             return result
@@ -598,10 +627,10 @@ class EngramCandidateAuthority:
     def evaluate(self, candidate: dict, frame: dict) -> dict:
         candidate_provenance = candidate.get("provenance", {})
         producer = candidate_provenance.get("producer", "")
-        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == "relation_one_hop":
+        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == RELATION_ONE_HOP_PRODUCER:
             result = self.relation_candidate(candidate, frame)
             return result
-        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == "graph_composition":
+        if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == GRAPH_COMPOSITION_PRODUCER:
             result = self.composition_candidate(candidate, frame)
             return result
         if candidate.get("source", CandidateSource.EXACT) == CandidateSource.UTILITY and producer == UTILITY_RESOLVER_PRODUCER:
@@ -622,8 +651,7 @@ class EngramCandidateAuthority:
             ):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
-            digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
-            if candidate.get("statement_id", "") != f"utility:{plugin_name}:sha256:{digest}":
+            if candidate.get("statement_id", "") != utility_statement_id(plugin_name, canonical_input):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
                 return result
             if candidate.get("response", "") != evaluated.get("response", ""):
@@ -1006,8 +1034,8 @@ class CandidateFusionEngine:
         policy_value = fusion_policy() if policy == {} else policy
         try:
             validated_policy = validate_fusion_policy(policy_value)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("fusion policy must be a FusionPolicy") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("fusion policy must be a FusionPolicy") from err
         if not callable(authority):
             raise InvalidRequestError("fusion authority must be callable")
         if reranker != () and not isinstance(reranker, TransparentLogisticReranker):
@@ -1300,7 +1328,7 @@ class CandidateFusionEngine:
             raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
         if cooperative_check != () and not callable(cooperative_check):
             raise InvalidRequestError("fusion cooperative_check must be callable")
-        control_check = cooperative_check if cooperative_check != () else (lambda: False)
+        control_check = cooperative_check if callable(cooperative_check) else (lambda: False)
         memory_limit = working_memory_limit if working_memory_limit_available else frame_working_memory_limit
         control_check()
         # Evidence is retained even by an exhausted decision, so all of it is
@@ -1415,9 +1443,9 @@ class CandidateFusionEngine:
                     "statement_id": item.get("candidate", {}).get("statement_id", ""),
                     "base_score": item.get("score", 0.0),
                     "features": {
-                        name: (
+                        str(name): (
                             item.get("score", 0.0)
-                            if name == "base_score"
+                            if name == RERANKER_BASE_SCORE_FEATURE
                             else item.get("normalized", {}).get("values", {}).get(FusionFeature(name), 0.0)
                         )
                         for name in RERANKER_FEATURES
@@ -1425,17 +1453,17 @@ class CandidateFusionEngine:
                 }
                 for item in eligible_shortlist
             )
+            # A model, input or numeric failure falls back to the baseline order; cancellation
+            # and programming errors propagate.
             try:
                 reranker_report = self.internal_reranker.rerank(shortlist, cooperative_check)
-            except ResolutionCancelledError:
-                raise
-            except Exception as error:
-                logger.warning("Reranker failed; using the baseline order", exc_info=error)
+            except (RuntimeError, ValueError, ArithmeticError) as err:
+                logger.warning("Reranker failed; using the baseline order (%s)", failure_origin(err))
                 self.internal_reranker.record_fallback("reranker_exception")
                 reranker_report = {
                     "applied": False,
                     "reason": "reranker_exception",
-                    "exception_type": type(error).__name__,
+                    "exception_type": type(err).__name__,
                     "model_version": reranker_settings.get("model_version", ""),
                     "elapsed_ns": 0,
                     "model_time_target_exceeded": False,

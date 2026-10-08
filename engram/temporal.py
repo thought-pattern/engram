@@ -168,8 +168,8 @@ def temporal_query_from_dict(value: object) -> dict:
     try:
         operator = TemporalQueryOperator(str(value.get("operator", "")))
         axis = TemporalAxis(str(value.get("axis", "")))
-    except ValueError as error:
-        raise InvalidRequestError("serialized TemporalQuery enum is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError("serialized TemporalQuery enum is unsupported") from err
     result = temporal_query(
         operator=operator,
         axis=axis,

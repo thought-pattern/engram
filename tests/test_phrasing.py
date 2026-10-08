@@ -4,10 +4,13 @@ phrase_fact turns a canonical triple whose predicate is the graph slug
 (``located_in``) into a sentence. The connector -- copula, passive,
 possessive, or bare active -- is chosen from spaCy morphology, with a
 small override map for spaCy's single-token misreads and idiomatic
-temporals. Phrasing degrades to a bare active frame if spaCy is
-unavailable, so lost NLP weakens phrasing rather than breaking recall.
+temporals. The spaCy model is required for every label without an override.
 """
 
+from pytest import raises as pytest_raises
+
+from engram import nltk_data, phrasing
+from engram.nltk_data import NltkResources
 from engram.phrasing import deslug, phrase_fact, phrase_facts
 from engram.spacy_setup import SPACY_PIPELINES
 
@@ -63,8 +66,22 @@ def test_phrase_facts_joins_sentences():
     assert phrase_facts(facts) == "Athens is located in Greece. Skai TV was owned by Skai Group."
 
 
-def test_degrades_without_spacy(monkeypatch):
-    """A missing model falls back to a bare active frame, overrides still fire."""
-    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", lambda disable=(): ())
-    assert phrase_fact("Alice", "member_of", "UN") == "Alice member of UN."
+def test_a_missing_model_fails_but_overrides_never_parse(monkeypatch):
+    """Parsed labels require the model; an override frame never calls spaCy."""
+
+    def missing_model(disable=()):
+        raise RuntimeError("spaCy model en_core_web_sm is not installed")
+
+    monkeypatch.setattr(SPACY_PIPELINES, "pipeline", missing_model)
+    with pytest_raises(RuntimeError, match="is not installed"):
+        phrase_fact("Alice", "member_of", "UN")
     assert phrase_fact("Einstein", "date_of_birth", "1879") == "Einstein was born on 1879."
+
+
+def test_missing_wordnet_fails_instead_of_reading_as_not_a_verb(monkeypatch):
+    """A misread verb label needs WordNet; without it phrasing raises rather than keeping the noun reading."""
+    monkeypatch.setattr(phrasing, "NLTK_RESOURCES", NltkResources())
+    monkeypatch.setattr(nltk_data, "ensure_nltk_data", lambda download=False: [("corpora/wordnet", "wordnet")])
+
+    with pytest_raises(RuntimeError, match="required NLTK resources are unavailable: wordnet"):
+        phrase_fact("Vaccines", "prevents", "disease")

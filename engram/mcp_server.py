@@ -11,16 +11,16 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
-from engram.constants import EMPTY_METADATA, VERSION
+from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA, VERSION
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
-from engram.errors import ConflictError, EngramCoreError, LifecycleError
+from engram.errors import ConflictError, EngramCoreError, LifecycleError, failure_origin
 from engram.service import EngramCore, normalize_service_user_id
 
 logger = logging_getLogger(__name__)
 
 
 def guarded_tool(operation):
-    """Log a failed tool call in full and give the client only a stable message.
+    """Log a failed tool call's class and origin and give the client only a stable message.
 
     The MCP SDK sends only the text of the raised ``ToolError`` to the client;
     its cause stays on the server. Engram's own errors, whose messages are
@@ -33,12 +33,12 @@ def guarded_tool(operation):
         try:
             result = operation(*args, **kwargs)
             return result
-        except EngramCoreError as error:
-            logger.warning("Engram MCP tool %s was refused", operation.__name__, exc_info=error)
-            raise ToolError(str(error)) from error
-        except Exception as error:
-            logger.error("Engram MCP tool %s failed", operation.__name__, exc_info=error)
-            raise ToolError("internal Engram failure") from error
+        except EngramCoreError as err:
+            logger.warning("Engram MCP tool %s was refused (%s)", operation.__name__, failure_origin(err))
+            raise ToolError(str(err)) from err
+        except Exception as err:
+            logger.error("Engram MCP tool %s failed (%s)", operation.__name__, failure_origin(err))
+            raise ToolError("internal Engram failure") from err
 
     return guarded
 
@@ -72,7 +72,7 @@ class MCPConversationService:
 
     def start(
         self,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         initial_bot_text: str = "",
         config_path: str = "",
         random_seed: int = 0,
@@ -149,10 +149,10 @@ class MCPConversationService:
         self,
         request: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        limit: int = 1,
+        limit: int = DEFAULT_PROPOSE_LIMIT,
         required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
@@ -175,7 +175,7 @@ class MCPConversationService:
         self,
         request: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         identity: dict = EMPTY_METADATA,
@@ -215,10 +215,10 @@ class MCPConversationService:
         request: str,
         response: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "unknown",
+        source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Cache a response without implicitly replacing existing knowledge."""
@@ -289,7 +289,7 @@ class EngramMCPServer(MCPServer):
 
     def engram_start(
         self,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         initial_bot_text: str = "",
         config_path: str = "",
         random_seed: int = 0,
@@ -334,7 +334,7 @@ class EngramMCPServer(MCPServer):
         self,
         request: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         identity: dict = EMPTY_METADATA,
@@ -364,10 +364,10 @@ class EngramMCPServer(MCPServer):
         self,
         request: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        limit: int = 1,
+        limit: int = DEFAULT_PROPOSE_LIMIT,
         required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
@@ -399,10 +399,10 @@ class EngramMCPServer(MCPServer):
         request: str,
         response: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "unknown",
+        source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Cache one non-IDK response with scope and provenance."""
@@ -452,8 +452,8 @@ def run(argv: tuple[str, ...] = ()) -> None:
     try:
         static_pairs = [] if args.no_static_data else load_conversation_pairs(args.static_data)
         service = MCPConversationService(static_pairs=static_pairs, require_catch_all=not args.no_static_data)
-    except ValueError as error:
-        parser.error(str(error))
+    except ValueError as err:
+        parser.error(str(err))
     EngramMCPServer(service=service).run(transport="stdio")
 
 

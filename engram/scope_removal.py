@@ -13,26 +13,45 @@ def validate_removal_command(value):
     """Validate a closed administrative envelope without interpreting support."""
     if not isinstance(value, dict) or set(value) != COMMAND_FIELDS:
         raise InvalidRequestError("engagement maintenance command fields are malformed")
-    if not isinstance(value.get("action"), str) or value.get("action") not in {"plan", "prepare", "purge", "resume"}:
+    if not isinstance(value.get("action", ""), str) or value.get("action", "") not in {"plan", "prepare", "purge", "resume"}:
         raise InvalidRequestError("engagement maintenance action is not registered")
-    operation = value.get("operation_id")
+    operation = value.get("operation_id", "")
     if not isinstance(operation, str) or not operation.strip() or len(operation.encode("utf-8")) > 256:
         raise InvalidRequestError("engagement maintenance requires a bounded operation ID")
     try:
-        scope = validate_support_visibility(value.get("visibility_scope"))
-    except ValueError as error:
-        raise InvalidRequestError(str(error)) from error
-    if scope.get("kind") != "engagement":
+        scope = validate_support_visibility(value.get("visibility_scope", {}))
+    except ValueError as err:
+        raise InvalidRequestError(str(err)) from err
+    if scope.get("kind", "") != "engagement":
         raise InvalidRequestError("removal requires an exact engagement scope")
-    identifiers = value.get("dependency_ids")
+    identifiers = value.get("dependency_ids", [])
     if not isinstance(identifiers, list) or any(not isinstance(item, str) or not item.strip() for item in identifiers):
         raise InvalidRequestError("removal dependency IDs must be nonempty strings in an array")
-    return {
-        "action": value.get("action"),
+    command = {
+        "action": value.get("action", ""),
         "operation_id": operation,
         "visibility_scope": scope,
         "dependency_ids": sorted(set(identifiers)),
     }
+    return command
+
+
+def restore_removal_state(coordinator, feedback, repository: dict, before: dict) -> None:
+    """Restore the live state that a failed engagement removal replaced.
+
+    ``coordinator`` is the response ``AtomicMutationCoordinator`` and ``feedback`` the
+    ``FeedbackStore``; ``repository`` and ``before`` are the states captured before the
+    removal. A failed rollback raises ``MutationCoordinationError`` with
+    ``live_state_changed`` set.
+    """
+    before_response = before.get("response", {})
+    try:
+        coordinator.repository.restore_state(repository)
+        coordinator.mutation_receipts.replace_from_snapshot(before_response.get("mutation_receipts", {}))
+        feedback.replace_from_snapshot(before.get("feedback", {}))
+        coordinator.publication_hook(before_response)
+    except Exception as err:
+        raise MutationCoordinationError("engagement removal and rollback failed", live_state_changed=True) from err
 
 
 class EngagementResponseRemoval:
@@ -59,14 +78,15 @@ class EngagementResponseRemoval:
     def receipt_statement_ids(self, receipt):
         """Read the declared artifact references in mutation receipt contracts."""
         result = receipt.get("result", {})
-        references = {item.get("statement_id") for item in receipt.get("affected_generations", [])}
+        references = {item.get("statement_id", "") for item in receipt.get("affected_generations", [])}
         references.update(result.get("statement_ids", []))
         references.update(result.get("evicted_statement_ids", []))
-        references.update({result.get("statement_id"), result.get("replacement_statement_id")})
+        references.update({result.get("statement_id", ""), result.get("replacement_statement_id", "")})
         references.update(
-            binding.get("statement_id") for binding in receipt.get("scope_bindings", result.get("scope_bindings", []))
+            binding.get("statement_id", "") for binding in receipt.get("scope_bindings", result.get("scope_bindings", []))
         )
-        return references - {None, ""}
+        declared = references - {""}
+        return declared
 
     def candidate(self, before, selected):
         after = deepcopy(before)
@@ -127,7 +147,7 @@ class EngagementResponseRemoval:
             }
             if dry_run or not selected:
                 return report
-            before_response, after_response = before.get("response", {}), after.get("response", {})
+            after_response = after.get("response", {})
             try:
                 if removed_artifacts:
                     self.coordinator.repository.atomic_replace(
@@ -136,17 +156,7 @@ class EngagementResponseRemoval:
                 self.coordinator.mutation_receipts.replace_from_snapshot(after_response.get("mutation_receipts", {}))
                 self.feedback.replace_from_snapshot(after.get("feedback", {}))
                 self.coordinator.publication_hook(after_response)
-            except Exception as error:
-                try:
-                    self.coordinator.repository.restore_state(repository)
-                    self.coordinator.mutation_receipts.replace_from_snapshot(before_response.get("mutation_receipts", {}))
-                    self.feedback.replace_from_snapshot(before.get("feedback", {}))
-                    self.coordinator.publication_hook(before_response)
-                except Exception as rollback_error:
-                    raise MutationCoordinationError(
-                        "engagement removal and rollback failed", live_state_changed=True
-                    ) from rollback_error
-                raise MutationCoordinationError(
-                    "engagement removal failed and was rolled back", live_state_changed=False
-                ) from error
+            except Exception as err:
+                restore_removal_state(self.coordinator, self.feedback, repository, before)
+                raise MutationCoordinationError("engagement removal failed and was rolled back", live_state_changed=False) from err
             return {**report, "removed_count": removed_artifacts}

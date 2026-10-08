@@ -1,10 +1,18 @@
-"""Text processing for ENGRAM."""
+"""Text processing for ENGRAM.
+
+Stateless normalization, keyword extraction, stemming, lemmatization, spelling
+correction, clause and name trimming, and WordNet lookups shared by ``core``,
+``pattern``, ``nlp``, ``template``, ``phrasing`` and ``service``. The module owns
+no mutable state: NLTK readiness, the English word list and the WordNet reader
+lock belong to ``nltk_data.NLTK_RESOURCES``, and the spaCy model to
+``spacy_setup.SPACY_PIPELINES``. Functions of immutable inputs memoize their
+results.
+"""
 
 from functools import lru_cache
 from re import finditer as re_finditer, sub as re_sub
-from threading import Lock
 
-from nltk.corpus import wordnet, words
+from nltk.corpus import wordnet
 from nltk.metrics.distance import edit_distance
 from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
@@ -26,28 +34,14 @@ from engram.constants import (
     SUBJECT_PRONOUNS,
 )
 from engram.lexical import select_lexical_terms
-from engram.nltk_data import ensure_resource
+from engram.nltk_data import NLTK_RESOURCES
 from engram.spacy_setup import SPACY_PIPELINES
-
-nltk_reader_lock = Lock()
 
 # Both are stateless after construction: the stemmer holds only its fixed
 # irregular-form table, and the lemmatizer reads WordNet, so callers run
-# initialize_nltk_readers before lemmatizing.
+# NLTK_RESOURCES.require() before lemmatizing.
 PORTER_STEMMER = PorterStemmer()
 WORDNET_LEMMATIZER = WordNetLemmatizer()
-
-
-@lru_cache(maxsize=1)
-def initialize_nltk_readers() -> bool:
-    """Load shared lazy corpus readers before concurrent request handling."""
-    ensure_resource("corpora/words", "words")
-    ensure_resource("corpora/wordnet", "wordnet")
-    ensure_resource("corpora/omw-1.4", "omw-1.4")
-    with nltk_reader_lock:
-        words.ensure_loaded()
-        wordnet.ensure_loaded()
-    return True
 
 
 @lru_cache(maxsize=4096)
@@ -168,6 +162,7 @@ def extract_keywords(
         result = []
         return result
 
+    NLTK_RESOURCES.require()
     tokens = word_tokenize(text)
 
     if use_pos_filter:
@@ -183,8 +178,8 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
 
     Returns content-word lemmas plus multi-word noun-chunk phrases (e.g.
     "machine learning"), so the keyword index can match precise compound terms
-    while still indexing their component words for recall. Falls back to
-    extract_keywords if the spaCy model is unavailable.
+    while still indexing their component words for recall. A missing spaCy
+    model raises ``RuntimeError``.
 
     Args:
         text: Input text string.
@@ -199,10 +194,6 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
         return result
 
     nlp = SPACY_PIPELINES.pipeline()
-    if not nlp:
-        fallback = extract_keywords(text, stopwords)
-        return fallback
-
     doc = nlp(text)
     seen: set[str] = set()
     keywords: list = []
@@ -226,14 +217,6 @@ def extract_keywords_spacy(text: str, stopwords: set[str]) -> list:
     return keywords
 
 
-@lru_cache(maxsize=1)
-def ensure_tagger() -> None:
-    """Check the locally provisioned POS tagger data used after startup preflight."""
-
-    ensure_resource("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger")
-    ensure_resource("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng")
-
-
 def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
     """Extract the nouns and proper nouns from text, order preserved.
 
@@ -247,14 +230,17 @@ def extract_context_terms(text: str, max_terms: int = 8) -> list[str]:
         max_terms: Maximum terms to return.
 
     Returns:
-        Deduplicated nouns/proper nouns in order of appearance, [] if tagging
-        is unavailable or nothing qualifies.
+        Deduplicated nouns/proper nouns in order of appearance, [] when nothing
+        qualifies.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
     if not text or not text.strip():
         result = []
         return result
 
-    ensure_tagger()
+    NLTK_RESOURCES.require()
     tokens = word_tokenize(text)
     tagged = pos_tag(tokens)
 
@@ -330,7 +316,7 @@ def lemmatize_word(word: str, pos: str = "n") -> str:
     Returns:
         Lemmatized word.
     """
-    initialize_nltk_readers()
+    NLTK_RESOURCES.require()
     lemmatized = WORDNET_LEMMATIZER.lemmatize(word.lower(), pos=pos)
     return lemmatized
 
@@ -375,7 +361,7 @@ def lemmatize_text(text: str) -> str:
     Returns:
         Text with all words lemmatized.
     """
-    initialize_nltk_readers()
+    NLTK_RESOURCES.require()
     out = []
     for word in text.split():
         lower = word.lower()
@@ -393,8 +379,7 @@ def lemmatize_text_spacy(text: str) -> str:
 
     More accurate than lemmatize_text's WordNet heuristic because spaCy uses POS
     context from the parse: "saw" the verb lemmatizes to "see" while "saw" the
-    noun stays "saw". Falls back to the lowercased input if the model is
-    unavailable.
+    noun stays "saw". A missing spaCy model raises ``RuntimeError``.
 
     Args:
         text: Input text.
@@ -404,41 +389,28 @@ def lemmatize_text_spacy(text: str) -> str:
     """
 
     nlp = SPACY_PIPELINES.pipeline()
-    if not nlp:
-        lowered = text.lower()
-        return lowered
     doc = nlp(text)
     lemmatized = " ".join(token.lemma_.lower() for token in doc)
     return lemmatized
 
 
-@lru_cache(maxsize=1)
-def known_words() -> set:
-    """English word set used to gate spelling correction.
-
-    A token found here is a real word and is never "corrected" -- unknown real
-    words are the lemma/stem fallbacks' job, not the spell corrector's.
-    """
-    initialize_nltk_readers()
-    word_set = {w.lower() for w in words.words()}
-    return word_set
-
-
 def is_known_word(word: str) -> bool:
     """True when the word or its lemma is in the English word list.
 
-    The words corpus carries base forms but few inflections ("work" but not
-    "tests" or "died"), so a bare membership test reads real inflected words
-    as typos. Checking the verb and noun lemmas closes that gap.
+    The list gates spelling correction: a known word is never "corrected" --
+    unknown real words are the lemma/stem fallbacks' job, not the spell
+    corrector's. The words corpus carries base forms but few inflections
+    ("work" but not "tests" or "died"), so a bare membership test reads real
+    inflected words as typos. Checking the verb and noun lemmas closes that gap.
     """
     lowered = word.lower()
-    if lowered in known_words():
+    if NLTK_RESOURCES.is_english_word(lowered):
         result = True
         return result
-    if lemmatize_word(lowered, "v") in known_words():
+    if NLTK_RESOURCES.is_english_word(lemmatize_word(lowered, "v")):
         result = True
         return result
-    known = lemmatize_word(lowered, "n") in known_words()
+    known = NLTK_RESOURCES.is_english_word(lemmatize_word(lowered, "n"))
     return known
 
 
@@ -526,7 +498,7 @@ def first_clause(text: str) -> str:
     if not text or not text.strip():
         return text
 
-    ensure_tagger()
+    NLTK_RESOURCES.require()
     tokens = word_tokenize(text)
     tagged = pos_tag(tokens)
 
@@ -593,13 +565,6 @@ def extract_name(text: str) -> str:
     return name
 
 
-@lru_cache(maxsize=1)
-def ensure_wordnet() -> None:
-    """Ensure WordNet data is available, fetching into the local data dir."""
-
-    initialize_nltk_readers()
-
-
 @lru_cache(maxsize=4096)
 def verb_only_word(word: str) -> bool:
     """Return whether WordNet records this word only as a verb.
@@ -613,8 +578,9 @@ def verb_only_word(word: str) -> bool:
     if not key:
         result = False
         return result
-    ensure_wordnet()
-    with nltk_reader_lock:
+    # Loading takes NLTK_RESOURCES.lock, so it runs before the reader lock is held.
+    NLTK_RESOURCES.require()
+    with NLTK_RESOURCES.reader_lock:
         synsets = wordnet.synsets(key)
         if not synsets:
             lemma = wordnet.morphy(key)
@@ -635,26 +601,24 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
         max_synonyms: Maximum number of synonyms to return.
 
     Returns:
-        Tuple of synonyms (includes the original word). A tuple rather than a set
-        because the result is cached and shared, so an immutable return keeps a
-        caller from mutating the cached value.
+        Tuple of synonyms: the lowercased word first, then distinct WordNet
+        lemma names in WordNet's order, so the result is the same in every
+        process. A tuple rather than a list because the result is cached and
+        shared, so an immutable return keeps a caller from mutating the cached
+        value.
     """
 
-    synonyms = {word.lower()}
-    # Readers are initialized first: initialization takes the same
-    # non-reentrant lock, so it must not run while this read holds it.
-    ensure_wordnet()
-    # NLTK's shared reader opens and closes its zipped corpus around each read;
-    # concurrent access can trip its internal file-handle assertion.
-    with nltk_reader_lock:
-        wordnet_reader = wordnet
-        for syn in wordnet_reader.synsets(word):
+    synonyms = [word.lower()]
+    # Loading takes NLTK_RESOURCES.lock, so it runs before the reader lock is held.
+    NLTK_RESOURCES.require()
+    with NLTK_RESOURCES.reader_lock:
+        for syn in wordnet.synsets(word):
             if syn is None:
                 continue
             for lemma in syn.lemmas():
                 name = lemma.name().lower().replace("_", " ")
-                if name != word.lower():
-                    synonyms.add(name)
+                if name not in synonyms:
+                    synonyms.append(name)
                     if len(synonyms) >= max_synonyms + 1:
                         capped = tuple(synonyms)
                         return capped

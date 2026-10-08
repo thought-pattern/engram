@@ -85,8 +85,8 @@ def main() -> None:
             report = connected_operation(mode, settings)
         print(report)
         sys_exit(0 if report.get("valid", False) else 1)
-    except Exception as error:
-        print({"valid": False, "error": str(error)})
+    except Exception as err:
+        print({"valid": False, "error": str(err)})
         sys_exit(1)
 
 

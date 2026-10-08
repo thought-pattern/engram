@@ -5,7 +5,7 @@ generation without writing conversation state to disk.
 """
 
 from bisect import bisect_left
-from collections import Counter, deque
+from collections import Counter
 from copy import deepcopy
 from datetime import UTC, datetime
 from random import Random
@@ -17,7 +17,6 @@ from engram.constants import CONVERSATION_REPORT_VERSION, DEFAULT_USER_ID, MAX_R
 from engram.errors import InvalidRequestError
 from engram.feedback import canonical_utc
 from engram.template import TEMPLATE_RANDOM
-from engram.text import normalize
 
 
 def utc_now() -> str:
@@ -65,96 +64,18 @@ def predicate_changes(before: dict, after: dict) -> dict:
     return changes
 
 
-def conversation_message_key(message: str) -> str:
-    """Return the meaningful normalized identity of one planned message."""
-    if not isinstance(message, str) or not message.strip():
-        raise ValueError("conversation messages must be non-empty strings")
-    key = normalize(message)
-    if not key:
-        raise ValueError("conversation messages must contain meaningful text")
-    return key
+class ConversationRuntime:
+    """One process-local Engram conversation with observable turn diagnostics.
 
-
-class ConversationTurnPlanner:
-    """Budget a scripted/adaptive conversation without accidental repeats.
-
-    Planned messages are always preserved, the final turn is reserved for the
-    farewell, and adaptive messages are accepted only while spare turn budget
-    remains. Exhaustion and unapproved normalized duplicates fail explicitly
-    instead of generating repeated filler.
+    Constructing a runtime for ``DEFAULT_USER_ID`` deletes that user's existing
+    session so the anonymous conversation starts clean; if construction fails,
+    the prior session is restored.
     """
 
     def __init__(
         self,
-        planned_messages: list[str],
-        total_turns: int,
-        farewell: str,
-        allowed_repeats=(),
-    ) -> None:
-        if not isinstance(total_turns, int) or total_turns < 1:
-            raise ValueError("total_turns must be a positive integer")
-        if len(planned_messages) > total_turns - 1:
-            raise ValueError("planned messages must leave the final turn for the farewell")
-
-        self.total_turns = total_turns
-        self.internal_planned = deque(planned_messages)
-        self.internal_farewell = farewell
-        self.sent_keys: set[str] = set()
-        self.sent_messages: list[str] = []
-        self.allowed_repeat_keys = {conversation_message_key(message) for message in allowed_repeats or ()}
-
-        planned_keys = [conversation_message_key(message) for message in planned_messages]
-        farewell_key = conversation_message_key(farewell)
-        seen: set[str] = set()
-        for key in [*planned_keys, farewell_key]:
-            if key in seen and key not in self.allowed_repeat_keys:
-                raise ValueError("conversation plan contains an unapproved repeated input")
-            seen.add(key)
-
-    @property
-    def turn_count(self) -> int:
-        """Return how many messages the planner has issued."""
-        result = len(self.sent_messages)
-        return result
-
-    @property
-    def remaining_turns(self) -> int:
-        """Return the unissued portion of the fixed turn budget."""
-        result = self.total_turns - self.turn_count
-        return result
-
-    def next_message(self, adaptive_message: str = "") -> str:
-        """Issue the next unique message while preserving plan and farewell."""
-        remaining = self.remaining_turns
-        if remaining <= 0:
-            raise StopIteration
-
-        if remaining == 1:
-            if self.internal_planned:
-                raise RuntimeError("planned messages remain at the reserved farewell turn")
-            candidate = self.internal_farewell
-        elif adaptive_message and remaining > len(self.internal_planned) + 1:
-            candidate = adaptive_message
-        elif self.internal_planned:
-            candidate = self.internal_planned.popleft()
-        else:
-            raise RuntimeError("conversation plan exhausted before the reserved farewell")
-
-        key = conversation_message_key(candidate)
-        if key in self.sent_keys and key not in self.allowed_repeat_keys:
-            raise ValueError("conversation driver attempted an unapproved repeated input")
-        self.sent_keys.add(key)
-        self.sent_messages.append(candidate)
-        return candidate
-
-
-class ConversationRuntime:
-    """One process-local Engram conversation with observable turn diagnostics."""
-
-    def __init__(
-        self,
         engram,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
@@ -165,8 +86,8 @@ class ConversationRuntime:
             raise InvalidRequestError("initial_bot_text must be a string")
         try:
             initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
-        except UnicodeEncodeError as error:
-            raise InvalidRequestError("initial_bot_text must contain valid Unicode") from error
+        except UnicodeEncodeError as err:
+            raise InvalidRequestError("initial_bot_text must contain valid Unicode") from err
         if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
             raise InvalidRequestError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
         if not isinstance(random_seed, int) or isinstance(random_seed, bool):
@@ -194,7 +115,7 @@ class ConversationRuntime:
         self.lock = threading_RLock()
 
         with engram.session_lock:
-            prior_session = engram.sessions.get(self.session_id, {})
+            prior_session = sessions.get_session(engram, self.session_id, create_if_missing=False)
             if self.user_id == DEFAULT_USER_ID:
                 sessions.delete_session(engram, self.session_id)
             try:
@@ -206,7 +127,7 @@ class ConversationRuntime:
                 if self.user_id == DEFAULT_USER_ID:
                     sessions.delete_session(engram, self.session_id)
                     if prior_session:
-                        engram.sessions[self.session_id] = prior_session
+                        sessions.restore_session(engram, prior_session)
                 raise
 
     def send(self, text: object) -> dict:
@@ -221,9 +142,10 @@ class ConversationRuntime:
             raise InvalidRequestError(f"text exceeds the UTF-8 limit of {MAX_REQUEST_BYTES} bytes")
 
         with self.lock:
-            session = self.engram.sessions.get(self.session_id, {})
-            predicates_before = dict(session.get("predicates", {}))
-            previous_response_before = session.get("previous_response", "")
+            with self.engram.session_lock:
+                session = sessions.get_session(self.engram, self.session_id, create_if_missing=False)
+                predicates_before = dict(session.get("predicates", {}))
+                previous_response_before = session.get("previous_response", "")
             # Statements stored during this turn have a sequence at or after this one.
             first_new_sequence = self.engram.next_statement_sequence
 
@@ -250,7 +172,10 @@ class ConversationRuntime:
                     TEMPLATE_RANDOM.reset(random_token)
             elapsed = time_perf_counter() - started
 
-            session = self.engram.sessions.get(self.session_id, {})
+            with self.engram.session_lock:
+                session = sessions.get_session(self.engram, self.session_id, create_if_missing=False)
+                previous_response_after = session.get("previous_response", "")
+                predicates_after = dict(session.get("predicates", {}))
             with self.engram.statement_lock:
                 first_new = bisect_left(self.engram.statement_sequences, first_new_sequence)
                 learned = [
@@ -277,9 +202,9 @@ class ConversationRuntime:
                 "context_changes": {
                     "previous_response": {
                         "before": previous_response_before,
-                        "after": session.get("previous_response", ""),
+                        "after": previous_response_after,
                     },
-                    "predicates": predicate_changes(predicates_before, session.get("predicates", {})),
+                    "predicates": predicate_changes(predicates_before, predicates_after),
                 },
                 "learned_statements": learned,
             }
@@ -299,11 +224,13 @@ class ConversationRuntime:
                 for statement in self.engram.statements
                 if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
             ]
+            with self.engram.session_lock:
+                current_session = session_view(sessions.get_session(self.engram, self.session_id, create_if_missing=False))
             result = {
                 "user_id": self.user_id,
                 "turn_count": self.turn_count,
                 "initial_bot_text": self.initial_bot_text,
-                "session": session_view(self.engram.sessions.get(self.session_id, {})),
+                "session": current_session,
                 "metrics": metrics.get_metrics(self.engram),
                 "learned_dynamic": learned,
                 "learned_unique_texts": sorted({statement.get("text", "") for statement in learned}),

@@ -3,7 +3,7 @@
 from pytest import raises as pytest_raises
 
 from engram.constants import Tier
-from engram.conversation import ConversationRuntime, ConversationTurnPlanner
+from engram.conversation import ConversationRuntime
 from engram.core import Engram
 
 
@@ -63,43 +63,3 @@ def test_runtime_returns_report_without_writing_files() -> None:
 
     assert report.get("summary", {}).get("exchanges", 0) == 1
     assert report.get("user_id", "") == "agent"
-
-
-def test_turn_planner_preserves_messages_and_reserves_the_farewell() -> None:
-    planner = ConversationTurnPlanner(
-        ["First planned thought.", "Second planned thought."],
-        total_turns=4,
-        farewell="Goodbye, and thank you.",
-    )
-
-    assert planner.next_message() == "First planned thought."
-    assert planner.next_message("An adaptive answer.") == "An adaptive answer."
-    assert planner.next_message("This answer no longer fits the budget.") == "Second planned thought."
-    assert planner.next_message("Nor does this one.") == "Goodbye, and thank you."
-    assert planner.turn_count == 4
-    assert planner.remaining_turns == 0
-    with pytest_raises(StopIteration):
-        planner.next_message()
-
-
-def test_turn_planner_rejects_exhaustion_and_unapproved_repeats() -> None:
-    with pytest_raises(ValueError, match="unapproved repeated"):
-        ConversationTurnPlanner(["Echo.", "echo"], total_turns=3, farewell="Goodbye.")
-
-    planner = ConversationTurnPlanner(["Only planned thought."], total_turns=4, farewell="Goodbye.")
-    assert planner.next_message() == "Only planned thought."
-    with pytest_raises(RuntimeError, match="exhausted"):
-        planner.next_message()
-
-
-def test_turn_planner_allows_intentional_recall_repetition() -> None:
-    planner = ConversationTurnPlanner(
-        ["What is my name?", "What is my name?"],
-        total_turns=3,
-        farewell="Goodbye.",
-        allowed_repeats=["What is my name?"],
-    )
-
-    assert planner.next_message() == "What is my name?"
-    assert planner.next_message() == "What is my name?"
-    assert planner.next_message() == "Goodbye."

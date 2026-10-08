@@ -208,7 +208,7 @@ def test_unexpected_plugin_failure_is_contained(monkeypatch) -> None:
     assert result.get("error_code", "") == "plugin_failure"
 
 
-def test_yaml_config_loads_selected_plugins_and_ignores_unknown_keys(tmp_path) -> None:
+def test_yaml_config_loads_selected_plugins_and_rejects_unknown_keys(tmp_path) -> None:
     selected = tmp_path / "selected.yml"
     selected.write_text("utility:\n  enabled: true\n  plugins: [arithmetic, version]\n", encoding="utf-8")
     unknown = tmp_path / "unknown.yml"
@@ -218,7 +218,8 @@ def test_yaml_config_loads_selected_plugins_and_ignores_unknown_keys(tmp_path) -
 
     assert loaded.get("utility", {}) == utility_config(enabled=True, plugins=("arithmetic", "version"))
     # An unknown key never reaches the utility settings, so it cannot name a module to load.
-    assert load_config(str(unknown)).get("utility", {}) == utility_config(enabled=False)
+    with pytest_raises(ValueError, match="module"):
+        load_config(str(unknown))
 
 
 def test_core_resolves_utility_without_learning_or_accounting() -> None:

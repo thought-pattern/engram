@@ -38,22 +38,30 @@ PACKAGE_NAMES = (
     "sentence-transformers",
     "spacy",
 )
-# Every benchmark engine disables learning, polishing and lexical expansion so that only
-# the measured lookup work is timed; capacity is sized per corpus at each construction.
-BENCHMARK_CONFIG_OPTIONS = {
-    "learn_user_facts": False,
-    "polish_responses": False,
-    "use_lemmatization": False,
-    "use_spell_correction": False,
-    "use_stemming": False,
-    "use_synonyms": False,
-}
 # Read-only provenance shared by every synthetic artifact; artifact validation copies it.
 RUNTIME_BENCHMARK_PROVENANCE = {
     "source_label": "runtime:benchmark",
     "caller_id": "engineering",
     "accepted_at": "2026-08-19T00:00:00Z",
 }
+
+
+def benchmark_engram_config(capacity: int) -> dict:
+    """Build one benchmark engine configuration sized for its corpus.
+
+    Every benchmark engine disables learning, polishing and lexical expansion so that only
+    the measured lookup work is timed.
+    """
+    config = engram_config(
+        capacity=capacity,
+        learn_user_facts=False,
+        polish_responses=False,
+        use_lemmatization=False,
+        use_spell_correction=False,
+        use_stemming=False,
+        use_synonyms=False,
+    )
+    return config
 
 
 class SyntheticVectorGraph:
@@ -117,7 +125,7 @@ def artifact_result(corpus_size: int, iterations: int) -> dict:
     # Corpus construction is traced in isolation: corpus_size - 1 unrelated artifacts and one target.
     gc_collect()
     tracemalloc_start()
-    engram = Engram(config=engram_config(capacity=max(corpus_size + 10, 100), **BENCHMARK_CONFIG_OPTIONS))
+    engram = Engram(config=benchmark_engram_config(max(corpus_size + 10, 100)))
     selected_scope = scope_key()
     artifacts = []
     for index in range(max(0, corpus_size - 1)):
@@ -213,7 +221,7 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
     # citing the one Proposition the synthetic vector graph returns.
     gc_collect()
     tracemalloc_start()
-    config = engram_config(capacity=max(corpus_size + 10, 100), **BENCHMARK_CONFIG_OPTIONS)
+    config = benchmark_engram_config(max(corpus_size + 10, 100))
     config["graph"] = graph_config(enabled=False, vector_enabled=False)
     engram = Engram(config=config)
     selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
@@ -326,7 +334,7 @@ def startup_result(iterations: int) -> dict:
     warm_iterations = max(5, iterations)
     cold_iterations = max(3, min(5, iterations // 5))
     # Warm construction uses the 100-artifact benchmark profile (capacity 110).
-    warm = internal_measure(lambda: Engram(config=engram_config(capacity=110, **BENCHMARK_CONFIG_OPTIONS)), warm_iterations)
+    warm = internal_measure(lambda: Engram(config=benchmark_engram_config(110)), warm_iterations)
     command = [sys_executable, "-c", "from engram.core import Engram; Engram()"]
 
     def cold_start():

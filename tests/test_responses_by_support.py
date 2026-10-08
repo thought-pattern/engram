@@ -6,8 +6,9 @@
 from google.protobuf import json_format
 from grpc import channel_ready_future, insecure_channel
 
-from engram import engram_pb2, engram_pb2_grpc
+from engram import engram_pb2
 from engram.core import Engram
+from engram.engram_pb2_grpc import EngramServiceStub
 from engram.grpc_server import EngramGrpcServer
 from engram.service import EngramCore
 
@@ -49,7 +50,7 @@ def test_grpc_lookup_exposes_the_core_result() -> None:
     channel = insecure_channel(server.start())
     channel_ready_future(channel).result(timeout=5)
     try:
-        stub = engram_pb2_grpc.EngramServiceStub(channel)
+        stub = EngramServiceStub(channel)
         response = stub.ResponsesBySupport(engram_pb2.ResponsesBySupportRequest(record_ids=[PROPOSITION_ID]), timeout=5)
         result = json_format.MessageToDict(response, preserving_proto_field_name=True)
         assert result.get("statement_ids", []) == [named]

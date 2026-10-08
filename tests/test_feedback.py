@@ -159,17 +159,17 @@ def test_feedback_store_snapshots_isolate_aggregate_records() -> None:
     assert fresh.get("raw", {}).get("accept_count", 0) == 1
 
 
-def test_modified_prepared_feedback_state_cannot_use_the_fast_publication_path() -> None:
+def test_prepared_feedback_state_is_validated_when_published() -> None:
     store = FeedbackStore()
     candidate = store.prepare(
         "feedback-modified",
         (validate_feedback_observation(ACCEPTED_OBSERVATION_FIELDS),),
     )
     assert "after" in candidate
-    prepared_after = candidate.get("after", {})
-    prepared_after["statement_evictions"] = 1
+    prepared_after = dict(candidate.get("after", {}))
+    prepared_after["statement_evictions"] = -1
 
-    with pytest_raises(InvalidRequestError, match="modified before publication"):
+    with pytest_raises(InvalidRequestError):
         store.replace_from_snapshot(prepared_after)
 
     snapshot = store.snapshot()

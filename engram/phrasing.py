@@ -20,9 +20,8 @@ noun and ``get`` reads as an infinitive. Such a label is re-read after a
 subject pronoun and becomes a verb only if WordNet knows its lemma as one.
 A small override map keyed by slug gives the temporal predicates an idiom
 (``date of birth`` -> ``was born on``) and fixes the remaining misreads. An override never
-calls spaCy, so those phrase even if the model is unavailable; everything
-else degrades to a bare active verb rather than crashing -- ENGRAM's recall
-is best-effort.
+calls spaCy; every other label is parsed with the pre-provisioned model, which is a
+hard requirement.
 
 This is presentation only. ENGRAM owns the packaged idiomatic frame data that
 Tapestry also reads, while each process owns its parser policy. ENGRAM does not
@@ -30,10 +29,11 @@ depend on Tapestry. Dynamic labels are literal text, never extra format fields.
 """
 
 from nltk.corpus import wordnet
+from spacy.language import Language
 
 from engram.constants import FRAME_OVERRIDES, VOWELS
+from engram.nltk_data import NLTK_RESOURCES
 from engram.spacy_setup import SPACY_PIPELINES
-from engram.text import initialize_nltk_readers
 
 
 def deslug(predicate: str) -> str:
@@ -42,15 +42,15 @@ def deslug(predicate: str) -> str:
     return result
 
 
-def finite_verb_label(nlp, head, normalized: str) -> bool:
+def finite_verb_label(nlp: Language, head, normalized: str) -> bool:
     """Recognize a verb label that spaCy misreads when it is parsed alone.
 
     Parsed alone, ``prevents`` or ``results in`` reads as a plural noun, and
     ``get`` or ``work better with`` reads as an infinitive. After a subject
     pronoun the tagger reads each one as a finite verb. WordNet must also know
     the lemma as a verb, so a noun role such as ``genre`` keeps its noun
-    reading. Without WordNet data the label keeps its parsed reading, as
-    recall phrasing is best-effort.
+    reading. WordNet is a required NLTK package; when its data is missing
+    this raises ``RuntimeError``.
     """
     plural_noun = head.pos_ == "NOUN" and head.morph.get("Number", []) == ["Plur"]
     if not plural_noun and head.morph.get("VerbForm", []) != ["Inf"]:
@@ -64,27 +64,22 @@ def finite_verb_label(nlp, head, normalized: str) -> bool:
     if token.pos_ != "VERB" or token.morph.get("VerbForm", []) != ["Fin"]:
         result = False
         return result
-    try:
-        initialize_nltk_readers()
-        result = bool(wordnet.synsets(token.lemma_, pos=wordnet.VERB))
-    except LookupError:
-        result = False
+    # WordNet is a required package: missing data raises rather than reading as "not a verb".
+    NLTK_RESOURCES.require()
+    with NLTK_RESOURCES.reader_lock:
+        verb_synsets = wordnet.synsets(token.lemma_, pos=wordnet.VERB)
+    result = bool(verb_synsets)
     return result
 
 
 def frame_for_label(label: str) -> str:
     """Derive a ``{s} ... {o}`` frame from a label's grammar via spaCy morphology.
 
-    Degrades to a bare active frame if the model is unavailable, so a lost
-    spaCy install weakens phrasing rather than breaking recall.
+    Raises ``RuntimeError`` when the spaCy model is not installed.
     """
     nlp = SPACY_PIPELINES.pipeline(disable=("parser", "ner"))
     normalized = label.lower().strip()
     literal_label = label.replace("{", "{{").replace("}", "}}")
-    if not nlp:
-        result = "{s} " + literal_label + " {o}"
-        return result
-
     doc = nlp(normalized)
     head = doc[0]
     ends_prep = doc[-1].pos_ == "ADP"

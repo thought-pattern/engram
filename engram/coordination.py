@@ -1,17 +1,22 @@
 """In-process coordination for accepted-response cache mutations."""
 
 from contextlib import contextmanager
+from copy import deepcopy
 from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
-from engram.constants import COORDINATED_MUTATION_CANDIDATE_FIELDS, COORDINATED_RESPONSE_STATE_FIELDS
+from engram.constants import (
+    COORDINATED_MUTATION_CANDIDATE_FIELDS,
+    COORDINATED_RESPONSE_STATE_FIELDS,
+    MAX_PLANNED_CANDIDATES,
+)
 from engram.errors import ConflictError, EngramCoreError, InvalidRequestError
 from engram.mutations import (
     MutationOperation,
     MutationReceiptLedger,
     validate_mutation_receipt,
 )
-from engram.repository import MAX_PLANNED_CANDIDATES, ArtifactRepository, validate_repository_state
+from engram.repository import ArtifactRepository, validate_repository_state
 from engram.support import validate_statement_scope_bindings, validate_support_visibility
 
 logger = logging_getLogger(__name__)
@@ -30,7 +35,7 @@ def validate_coordinated_response_state(value: object, trusted_artifacts: object
     """Validate and copy one complete in-process accepted-response state.
 
     ``mutation_receipts`` is a ledger snapshot dictionary, which is validated,
-    or an in-process ``MutationReceiptLedger``, which already is. Repository
+    or an in-process ``MutationReceiptLedger``, which already is and is cloned. Repository
     artifacts equal to their entry in ``trusted_artifacts`` are not validated
     again.
     """
@@ -40,11 +45,12 @@ def validate_coordinated_response_state(value: object, trusted_artifacts: object
         raise InvalidRequestError("coordinated response state fields are malformed")
     try:
         validated_repository = validate_repository_state(value.get("repository", {}), trusted_artifacts)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("coordinated repository must be a RepositoryState") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("coordinated repository must be a RepositoryState") from err
     mutation_receipts = value.get("mutation_receipts", {})
     if isinstance(mutation_receipts, MutationReceiptLedger):
-        receipts: object = mutation_receipts
+        # A clone keeps the caller's ledger out of the validated state; its entries were validated on entry.
+        receipts: object = mutation_receipts.clone()
     elif isinstance(mutation_receipts, dict):
         receipts = MutationReceiptLedger(state=mutation_receipts).snapshot()
     else:
@@ -111,6 +117,74 @@ def artifact_generation_changes(before: dict, after: dict, statement_ids: set) -
     return result
 
 
+def planned_candidate_unchanged(candidate: dict, changed_ids: set, record: dict) -> bool:
+    """Return whether a planned candidate still matches what ``build_candidate`` recorded.
+
+    Unchanged artifacts must still be, or equal, the planning state's own objects;
+    changed artifacts and the receipt must equal their planning copies; and the receipt
+    ledger must not have advanced. The identity check settles the common case without
+    comparing or revalidating every artifact.
+    """
+    after = candidate.get("after", {})
+    repository = after.get("repository", {})
+    artifacts = repository.get("artifacts", {})
+    receipts = after.get("mutation_receipts", {})
+    unchanged_artifacts = record.get("unchanged_artifacts", {})
+    changed_artifacts = record.get("changed_artifacts", {})
+    unchanged = (
+        isinstance(artifacts, dict)
+        and isinstance(receipts, MutationReceiptLedger)
+        and set(artifacts) == record.get("artifact_ids", set())
+        and repository.get("state_generation", 0) == record.get("state_generation", 0)
+        and candidate.get("receipt", {}) == record.get("receipt", {})
+        and receipts.revision == record.get("receipts_revision", 0)
+        and receipts.next_sequence == record.get("receipts_next_sequence", 0)
+        and all(
+            (
+                artifacts.get(identifier, {}) == changed_artifacts.get(identifier, {})
+                if identifier in changed_ids
+                else (
+                    artifacts.get(identifier, {}) is unchanged_artifacts.get(identifier, {})
+                    or artifacts.get(identifier, {}) == unchanged_artifacts.get(identifier, {})
+                )
+            )
+            for identifier in artifacts
+        )
+    )
+    return unchanged
+
+
+def roll_back_publication(
+    coordinator,
+    live_repository: dict,
+    changed: set,
+    changed_known: bool,
+    before: dict,
+    before_receipts: MutationReceiptLedger,
+    publication_error: Exception,
+) -> None:
+    """Restore the live state that a failed publication replaced.
+
+    ``coordinator`` is the ``AtomicMutationCoordinator`` whose publication failed with
+    ``publication_error``. When the rollback itself fails, both failures are logged and
+    ``MutationCoordinationError`` is raised with ``live_state_changed`` set.
+    """
+    try:
+        if changed_known:
+            coordinator.repository.restore_trusted(live_repository, changed, changed_known=True)
+        else:
+            coordinator.repository.restore_trusted(live_repository)
+        coordinator.publication_hook(before)
+        coordinator.mutation_receipts.replace_from_snapshot(before_receipts)
+    except Exception as err:
+        logger.error("Cache mutation publication failed", exc_info=publication_error)
+        logger.error("Cache mutation rollback failed", exc_info=err)
+        raise MutationCoordinationError(
+            "cache mutation publication failed and rollback failed",
+            live_state_changed=True,
+        ) from err
+
+
 class AtomicMutationCoordinator:
     """Atomically publish repository and receipt changes inside one process.
 
@@ -138,9 +212,10 @@ class AtomicMutationCoordinator:
         self.mutation_receipts = mutation_receipts
         self.publication_hook = publication_hook
         # Recent candidates this coordinator built: id -> (candidate, changed
-        # statement IDs). Executing one of them unchanged skips revalidation.
-        # A candidate must not be modified between build_candidate and execute.
-        self.internal_planned: dict[int, tuple[dict, set]] = {}
+        # statement IDs, planning record). Executing one of them skips full
+        # revalidation after planned_candidate_unchanged confirms the caller did
+        # not modify it between build_candidate and execute.
+        self.internal_planned: dict[int, tuple[dict, set, dict]] = {}
 
     @contextmanager
     def mutation(self):
@@ -196,6 +271,14 @@ class AtomicMutationCoordinator:
         repository_candidate: dict,
         receipt: dict,
     ) -> dict:
+        """Plan one mutation against the live state and return its before/after candidate.
+
+        The repository candidate must advance ``state_generation`` by one exactly when it
+        changes an artifact, and the receipt's affected generations must match those
+        changes; otherwise ``ConflictError`` is raised. The receipt gains the statement
+        scope bindings of every changed artifact. The returned candidate is retained so
+        ``execute`` can publish it without full revalidation.
+        """
         validated_receipt = validate_mutation_receipt(receipt)
         with self.lock, self.repository.coordinated_mutation():
             before_repository = self.repository.trusted_state()
@@ -206,8 +289,8 @@ class AtomicMutationCoordinator:
             if not planned.get("planned", False):
                 try:
                     validated_repository_candidate = validate_repository_state(repository_candidate, before_artifacts)
-                except InvalidRequestError as error:
-                    raise InvalidRequestError("repository_candidate must be a RepositoryState") from error
+                except InvalidRequestError as err:
+                    raise InvalidRequestError("repository_candidate must be a RepositoryState") from err
                 compared = set(before_artifacts) | set(validated_repository_candidate.get("artifacts", {}))
             else:
                 # Built by the repository from this live state; only the planned IDs can differ.
@@ -253,22 +336,43 @@ class AtomicMutationCoordinator:
             receipts.record(validated_receipt)
             after = {"repository": validated_repository_candidate, "mutation_receipts": receipts}
             result = {"before": before, "after": after, "receipt": validated_receipt}
+            changed_ids = {change[0] for change in changes}
+            candidate_artifacts = validated_repository_candidate.get("artifacts", {})
+            planning_record = {
+                "artifact_ids": set(candidate_artifacts),
+                "unchanged_artifacts": before_artifacts,
+                "changed_artifacts": deepcopy({identifier: candidate_artifacts.get(identifier, {}) for identifier in changed_ids}),
+                "state_generation": candidate_generation,
+                "receipt": deepcopy(validated_receipt),
+                "receipts_revision": receipts.revision,
+                "receipts_next_sequence": receipts.next_sequence,
+            }
             while len(self.internal_planned) >= MAX_PLANNED_CANDIDATES:
                 del self.internal_planned[next(iter(self.internal_planned))]
-            self.internal_planned[id(result)] = (result, {change[0] for change in changes})
+            self.internal_planned[id(result)] = (result, changed_ids, planning_record)
             return result
 
     def execute(self, candidate: dict) -> dict:
+        """Publish a candidate atomically, rolling every change back if publication fails.
+
+        A candidate this coordinator built is checked against its planning record and
+        published without full revalidation; any other candidate is validated in full.
+        A stale or modified candidate raises ``ConflictError``. A failed publication
+        raises ``MutationCoordinationError`` whose ``live_state_changed`` reports whether
+        the rollback restored the live state.
+        """
         with self.lock, self.repository.coordinated_mutation():
             live_repository = self.repository.trusted_state()
             live_artifacts = live_repository.get("artifacts", {})
             live_generation = live_repository.get("state_generation", 0)
-            planned = self.internal_planned.pop(id(candidate), ())
+            planned_result, planned_changes, planning_record = self.internal_planned.pop(id(candidate), ({}, set(), {}))
             # Only a candidate this coordinator built knows exactly which
             # statements changed; any other candidate is compared in full.
-            changed_known = bool(planned) and planned[0] is candidate
-            changed: set = planned[1] if changed_known else set()
+            changed_known = planned_result is candidate
+            changed: set = planned_changes if changed_known else set()
             if changed_known:
+                if not planned_candidate_unchanged(candidate, planned_changes, planning_record):
+                    raise ConflictError("coordinated mutation candidate changed after it was planned")
                 validated_candidate = candidate
                 planned_after = candidate.get("after", {})
                 planned_repository = planned_after.get("repository", {})
@@ -297,26 +401,13 @@ class AtomicMutationCoordinator:
                     self.repository.replace_trusted(after_repository, live_generation)
                 self.publication_hook(after)
                 self.mutation_receipts.replace_from_snapshot(after_receipts)
-            except Exception as error:
-                try:
-                    if changed_known:
-                        self.repository.restore_trusted(live_repository, changed, changed_known=True)
-                    else:
-                        self.repository.restore_trusted(live_repository)
-                    self.publication_hook(before)
-                    self.mutation_receipts.replace_from_snapshot(before_receipts)
-                except Exception as rollback_error:
-                    logger.error("Cache mutation publication failed", exc_info=error)
-                    logger.error("Cache mutation rollback failed", exc_info=rollback_error)
-                    raise MutationCoordinationError(
-                        "cache mutation publication failed and rollback failed",
-                        live_state_changed=True,
-                    ) from rollback_error
-                logger.error("Cache mutation publication failed and was rolled back", exc_info=error)
+            except Exception as err:
+                roll_back_publication(self, live_repository, changed, changed_known, before, before_receipts, err)
+                logger.error("Cache mutation publication failed and was rolled back", exc_info=err)
                 raise MutationCoordinationError(
                     "cache mutation publication failed and was rolled back",
                     live_state_changed=False,
-                ) from error
+                ) from err
             execution = {"receipt": validated_candidate.get("receipt", {}), "published": True}
             result = validate_mutation_execution_result(execution)
             return result

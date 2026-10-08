@@ -1,6 +1,5 @@
 """Current-time disclosure eligibility for response-less Proposition evidence."""
 
-from concurrent.futures import CancelledError
 from datetime import datetime
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
@@ -10,13 +9,17 @@ from engram.constants import (
     EMPTY_SCOPE_KEY,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
+    MAX_REASON_CODE_BYTES,
+    MAX_RESOLVER_NAME_BYTES,
     MAX_VISIBILITY_GRANTS,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
     PROPOSITION_EVIDENCE_PRODUCERS,
     PROPOSITION_SEMANTIC_PROJECTION_FIELDS,
     SEMANTIC_SIMILARITY_FLOOR,
     SOURCE_AGREEMENT_FLOOR,
+    STRUCTURED_GRAPH_RESOLVER_NAME,
     STRUCTURED_MATCH_FLOOR,
+    SUPPORT_SEMANTIC_RESOLVER_NAME,
     UNCONSTRAINED_ASSERTION_BASIS,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
@@ -25,7 +28,7 @@ from engram.constants import (
     TemporalAxis,
     TemporalQueryOperator,
 )
-from engram.errors import IdentityValidationError, InvalidRequestError, ResolutionCancelledError
+from engram.errors import IdentityValidationError, InvalidRequestError, failure_origin
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.identity import scope_key_signature, validate_scope_key
 from engram.resolution import (
@@ -181,8 +184,8 @@ def evaluate_evidence_usefulness(policy: object, record: object) -> dict:
     validated_policy = validate_evidence_usefulness_policy(policy)
     try:
         validated_record = validate_proposition_evidence_record(record)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("evidence usefulness requires a PropositionEvidenceRecord") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("evidence usefulness requires a PropositionEvidenceRecord") from err
     values = validated_record.get("features", {}).get("values", {})
     trust = validated_record.get("trust", {})
     reasons: set[EvidenceUsefulnessReason] = set()
@@ -247,8 +250,8 @@ def visibility_authorization(
         raise InvalidRequestError("visibility authorization allowed must be a boolean")
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("visibility authorization scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("visibility authorization scope must be a ScopeKey") from err
     if not isinstance(ownership, PropositionOwnership) or ownership not in {
         PropositionOwnership.COMPANY,
         PropositionOwnership.CUSTOMER,
@@ -257,7 +260,7 @@ def visibility_authorization(
     normalized_authority = require_identifier(
         authority_id, "visibility authorization authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
     )
-    normalized_reason = require_identifier(reason_code, "visibility authorization reason_code", 96)
+    normalized_reason = require_identifier(reason_code, "visibility authorization reason_code", MAX_REASON_CODE_BYTES)
     result: dict = {
         "allowed": allowed,
         "scope": validated_scope,
@@ -284,8 +287,8 @@ def visibility_grant(scope: object, ownership: object) -> dict:
     """Validate one exact typed scope/ownership authorization."""
     try:
         validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as error:
-        raise InvalidRequestError("visibility grant scope must be a ScopeKey") from error
+    except IdentityValidationError as err:
+        raise InvalidRequestError("visibility grant scope must be a ScopeKey") from err
     if not isinstance(ownership, PropositionOwnership) or ownership not in {
         PropositionOwnership.COMPANY,
         PropositionOwnership.CUSTOMER,
@@ -314,8 +317,8 @@ class ExactScopeVisibilityAuthority:
             raise InvalidRequestError(f"visibility grants exceeds the limit of {MAX_VISIBILITY_GRANTS}")
         try:
             validated_grants = tuple(validate_visibility_grant(grant) for grant in grants)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values") from err
         keys = tuple(
             (scope_key_signature(grant.get("scope", {})), grant.get("ownership", PropositionOwnership.PUBLIC))
             for grant in validated_grants
@@ -327,8 +330,8 @@ class ExactScopeVisibilityAuthority:
     def evaluate(self, scope: dict, ownership: PropositionOwnership) -> dict:
         try:
             scope = validate_scope_key(scope)
-        except IdentityValidationError as error:
-            raise InvalidRequestError("visibility evaluation scope must be a ScopeKey") from error
+        except IdentityValidationError as err:
+            raise InvalidRequestError("visibility evaluation scope must be a ScopeKey") from err
         if ownership not in {PropositionOwnership.COMPANY, PropositionOwnership.CUSTOMER}:
             raise InvalidRequestError("visibility evaluation ownership must be COMPANY or CUSTOMER")
         allowed = (scope_key_signature(scope), ownership) in self.internal_grants
@@ -359,8 +362,8 @@ def proposition_eligibility_decision(
         raise InvalidRequestError("Proposition eligibility reason must be a PropositionEligibilityReason")
     try:
         validated_disclosure = validate_disclosure_decision(disclosure)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition eligibility disclosure must be a DisclosureDecision") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("Proposition eligibility disclosure must be a DisclosureDecision") from err
     if not isinstance(disclosure_available, bool):
         raise InvalidRequestError("Proposition eligibility disclosure_available must be a boolean")
     if not isinstance(revalidated, bool):
@@ -834,19 +837,18 @@ class PropositionEligibilityEvaluator:
             reason = PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
             result = proposition_eligibility_decision(projection, False, reason)
             return result
+        # An unavailable or refusing authority backend excludes the projection; cancellation
+        # and programming errors propagate.
         try:
             authorization = authority_method(frame.get("scope", {}), ownership)
-        except (ResolutionCancelledError, CancelledError):
-            # Cancellation interrupts the request; only an authority failure excludes.
-            raise
-        except Exception as error:
-            logger.warning("Visibility authority failed", exc_info=error)
+        except (RuntimeError, ValueError) as err:
+            logger.warning("Visibility authority failed (%s)", failure_origin(err))
             result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
             return result
         try:
             authorization = validate_visibility_authorization(authorization)
-        except InvalidRequestError as error:
-            logger.warning("Visibility authority returned an invalid authorization", exc_info=error)
+        except InvalidRequestError as err:
+            logger.warning("Visibility authority returned an invalid authorization (%s)", failure_origin(err))
             result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
             return result
         if authorization.get("scope", {}) != frame.get("scope", {}):
@@ -883,17 +885,28 @@ class PropositionEligibilityEvaluator:
         *,
         trusted_frame: bool = False,
     ) -> dict:
+        """Re-read a discovered projection by ID and decide its eligibility against the current state.
+
+        ``current_proposition_projection(proposition_id, basis_window)`` returns a tuple of at
+        most one projection. Each outcome fails closed:
+
+        - no callable reader, or a read that raises ``RuntimeError``/``ValueError``:
+          REVALIDATION_UNAVAILABLE;
+        - no row, or an invalid row: REVALIDATION_MISSING;
+        - a row that is not a by-ID projection, names a different proposition, subject,
+          predicate or object, or carries a changed semantic meaning:
+          REVALIDATION_IDENTITY_CONFLICT, marked revalidated;
+        - otherwise the current projection is evaluated, and the decision is marked revalidated.
+        """
         if not callable(current_proposition_projection):
             result = proposition_eligibility_decision(discovered, False, PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
             return result
         discovered = validate_proposition_projection(discovered)
+        # Only a failed or malformed read is unavailable evidence; cancellation and programming errors propagate.
         try:
             current = current_proposition_projection(discovered.get("proposition_id", ""), assertion_basis_window(frame))
-        except (ResolutionCancelledError, CancelledError):
-            # Cancellation interrupts the request; only a read failure is unavailable evidence.
-            raise
-        except Exception as error:
-            logger.warning("Proposition revalidation read failed", exc_info=error)
+        except (RuntimeError, ValueError) as err:
+            logger.warning("Proposition revalidation read failed (%s)", failure_origin(err))
             result = proposition_eligibility_decision(discovered, False, PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
             return result
         if not isinstance(current, tuple) or len(current) != 1:
@@ -901,8 +914,8 @@ class PropositionEligibilityEvaluator:
             return result
         try:
             projection = validate_proposition_projection(current[0])
-        except InvalidRequestError as error:
-            logger.warning("Proposition revalidation returned an invalid projection", exc_info=error)
+        except InvalidRequestError as err:
+            logger.warning("Proposition revalidation returned an invalid projection (%s)", failure_origin(err))
             result = proposition_eligibility_decision(discovered, False, PropositionEligibilityReason.REVALIDATION_MISSING)
             return result
         conflict = PropositionEligibilityReason.REVALIDATION_IDENTITY_CONFLICT
@@ -949,17 +962,17 @@ def proposition_evidence_record(
     """
     discovered = discovered if trusted else validate_proposition_projection(discovered)
     decision = decision if trusted else validate_proposition_eligibility_decision(decision)
-    source = require_identifier(source_resolver, "Proposition evidence source_resolver", 96)
+    source = require_identifier(source_resolver, "Proposition evidence source_resolver", MAX_RESOLVER_NAME_BYTES)
     if source not in PROPOSITION_EVIDENCE_PRODUCERS:
         raise InvalidRequestError("Proposition evidence source_resolver is not an allowed producer")
-    if source == "structured_graph" and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) not in {
+    if source == STRUCTURED_GRAPH_RESOLVER_NAME and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) not in {
         PropositionProjectionQuery.STRUCTURED_ENTITY,
         PropositionProjectionQuery.STRUCTURED_KEYWORD,
         PropositionProjectionQuery.RELATION_ONE_HOP,
     }:
         raise InvalidRequestError("structured Proposition evidence requires a structured discovery projection")
     if (
-        source == "support_semantic"
+        source == SUPPORT_SEMANTIC_RESOLVER_NAME
         and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) != PropositionProjectionQuery.VECTOR
     ):
         raise InvalidRequestError("semantic Proposition evidence requires a vector discovery projection")
@@ -1143,8 +1156,8 @@ def canonicalize_proposition_evidence(
         raise InvalidRequestError(f"Proposition evidence normalization requires a tuple of at most {MAX_RESOLUTION_VALUES} records")
     try:
         validated_records = tuple(validate_proposition_evidence_record(record) for record in records)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("Proposition evidence normalization requires PropositionEvidenceRecord values") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("Proposition evidence normalization requires PropositionEvidenceRecord values") from err
     if not callable(cooperative_check):
         raise InvalidRequestError("Proposition evidence normalization cooperative_check must be callable")
     grouped: dict[str, list[dict]] = {}

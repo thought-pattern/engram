@@ -25,8 +25,8 @@ def test_cli_no_longer_accepts_disk_state_or_transcript_options() -> None:
     ):
         try:
             main(arguments)
-        except SystemExit as error:
-            assert error.code == 2
+        except SystemExit as err:
+            assert err.code == 2
         else:
             raise AssertionError(f"removed disk option was unexpectedly accepted: {arguments[0]}")
 

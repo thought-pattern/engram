@@ -23,6 +23,13 @@ from tomllib import loads as toml_loads
 # place, and core.py exposes it as the bot's ``version`` property.
 VERSION = "1.2.0"
 DEFAULT_USER_ID = "0"
+# Service-boundary defaults shared by EngramCore, the gRPC servicer and the MCP tools.
+DEFAULT_PROPOSE_LIMIT = 1
+DEFAULT_LEARNED_SOURCE_LABEL = "unknown"
+# Tiered-pipeline defaults: the calibrated score at which a conversational statement answers
+# without the LLM, and how many retrieved statements the LLM receives as context.
+DEFAULT_PIPELINE_HIGH_CONFIDENCE = 0.7
+DEFAULT_PIPELINE_CONTEXT_LIMIT = 3
 # An abandoned anonymous conversation (for example a crashed client) stops blocking new ones after this idle lease.
 ANONYMOUS_CONVERSATION_LEASE_SECONDS = 300.0
 # A request queued behind another turn's slot re-checks its caller's cancellation at this interval,
@@ -117,60 +124,81 @@ GRAPH_SPO_MEANING_GUARD = (
     "AND NOT exists((proposition)-[:HAS_CONTEXT]->()) "
     "AND NOT exists((proposition)-[:HAS_APPLICABILITY_SCOPE]->()) "
 )
-GRAPH_ENTITY_FACTS_QUERY = (
-    "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
+# Shared clauses of the phrased fact-recall reads, which bind ``proposition``,
+# ``predicate``, ``subject``, ``object``, ``support`` and ``assertion``.
+GRAPH_FACT_ARGUMENTS = (
     "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
     "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
-    "AND (toLower(subject.primary_label) = toLower($name) "
+)
+GRAPH_FACT_ACTIVE = (
+    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
+    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
+    "AND support.retired_at IS NULL "
+)
+GRAPH_FACT_VALID_AT_EVALUATION = (
+    "AND (assertion.valid_time_start IS NULL "
+    "OR assertion.valid_time_start <= datetime($evaluation_time)) "
+    "AND (assertion.valid_time_end IS NULL "
+    "OR datetime($evaluation_time) < assertion.valid_time_end) "
+)
+GRAPH_FACT_VISIBLE = (
+    "AND (proposition.visibility_kind = 'global' "
+    "OR ($visibility_kind IN ['company', 'engagement'] "
+    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
+    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
+    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
+    "AND proposition.engagement_id = $engagement_id)) "
+)
+GRAPH_FACT_RETURN = (
+    "RETURN DISTINCT proposition.id AS proposition_id, "
+    "subject.primary_label AS subject, "
+    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
+    "object.primary_label AS object"
+)
+GRAPH_ENTITY_FACTS_QUERY = (
+    "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
+    + GRAPH_FACT_ARGUMENTS
+    + "AND (toLower(subject.primary_label) = toLower($name) "
     "OR toLower($name) IN [alias IN coalesce(subject.aliases, []) | toLower(alias)] "
     "OR toLower(object.primary_label) = toLower($name) "
     "OR toLower($name) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
-    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
-    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
-    "OR assertion.valid_time_start <= datetime($evaluation_time)) "
-    "AND (assertion.valid_time_end IS NULL "
-    "OR datetime($evaluation_time) < assertion.valid_time_end) "
-    "AND (proposition.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] "
-    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
-    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
-    "AND proposition.engagement_id = $engagement_id)) "
-    "RETURN DISTINCT proposition.id AS proposition_id, "
-    "subject.primary_label AS subject, "
-    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
-    "object.primary_label AS object "
-    "LIMIT 5"
+    + GRAPH_FACT_ACTIVE
+    + GRAPH_SPO_MEANING_GUARD
+    + GRAPH_FACT_VALID_AT_EVALUATION
+    + GRAPH_FACT_VISIBLE
+    + GRAPH_FACT_RETURN
+    + " LIMIT 5"
 )
 GRAPH_KEYWORD_FACTS_QUERY = (
     "MATCH (proposition:Proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
-    "MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
-    "MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
-    "MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion) "
-    "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
-    "AND (toLower(subject.primary_label) CONTAINS toLower($keyword) "
+    + GRAPH_FACT_ARGUMENTS
+    + "AND (toLower(subject.primary_label) CONTAINS toLower($keyword) "
     "OR toLower(object.primary_label) CONTAINS toLower($keyword) "
     "OR toLower(coalesce(predicate.label, predicate.canonical_id)) CONTAINS toLower($keyword)) "
-    "AND proposition.lifecycle_disposition = 'active' AND proposition.retired_at IS NULL "
-    "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL " + GRAPH_SPO_MEANING_GUARD + "AND (assertion.valid_time_start IS NULL "
-    "OR assertion.valid_time_start <= datetime($evaluation_time)) "
-    "AND (assertion.valid_time_end IS NULL "
-    "OR datetime($evaluation_time) < assertion.valid_time_end) "
-    "AND (proposition.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] "
-    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
-    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
-    "AND proposition.engagement_id = $engagement_id)) "
-    "RETURN DISTINCT proposition.id AS proposition_id, "
-    "subject.primary_label AS subject, "
-    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
-    "object.primary_label AS object "
-    "LIMIT 3"
+    + GRAPH_FACT_ACTIVE
+    + GRAPH_SPO_MEANING_GUARD
+    + GRAPH_FACT_VALID_AT_EVALUATION
+    + GRAPH_FACT_VISIBLE
+    + GRAPH_FACT_RETURN
+    + " LIMIT 3"
+)
+# The ANN fact read: the vector procedure call is why graph.execute exempts it from
+# the write-clause check, which matches CALL.
+VECTOR_SEARCH_PROPOSITIONS_QUERY = (
+    "CALL vector_search.search($index_name, $limit, $query_embedding) YIELD node, distance "
+    "WITH node AS proposition, 1.0 - distance AS similarity "
+    "MATCH (proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
+    + GRAPH_FACT_ARGUMENTS
+    + "AND similarity >= $min_similarity "
+    + GRAPH_FACT_ACTIVE
+    + GRAPH_SPO_MEANING_GUARD
+    + GRAPH_FACT_VALID_AT_EVALUATION
+    + "AND predicate.canonical_id <> 'generic_relation' "
+    + GRAPH_FACT_VISIBLE
+    + GRAPH_FACT_RETURN
+    + ", similarity ORDER BY similarity DESC, proposition.id"
 )
 TRIPLE_QUERY_OBJECT = (
     "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
@@ -243,6 +271,8 @@ LIFECYCLE_AUDIT_KEY = "lifecycle_audit"
 LIFECYCLE_AUDIT_FIELDS = set({"operation", "reason", "caller_id", "request_id", "occurred_at", "detail"})
 MAX_LIFECYCLE_AUDIT_DETAIL_BYTES = 1_024
 MAX_ARTIFACT_ENUM_BYTES = 16
+# A serialized enum value of the identity, frame and resolution contracts.
+MAX_ENUM_WIRE_BYTES = 32
 ARTIFACT_PROVENANCE_FIELDS = set({"source_label", "caller_id", "accepted_at"})
 ARTIFACT_STATISTICS_FIELDS = set(
     {
@@ -445,7 +475,79 @@ QUERY_FRAME_FIELDS = set(
 )
 MAX_REQUIRED_SOURCE_LABEL_BYTES = 256
 INHERITANCE_PROVENANCE_FIELDS = set({"field_name", "source_turn"})
+MAX_INHERITANCE_FIELD_NAME_BYTES = 64
+MAX_INHERITANCE_SOURCE_TURN = 1_000_000
 REWRITE_TRACE_STEP_FIELDS = set({"rule_id", "input_text", "output_text"})
+
+# Retrieval-only symbolic rewrite corpus limits, engine defaults and contract field sets.
+MAX_REWRITE_RULES = 256
+MAX_REWRITE_RULE_ID_BYTES = 96
+MAX_REWRITE_PATTERN_BYTES = 512
+MAX_REWRITE_PROVENANCE_BYTES = 512
+MAX_REWRITE_LICENSE_BYTES = 96
+MAX_REWRITE_CATEGORY_BYTES = 64
+MAX_REWRITE_CORPUS_ID_BYTES = 128
+MAX_REWRITE_RULE_TOKENS = 512
+MAX_REWRITE_PRIORITY = 10_000
+MAX_REWRITE_APPLICATIONS_PER_RULE = 8
+DEFAULT_REWRITE_MAX_DEPTH = 8
+DEFAULT_REWRITE_MAX_EXPANSIONS = 16
+DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
+MAX_REWRITE_ELAPSED_NS = 10_000_000_000
+REWRITE_RULE_FIELDS = set(
+    {
+        "rule_id",
+        "category",
+        "input_constraints",
+        "output_template",
+        "priority",
+        "scope",
+        "max_applications",
+        "provenance",
+    }
+)
+REWRITE_INPUT_FIELDS = set(
+    {
+        "match_mode",
+        "pattern",
+        "min_tokens",
+        "max_tokens",
+        "required_operators",
+        "requires_inherited_subject",
+    }
+)
+REWRITE_PROVENANCE_FIELDS = set({"author", "origin", "license", "created_at"})
+REWRITE_CORPUS_FIELDS = set({"corpus_id", "rules"})
+REWRITE_SAFE_TEMPLATE_FIELDS = set({"subject"})
+
+
+class RewriteMatchMode(StrEnum):
+    """Closed matching operations; none can invoke a response template."""
+
+    EXACT = "exact"
+    PREFIX = "prefix"
+    SUFFIX = "suffix"
+    TOKEN_SEQUENCE = "token_sequence"
+
+
+class RewriteScope(StrEnum):
+    """Whether a rule may depend on inherited conversational context."""
+
+    GLOBAL = "global"
+    CONTEXTUAL = "contextual"
+
+
+class RewriteStopReason(StrEnum):
+    """Concrete terminal state for one bounded rewrite execution."""
+
+    FIXED_POINT = "fixed_point"
+    DEPTH_LIMIT = "depth_limit"
+    EXPANSION_LIMIT = "expansion_limit"
+    CYCLE = "cycle"
+    OUTPUT_LIMIT = "output_limit"
+    TIME_LIMIT = "time_limit"
+
+
 COMPACT_QUERY_FRAME_FIELDS = set(
     {
         "operator",
@@ -460,6 +562,9 @@ COMPACT_QUERY_FRAME_FIELDS = set(
     }
 )
 MAX_CONTEXTUAL_SUBJECTS = 4
+# A conversation's turn counter restarts after this many turns; frames older than
+# MAX_CONTEXTUAL_TURN_DISTANCE are never inherited, so a restart only drops context.
+MAX_CONTEXTUAL_TURN = 1_000_000
 MAX_CONTEXTUAL_TURN_DISTANCE = 2
 MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE = 0.55
 MAX_CONTEXTUAL_TOPIC_BYTES = 256
@@ -523,6 +628,8 @@ COMPOSITION_PLAN_FIELDS = set(
         "max_path_propositions",
     }
 )
+# Fields a Predicate lookup row must carry before composition reads it.
+COMPOSITION_PREDICATE_ROW_FIELDS = set({"canonical_id", "primary_label", "object_type"})
 MAX_COMPOSITION_HOPS = 2
 MAX_COMPOSITION_ROWS = 64
 MAX_COMPOSITION_BRANCHES = 4
@@ -536,6 +643,11 @@ MAX_COMPOSITION_TEXT_BYTES = 256
 COMPOSITION_DATE_SECONDS_FRACTION = re_compile(r"(?<![+\-0-9])[0-9]{2}:?[0-9]{2}:?[0-9]{2}[.,]([0-9]+)")
 DATETIME_FRACTION_DIGITS = 6
 FEATURE_SET_FIELDS = set({"values", "unavailable"})
+MAX_FEATURE_NAME_BYTES = 96
+# Feature values are bounded to this magnitude in either direction.
+MAX_FEATURE_MAGNITUDE = 1_000_000.0
+# Key bound of a JSON value frozen into a resolution contract.
+MAX_FROZEN_JSON_KEY_BYTES = 128
 CANONICAL_PROPOSITION_REFERENCES_FIELDS = set({"subject_entity_id", "predicate_id", "object_entity_id"})
 PROPOSITION_VALIDITY_INPUTS_FIELDS = set(
     {
@@ -587,6 +699,14 @@ PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
         "filters",
         "aggregation_inputs",
     }
+)
+# Closed filter vocabulary of a Proposition evidence path step, in the sorted order a step carries it.
+PROPOSITION_PATH_FILTERS = (
+    "canonical_identity",
+    "object_type",
+    "publication_revalidation",
+    "temporal_eligibility",
+    "visibility",
 )
 PROPOSITION_EVIDENCE_RECORD_FIELDS = set(
     {
@@ -688,6 +808,43 @@ SPARSE_RESOLVER_COST_CLASS = CostClass.CHEAP
 UTILITY_RESOLVER_NAME = "utility"
 UTILITY_RESOLVER_COST_CLASS = CostClass.CHEAP
 UTILITY_RESOLVER_PRODUCER = "utility-resolver"
+# Producers of deterministic graph candidates and the exact provenance each records, so
+# the candidate authority can rebuild and revalidate them against current Proposition state.
+RELATION_ONE_HOP_PRODUCER = "relation_one_hop"
+GRAPH_COMPOSITION_PRODUCER = "graph_composition"
+RELATION_CANDIDATE_PROVENANCE_FIELDS = set(
+    {
+        "producer",
+        "subject_entity_id",
+        "subject_label",
+        "predicate_id",
+        "predicate_label",
+        "object_entity_id",
+        "object_label",
+        "object_type",
+        "predicate_cardinality",
+        "selection_reason",
+        "supplied_trust",
+    }
+)
+COMPOSITION_CANDIDATE_PROVENANCE_FIELDS = set(
+    {
+        "producer",
+        "operator",
+        "root_entity_id",
+        "root_label",
+        "predicate_labels",
+        "proposition_ids",
+        "identity_chain",
+        "trust_chain",
+        "terminal_labels",
+        "terminal_types",
+        "truth_value",
+        "truth_available",
+        "aggregate_value",
+        "aggregate_value_available",
+    }
+)
 UTILITY_PLUGIN_NAMES = (
     "arithmetic",
     "boolean",
@@ -770,6 +927,10 @@ MAX_EVIDENCE_PACKAGE_RECORDS = 10
 MAX_EVIDENCE_PACKAGE_INPUT_RECORDS = 1_000
 MAX_EVIDENCE_PACKAGE_BYTES = 65_536
 MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS = 8
+MIN_EVIDENCE_PACKAGE_BYTES = 256
+# Retained and omitted record counts stay within the signed 32-bit range.
+MAX_EVIDENCE_PACKAGE_RECORD_COUNT = 2_147_483_647
+MAX_EVIDENCE_ID_BYTES = 256
 FUSION_POLICY_FIELDS = set(
     {
         "weights",
@@ -946,6 +1107,18 @@ MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS = 65_536
 MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES = 256
 MAX_PROPOSITION_PROJECTION_TERM_BYTES = 4_096
 MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES = 40
+# Argument, qualification, context and applicability counts a projection may report.
+MAX_PROPOSITION_PROJECTION_STRUCTURE_COUNT = 1_000_000
+# Matches the 128-character ceiling of the VECTOR_INDEX_NAME pattern.
+MAX_VECTOR_INDEX_NAME_BYTES = 128
+PROPOSITION_POLARITIES = set({"positive", "negative"})
+# Modality family -> the operators that family admits.
+PROPOSITION_MODALITY_OPERATORS = {
+    "none": set({"none"}),
+    "alethic": set({"possible", "necessary", "impossible"}),
+    "epistemic": set({"possible", "probable", "certain"}),
+    "deontic": set({"obligation", "permission", "prohibition", "recommendation"}),
+}
 PROPOSITION_SEMANTIC_PROJECTION_FIELDS = (
     "polarity",
     "modality_family",
@@ -1197,7 +1370,7 @@ RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY = (
     "ORDER BY c.id LIMIT $limit"
 )
 MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS = 3
-PROPOSITION_EVIDENCE_PRODUCERS = set({"structured_graph", "support_semantic"})
+PROPOSITION_EVIDENCE_PRODUCERS = set({STRUCTURED_GRAPH_RESOLVER_NAME, SUPPORT_SEMANTIC_RESOLVER_NAME})
 MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
 COORDINATED_RESPONSE_STATE_FIELDS = set({"repository", "mutation_receipts"})
 COORDINATED_MUTATION_CANDIDATE_FIELDS = set(
@@ -1219,6 +1392,9 @@ REPOSITORY_STATE_FIELDS = set(
     }
 )
 MAX_REPOSITORY_ARTIFACTS = 100_000
+# Candidates the repository and the mutation coordinator remember between planning and
+# publication; each mutation plans and publishes one, so this only bounds abandoned plans.
+MAX_PLANNED_CANDIDATES = 16
 MAX_REQUEST_ID_BYTES = 256
 MAX_RECEIPT_STATEMENT_ID_BYTES = 256
 MAX_RESULT_BYTES = 65_536
@@ -1230,6 +1406,9 @@ MAX_RESULT_STRING_BYTES = 16_384
 MAX_AFFECTED_GENERATIONS = 1_024
 MAX_RECEIPTS = 100_000
 MAX_TOMBSTONES = 100_000
+# Retention of a ledger built without explicit bounds; each stays within its MAX_ ceiling.
+DEFAULT_RECEIPT_RETENTION = 10_000
+DEFAULT_TOMBSTONE_RETENTION = 10_000
 ARTIFACT_GENERATION_CHANGE_FIELDS = set(
     {
         "statement_id",
@@ -1318,6 +1497,64 @@ MCP_TURN_EVALUATION_CHECKS = set(
         "learned_statements_list",
     }
 )
+
+# =============================================================================
+# Configuration defaults and limits
+# =============================================================================
+
+# engram.config validates every section against these values; runtime readers of a
+# validated configuration import them instead of re-spelling a fallback.
+PROPOSITION_VECTOR_INDEX_NAME = "proposition_embeddings"
+PROPOSITION_VECTOR_DIMENSION = 384
+PROPOSITION_VECTOR_METRIC = "cos"
+DEFAULT_GRAPH_HOST = "localhost"
+DEFAULT_GRAPH_PORT = 7687
+DEFAULT_GRAPH_VECTOR_MODEL = "all-MiniLM-L6-v2"
+DEFAULT_GRAPH_VECTOR_LIMIT = 250
+MAX_GRAPH_VECTOR_LIMIT = 1_000
+DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT = 100_000
+MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT = 1_000_000
+DEFAULT_VECTOR_MIN_SIMILARITY = 0.45
+DEFAULT_GRAPH_VECTOR_WEIGHT = 0.75
+DEFAULT_SPARSE_MAX_QUERY_TERMS = 64
+MAX_SPARSE_QUERY_TERMS = 256
+DEFAULT_SPARSE_MAX_POSTING_VISITS = 100_000
+MAX_SPARSE_POSTING_VISITS = 10_000_000
+DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS = 64
+MAX_SPARSE_PREFIX_EXPANSIONS = 1_024
+APPROVED_SEMANTIC_LICENSE_IDS = set({"apache-2.0", "mit", "bsd-3-clause"})
+SEMANTIC_BACKENDS = set({"native", "onnx", "quantized"})
+DEFAULT_SEMANTIC_NORMALIZATION_VERSION = 1
+MAX_SEMANTIC_NORMALIZATION_VERSION = 1_000_000
+DEFAULT_SEMANTIC_BATCH_SIZE = 32
+MAX_SEMANTIC_BATCH_SIZE = 1_024
+DEFAULT_SEMANTIC_MAX_INPUT_BYTES = 16_384
+MAX_SEMANTIC_INPUT_BYTES = 1_048_576
+DEFAULT_SEMANTIC_MAX_RECORDS = 100_000
+MAX_SEMANTIC_RECORDS = 10_000_000
+DEFAULT_SEMANTIC_MAX_SCAN_RECORDS = 100_000
+MAX_SEMANTIC_SCAN_RECORDS = 10_000_000
+MAX_SEMANTIC_DIMENSION = 65_536
+RERANKER_IMPLEMENTATION = "transparent_logistic"
+DEFAULT_RERANKER_MODEL_VERSION = "transparent-logistic"
+DEFAULT_RERANKER_SHORTLIST_SIZE = 8
+MAX_RERANKER_SHORTLIST_SIZE = 64
+DEFAULT_RERANKER_MAX_INPUT_BYTES = 65_536
+MAX_RERANKER_INPUT_BYTES = 1_048_576
+DEFAULT_RERANKER_MAX_MODEL_TIME_MS = 25
+MAX_RERANKER_MODEL_TIME_MS = 10_000
+DEFAULT_BOT_NAME = "ENGRAM"
+DEFAULT_CONVERSATION_DUPLICATE_POLICY = "error"
+CONVERSATION_DUPLICATE_POLICIES = set({"error", "last", "first"})
+DEFAULT_CAPACITY = 10_000
+DEFAULT_MAX_SESSIONS = 10_000
+DEFAULT_SESSION_TTL_SECONDS = 86_400.0
+DEFAULT_WEIGHT_BASE = 0.5
+DEFAULT_WEIGHT_RECENCY = 0.3
+DEFAULT_WEIGHT_HIT_RATE = 0.2
+DEFAULT_RECENCY_HALF_LIFE_SECONDS = 604_800.0
+DEFAULT_SRAI_DEPTH_LIMIT = 100
+DEFAULT_MAX_SYNONYMS_PER_WORD = 3
 
 # =============================================================================
 # Enumerations
@@ -1667,6 +1904,38 @@ class FusionFeature(StrEnum):
     AUTHORITY = "authority"
     AGREEMENT = "agreement"
     MARGIN = "margin"
+
+
+# Transparent logistic reranker model: the fused base score plus the fusion features it
+# weighs, in scoring order, with one fixed coefficient each and the intercept.
+RERANKER_BASE_SCORE_FEATURE = "base_score"
+RERANKER_FEATURES = (
+    RERANKER_BASE_SCORE_FEATURE,
+    FusionFeature.EXACT,
+    FusionFeature.LEXICAL,
+    FusionFeature.SEMANTIC,
+    FusionFeature.ENTITY,
+    FusionFeature.RELATION,
+    FusionFeature.OBJECT_TYPE,
+    FusionFeature.SUPPORT,
+    FusionFeature.FRESHNESS,
+    FusionFeature.AUTHORITY,
+    FusionFeature.AGREEMENT,
+)
+RERANKER_COEFFICIENTS: dict[str, float] = {
+    RERANKER_BASE_SCORE_FEATURE: 2.40,
+    FusionFeature.EXACT: 4.00,
+    FusionFeature.LEXICAL: 0.65,
+    FusionFeature.SEMANTIC: 0.85,
+    FusionFeature.ENTITY: 0.55,
+    FusionFeature.RELATION: 0.55,
+    FusionFeature.OBJECT_TYPE: 0.40,
+    FusionFeature.SUPPORT: 0.80,
+    FusionFeature.FRESHNESS: 0.20,
+    FusionFeature.AUTHORITY: 0.50,
+    FusionFeature.AGREEMENT: 0.65,
+}
+RERANKER_INTERCEPT = -1.20
 
 
 class FusionPolicyReason(StrEnum):
@@ -2068,6 +2337,8 @@ MODEL_NAME = "en_core_web_sm"
 # POS tags for nouns and proper nouns (the referents a follow-up query's
 # pronouns can point back to; used for session context expansion)
 NOUN_POS_TAGS = {"NN", "NNS", "NNP", "NNPS"}
+# The proper-noun subset: a sentence-opening span counts as a name only under these tags.
+PROPER_NOUN_POS_TAGS = {"NNP", "NNPS"}
 
 # Spelling correction (input cleanup). Correction is deliberately timid: only
 # tokens at least MIN_SPELL_TOKEN_LENGTH long that are neither in the target
@@ -2355,6 +2626,8 @@ DEFAULT_GENDER: dict[str, str] = {
 # Overlap credit for a query keyword matched only through a WordNet synonym,
 # relative to the 1.0 credit of an exact keyword match.
 SYNONYM_OVERLAP_WEIGHT = 0.5
+# Hit-rate prior for a keyword or statement match with no query observations yet.
+NEUTRAL_HIT_RATE = 0.5
 
 
 # =============================================================================
@@ -2592,6 +2865,10 @@ DIALOGUE_WH_TOPIC_WORDS = set(
     }
 )
 DIALOGUE_TOPIC_TRAILERS = set({"again", "broadly", "instead", "next", "now", "please", "specifically"})
+# Fixed trailing phrases that qualify a topic without naming it ("cities for now").
+DIALOGUE_TOPIC_TRAILING_PHRASES = (("for", "a", "while"), ("for", "now"), ("in", "general"))
+# A longer span is a clause, not a topic a later turn can refer back to.
+MAX_DIALOGUE_TOPIC_WORDS = 8
 DIALOGUE_TOPIC_LEADING_MODIFIERS = set(
     {
         "actually",
@@ -2712,6 +2989,8 @@ DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS = set({"actually", "no", "okay", "right", 
 DIALOGUE_QUALIFIED_FACT_SUBJECT_LEADS = set({"generally", "occasionally", "often", "sometimes", "typically", "usually"})
 DIALOGUE_PERSONAL_FACT_OBJECT_WORDS = set({"i", "me", "mine", "my", "our", "ours", "us", "we", "you", "your", "yours"})
 DIALOGUE_ENTITY_LABEL_PRIORITY = {"PROPER_NOUN": 1, "TOPIC": 2, "SUBJECT": 3}
+# Most recent discourse entities a session keeps for reference resolution.
+MAX_SESSION_ENTITIES = 20
 LIFECYCLE_EXCLUSION_REASONS = {
     LifecycleDecisionReason.SUPERSEDED: EligibilityExclusionReason.LIFECYCLE_SUPERSEDED,
     LifecycleDecisionReason.INVALIDATED: EligibilityExclusionReason.LIFECYCLE_INVALIDATED,

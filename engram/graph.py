@@ -19,14 +19,14 @@ from asyncio import (
     wait_for as asyncio_wait_for,
 )
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
 from neo4j import AsyncGraphDatabase
-from neo4j.exceptions import ServiceUnavailable, SessionExpired
+from neo4j.exceptions import ClientError, DriverError, Neo4jError, ServiceUnavailable, SessionExpired
 from neo4j.time import Date as neo4j_Date, DateTime as neo4j_DateTime, Time as neo4j_Time
 
 from engram.constants import (
@@ -35,21 +35,33 @@ from engram.constants import (
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_FIELDS,
     CANONICAL_PREDICATE_MATCH_QUERY,
-    GRAPH_SPO_MEANING_GUARD,
+    DEFAULT_GRAPH_HOST,
+    DEFAULT_GRAPH_PORT,
+    DEFAULT_GRAPH_VECTOR_LIMIT,
+    DEFAULT_VECTOR_MIN_SIMILARITY,
+    EMPTY_MAPPING,
     GRAPH_TIMEOUT_SECONDS,
+    MAX_ENUM_WIRE_BYTES,
     MAX_GRAPH_READ_ROWS,
+    MAX_GRAPH_VECTOR_LIMIT,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
+    MAX_PROPOSITION_PROJECTION_STRUCTURE_COUNT,
     MAX_PROPOSITION_PROJECTION_TERM_BYTES,
     MAX_PROPOSITION_PROJECTION_TIMESTAMP_BYTES,
+    MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_LABEL_BYTES,
     MAX_RELATION_PLAN_ROWS,
     MAX_RELATION_SURFACES,
+    MAX_VECTOR_INDEX_NAME_BYTES,
+    PROPOSITION_MODALITY_OPERATORS,
+    PROPOSITION_POLARITIES,
     PROPOSITION_PROJECTION_BY_ID_QUERY,
     PROPOSITION_PROJECTION_FIELDS,
     PROPOSITION_PROJECTION_RECORD_FIELDS,
+    PROPOSITION_VECTOR_INDEX_NAME,
     RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY,
     RELATION_ONE_HOP_RESULT_FIELDS,
     STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY,
@@ -57,12 +69,14 @@ from engram.constants import (
     UNCONSTRAINED_ASSERTION_BASIS,
     VECTOR_INDEX_NAME,
     VECTOR_PROPOSITION_PROJECTION_QUERY,
+    VECTOR_SEARCH_PROPOSITIONS_QUERY,
     WRITE_CLAUSE,
     ExpectedObjectType,
     PredicateCardinality,
+    PropositionOwnership,
     PropositionProjectionQuery,
 )
-from engram.errors import InvalidRequestError, ResourceExhaustedError
+from engram.errors import InvalidRequestError, ResourceExhaustedError, failure_origin
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
 from engram.scope import validate_visibility_scope, visibility_parameters
@@ -70,49 +84,6 @@ from engram.validation import parse_utc_timestamp, require_bool, require_identif
 
 logger = logging_getLogger(__name__)
 
-
-VECTOR_SEARCH_PROPOSITIONS_QUERY = (
-    """
-    CALL vector_search.search(
-        $index_name, $limit, $query_embedding
-    ) YIELD node, distance
-    WITH node AS proposition, 1.0 - distance AS similarity
-    MATCH (proposition)-[:USES_PREDICATE]->(predicate:Predicate)
-    MATCH (proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity)
-    MATCH (proposition)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity)
-    MATCH (proposition)-[support:SUPPORTED_BY]->(assertion:Assertion)
-    WHERE subject_binding.role = 'subject' AND object_binding.role = 'object'
-      AND similarity >= $min_similarity
-      AND proposition.lifecycle_disposition = 'active'
-      AND proposition.retired_at IS NULL
-      AND assertion.lifecycle_disposition = 'active'
-      AND assertion.retired_at IS NULL
-      AND support.retired_at IS NULL
-    """
-    + GRAPH_SPO_MEANING_GUARD
-    + """
-      AND (assertion.valid_time_start IS NULL
-        OR assertion.valid_time_start <= datetime($evaluation_time))
-      AND (assertion.valid_time_end IS NULL
-        OR datetime($evaluation_time) < assertion.valid_time_end)
-      AND predicate.canonical_id <> 'generic_relation'
-      AND (proposition.visibility_kind = 'global'
-        OR ($visibility_kind IN ['company', 'engagement']
-          AND proposition.visibility_kind = 'company'
-          AND proposition.company_id = $company_id)
-        OR ($visibility_kind = 'engagement'
-          AND proposition.visibility_kind = 'engagement'
-          AND proposition.company_id = $company_id
-          AND proposition.customer_id = $customer_id
-          AND proposition.engagement_id = $engagement_id))
-    RETURN DISTINCT proposition.id AS proposition_id,
-           subject.primary_label AS subject,
-           coalesce(predicate.label, predicate.canonical_id) AS predicate,
-           object.primary_label AS object,
-           similarity
-    ORDER BY similarity DESC, proposition.id
-"""
-)
 
 FIXED_READ_PROCEDURE_QUERIES = (
     VECTOR_PROPOSITION_PROJECTION_QUERY,
@@ -237,17 +208,17 @@ def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
 
 
 def projection_object_type(value: object, name: str) -> ExpectedObjectType:
-    raw = require_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, MAX_ENUM_WIRE_BYTES, allow_empty=False).upper()
     try:
         result = ExpectedObjectType(raw)
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError(f"{name} is unsupported") from err
     return result
 
 
 def projection_entity_object_type(value: object, name: str) -> ExpectedObjectType:
     """Map the graph's open entity taxonomy onto Engram's coarse answer types."""
-    raw = require_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, MAX_ENUM_WIRE_BYTES, allow_empty=False).upper()
     try:
         result = ExpectedObjectType(raw)
     except ValueError:
@@ -256,11 +227,11 @@ def projection_entity_object_type(value: object, name: str) -> ExpectedObjectTyp
 
 
 def projection_cardinality(value: object, name: str) -> PredicateCardinality:
-    raw = require_text(value, name, 32, allow_empty=False).upper()
+    raw = require_text(value, name, MAX_ENUM_WIRE_BYTES, allow_empty=False).upper()
     try:
         result = PredicateCardinality(raw)
-    except ValueError as error:
-        raise InvalidRequestError(f"{name} is unsupported") from error
+    except ValueError as err:
+        raise InvalidRequestError(f"{name} is unsupported") from err
     return result
 
 
@@ -351,25 +322,26 @@ def proposition_projection(
     normalized_object_id = require_identifier(
         object_entity_id, "Proposition projection object_entity_id", maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES
     )
-    normalized_polarity = require_text(polarity, "Proposition projection polarity", 16, allow_empty=False)
-    if normalized_polarity not in {"positive", "negative"}:
+    normalized_polarity = require_text(polarity, "Proposition projection polarity", MAX_ENUM_WIRE_BYTES, allow_empty=False)
+    if normalized_polarity not in PROPOSITION_POLARITIES:
         raise InvalidRequestError("Proposition projection polarity is unsupported")
-    normalized_modality_family = require_text(modality_family, "Proposition projection modality family", 16, allow_empty=False)
-    normalized_modality_operator = require_text(
-        modality_operator, "Proposition projection modality operator", 32, allow_empty=False
+    normalized_modality_family = require_text(
+        modality_family, "Proposition projection modality family", MAX_ENUM_WIRE_BYTES, allow_empty=False
     )
-    modal_operators = {
-        "none": {"none"},
-        "alethic": {"possible", "necessary", "impossible"},
-        "epistemic": {"possible", "probable", "certain"},
-        "deontic": {"obligation", "permission", "prohibition", "recommendation"},
-    }
-    if normalized_modality_operator not in modal_operators.get(normalized_modality_family, set()):
+    normalized_modality_operator = require_text(
+        modality_operator, "Proposition projection modality operator", MAX_ENUM_WIRE_BYTES, allow_empty=False
+    )
+    if normalized_modality_operator not in PROPOSITION_MODALITY_OPERATORS.get(normalized_modality_family, set()):
         raise InvalidRequestError("Proposition projection modality is unsupported")
-    normalized_argument_count = projection_int(argument_count, "Proposition projection argument_count", 0, 1_000_000)
-    normalized_qualification_count = projection_int(qualification_count, "Proposition projection qualification_count", 0, 1_000_000)
-    normalized_context_count = projection_int(context_count, "Proposition projection context_count", 0, 1_000_000)
-    normalized_applicability_count = projection_int(applicability_count, "Proposition projection applicability_count", 0, 1_000_000)
+    structure_limit = MAX_PROPOSITION_PROJECTION_STRUCTURE_COUNT
+    normalized_argument_count = projection_int(argument_count, "Proposition projection argument_count", 0, structure_limit)
+    normalized_qualification_count = projection_int(
+        qualification_count, "Proposition projection qualification_count", 0, structure_limit
+    )
+    normalized_context_count = projection_int(context_count, "Proposition projection context_count", 0, structure_limit)
+    normalized_applicability_count = projection_int(
+        applicability_count, "Proposition projection applicability_count", 0, structure_limit
+    )
     normalized_invalidated_available = require_bool(invalidated_at_available, "Proposition projection invalidated_at_available")
     normalized_system_from_available = require_bool(system_from_available, "Proposition projection system_from_available")
     normalized_system_to_available = require_bool(system_to_available, "Proposition projection system_to_available")
@@ -397,15 +369,17 @@ def proposition_projection(
     ):
         raise InvalidRequestError("Proposition projection valid_from must be earlier than valid_to")
     normalized_predicate_canonical = require_bool(predicate_canonical, "Proposition projection predicate_canonical")
-    normalized_ownership = require_text(ownership_category, "Proposition projection ownership_category", 32, allow_empty=False)
-    if normalized_ownership not in {"PUBLIC", "COMPANY", "CUSTOMER"}:
+    normalized_ownership = require_text(
+        ownership_category, "Proposition projection ownership_category", MAX_ENUM_WIRE_BYTES, allow_empty=False
+    )
+    if normalized_ownership not in {ownership.value for ownership in PropositionOwnership}:
         raise InvalidRequestError("Proposition projection ownership_category is unsupported")
     normalized_trust_category_available = require_bool(trust_category_available, "Proposition projection trust_category_available")
     normalized_trust_category = optional_projection_text(
         trust_category,
         normalized_trust_category_available,
         "Proposition projection trust_category",
-        96,
+        MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
     )
     normalized_trust_available = require_bool(supplied_trust_available, "Proposition projection supplied_trust_available")
     normalized_trust = projection_score(supplied_trust, normalized_trust_available, "Proposition projection supplied_trust")
@@ -423,7 +397,10 @@ def proposition_projection(
         raise InvalidRequestError("Proposition projection projection_id must be a PropositionProjectionQuery")
     normalized_vector_available = require_bool(vector_index_id_available, "Proposition projection vector_index_id_available")
     normalized_vector_id = require_text(
-        vector_index_id, "Proposition projection vector_index_id", 128, allow_empty=not normalized_vector_available
+        vector_index_id,
+        "Proposition projection vector_index_id",
+        MAX_VECTOR_INDEX_NAME_BYTES,
+        allow_empty=not normalized_vector_available,
     )
     if normalized_vector_available and not VECTOR_INDEX_NAME.fullmatch(normalized_vector_id):
         raise InvalidRequestError("Proposition projection vector_index_id is invalid")
@@ -476,36 +453,14 @@ def proposition_projection(
     return result
 
 
-# Validated projections by exact input: every field, value, and value type.
-# A projection is a flat map of scalars and validation is a pure function of
-# them, so an equal input always validates to an equal result. Including the
-# type keeps True apart from 1 and an enum apart from its string value.
-VALIDATED_PROJECTIONS: dict[tuple, dict] = {}
-MAX_VALIDATED_PROJECTIONS = 4_096
-
-
 def validate_proposition_projection(value: object) -> dict:
     """Revalidate and copy one in-memory Proposition projection.
 
-    Evidence handling validates the same projection several times per record,
-    so results are remembered by exact input; each call still returns its own copy.
+    Validation is a few microseconds per projection, so repeated revalidation on the
+    evidence path needs no cache.
     """
     if not isinstance(value, Mapping):
         raise InvalidRequestError("Proposition projection must be an object")
-    key = ()
-    cached = {}
-    cacheable = False
-    try:
-        key = (tuple(value), tuple(value.values()), tuple(map(type, value.values())))
-        cached = VALIDATED_PROJECTIONS.get(key, {})
-        cacheable = True
-    except TypeError:
-        # An unhashable field value makes the input uncacheable, not invalid; validation below still runs.
-        cacheable = False
-    # A remembered projection always carries its full field set, so an empty value means a cache miss.
-    if cached:
-        result = dict(cached)
-        return result
     observed = set(value)
     if observed != PROPOSITION_PROJECTION_RECORD_FIELDS:
         raise InvalidRequestError(
@@ -514,10 +469,6 @@ def validate_proposition_projection(value: object) -> dict:
             f"extra={sorted(observed - PROPOSITION_PROJECTION_RECORD_FIELDS)}"
         )
     result = proposition_projection(**value)
-    if cacheable:
-        if len(VALIDATED_PROJECTIONS) >= MAX_VALIDATED_PROJECTIONS:
-            VALIDATED_PROJECTIONS.pop(next(iter(VALIDATED_PROJECTIONS)))
-        VALIDATED_PROJECTIONS[key] = dict(result)
     return result
 
 
@@ -744,21 +695,23 @@ class MemGraphConnection:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 7687,
+        host: str = DEFAULT_GRAPH_HOST,
+        port: int = DEFAULT_GRAPH_PORT,
         username: str = "",
         password: str = "",
-        visibility_scope=(),
+        visibility_scope: dict = EMPTY_MAPPING,
         timeout_seconds: float = GRAPH_TIMEOUT_SECONDS,
     ):
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not timeout_seconds > 0:
             raise ValueError("graph timeout must be a positive number of seconds")
+        if not isinstance(visibility_scope, dict):
+            raise ValueError("graph visibility_scope must be an object")
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.timeout_seconds = float(timeout_seconds)
-        self.visibility_scope = validate_visibility_scope(dict(visibility_scope) if isinstance(visibility_scope, dict) else {})
+        self.visibility_scope = validate_visibility_scope(dict(visibility_scope))
         self.schema_report = {}
         self.driver = ()
         self.available = False
@@ -825,7 +778,7 @@ class MemGraphConnection:
                 with self.internal_lock:
                     self.available = False
                     self.reconnect_needed = True
-                logger.warning("Graph database unavailable at %s:%d", self.host, self.port, exc_info=err)
+                logger.warning("Graph database unavailable at %s:%d (%s)", self.host, self.port, failure_origin(err))
                 result = ()
                 return result
             with self.internal_lock:
@@ -867,7 +820,7 @@ class MemGraphConnection:
             try:
                 await asyncio_wait_for(lost_driver.close(), self.timeout_seconds)
             except Exception as err:
-                logger.warning("Closing the lost graph driver failed", exc_info=err)
+                logger.warning("Closing the lost graph driver failed (%s)", failure_origin(err))
         try:
             driver = await asyncio_wait_for(self.open_driver(), self.timeout_seconds)
         except Exception as err:
@@ -876,7 +829,7 @@ class MemGraphConnection:
                 first_failure = self.reconnect_failures == 1
             # Warn once per outage; the retry after every turn would flood the log.
             log = logger.warning if first_failure else logger.debug
-            log("Graph database reconnect failed at %s:%d", self.host, self.port, exc_info=err)
+            log("Graph database reconnect failed at %s:%d (%s)", self.host, self.port, failure_origin(err))
             result = False
             return result
         with self.internal_lock:
@@ -909,7 +862,7 @@ class MemGraphConnection:
                 future.result(timeout=2 * self.timeout_seconds)
             except Exception as err:
                 future.cancel()
-                logger.warning("Graph driver shutdown did not finish", exc_info=err)
+                logger.warning("Graph driver shutdown did not finish (%s)", failure_origin(err))
             loop.call_soon_threadsafe(loop.stop)
             thread.join(self.timeout_seconds)
             if not thread.is_alive():
@@ -970,32 +923,34 @@ class MemGraphConnection:
         if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
             raise ValueError("ENGRAM graph access is read-only")
 
+        visibility = self.visibility_parameters()
+        if isinstance(parameters, Mapping):
+            caller_parameters = dict(parameters)
+        elif parameters:
+            raise ValueError("graph query parameters must be an object")
+        else:
+            caller_parameters = {}
+        # The configured visibility scope is the owner's authority; a caller
+        # or authored template may not rebind it for a filtered read.
+        collisions = sorted(set(caller_parameters) & set(visibility))
+        if collisions:
+            raise ValueError(f"graph query parameters cannot rebind visibility bindings: {', '.join(collisions)}")
+        merged_parameters = {**caller_parameters, **visibility}
         loop, driver = self.current_driver()
         try:
-            visibility = self.visibility_parameters()
-            if isinstance(parameters, Mapping):
-                caller_parameters = dict(parameters)
-            elif parameters:
-                raise ValueError("graph query parameters must be an object")
-            else:
-                caller_parameters = {}
-            # The configured visibility scope is the owner's authority; a caller
-            # or authored template may not rebind it for a filtered read.
-            collisions = sorted(set(caller_parameters) & set(visibility))
-            if collisions:
-                raise ValueError(f"graph query parameters cannot rebind visibility bindings: {', '.join(collisions)}")
-            merged_parameters = {**caller_parameters, **visibility}
             result = self.run_on(loop, driver, query, merged_parameters)
             return result
-        except Exception as err:
-            err_str = str(err).lower()
-            if isinstance(err, TimeoutError):
-                logger.error("Query timed out after %.0f ms", self.timeout_seconds * 1000, exc_info=err)
-            elif "does not exist" in err_str or "not found" in err_str or "no procedure named" in err_str:
-                logger.debug("Query failed as expected", exc_info=err)
+        except (TimeoutError, Neo4jError, DriverError, OSError, ResourceExhaustedError) as err:
+            # The database's rejection of a query (a missing procedure or index included)
+            # is a client error and logs at debug, as every graph-read failure does at the
+            # caller; timeouts and lost connections are operational and log as errors.
+            if isinstance(err, ClientError):
+                logger.debug("Query rejected by the graph database (%s)", failure_origin(err))
+            elif isinstance(err, TimeoutError):
+                logger.error("Query timed out after %.0f ms (%s)", self.timeout_seconds * 1000, failure_origin(err))
             else:
-                logger.error("Query failed", exc_info=err)
-            # Only the exception type crosses this boundary; the log has the rest.
+                logger.error("Query failed (%s)", failure_origin(err))
+            # Only the exception type crosses this boundary.
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
     def execute_admin(self, statement: str, parameters=()) -> list:
@@ -1018,31 +973,31 @@ class MemGraphConnection:
         self,
         embedding: list[float],
         *,
-        index_name: str = "proposition_embeddings",
-        limit: int = 250,
-        min_similarity: float = 0.45,
-        evaluation_time: str = "",
+        evaluation_time: str,
+        index_name: str = PROPOSITION_VECTOR_INDEX_NAME,
+        limit: int = DEFAULT_GRAPH_VECTOR_LIMIT,
+        min_similarity: float = DEFAULT_VECTOR_MIN_SIMILARITY,
     ) -> list:
         """Search active proof-canonical Propositions through one fixed ANN query.
 
         Generic ``CALL`` remains forbidden on :meth:`execute`. This method
         exposes no caller-supplied Cypher; only a validated vector-index
         identifier and bounded scalar parameters reach its fixed read query.
+        ``evaluation_time`` is the caller's UTC instant for the valid-time filter.
         """
         if not isinstance(index_name, str) or not VECTOR_INDEX_NAME.fullmatch(index_name):
             raise ValueError("invalid vector index name")
         if not isinstance(embedding, list) or not embedding:
             raise ValueError("embedding must be a non-empty list")
-        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
-            raise ValueError("limit must be an integer from 1 through 1000")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_GRAPH_VECTOR_LIMIT:
+            raise ValueError(f"limit must be an integer from 1 through {MAX_GRAPH_VECTOR_LIMIT}")
         if (
             not isinstance(min_similarity, (int, float))
             or isinstance(min_similarity, bool)
             or not 0.0 <= float(min_similarity) <= 1.0
         ):
             raise ValueError("min_similarity must be between 0 and 1")
-        selected_evaluation_time = evaluation_time or datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        projection_timestamp(selected_evaluation_time, True, "graph vector evaluation time")
+        projection_timestamp(evaluation_time, True, "graph vector evaluation time")
         result = self.execute(
             VECTOR_SEARCH_PROPOSITIONS_QUERY,
             {
@@ -1050,7 +1005,7 @@ class MemGraphConnection:
                 "limit": limit,
                 "query_embedding": embedding,
                 "min_similarity": float(min_similarity),
-                "evaluation_time": selected_evaluation_time,
+                "evaluation_time": evaluation_time,
             },
         )
         return result
@@ -1138,9 +1093,9 @@ class MemGraphConnection:
         self,
         embedding: list[float],
         *,
-        index_name: str = "proposition_embeddings",
-        limit: int = 10,
-        min_similarity: float = 0.45,
+        index_name: str = PROPOSITION_VECTOR_INDEX_NAME,
+        limit: int = DEFAULT_GRAPH_VECTOR_LIMIT,
+        min_similarity: float = DEFAULT_VECTOR_MIN_SIMILARITY,
         basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
     ) -> list[dict]:
         """Run the fixed ANN Proposition projection without returning graph prose or arbitrary properties.
@@ -1198,11 +1153,11 @@ class MemGraphConnection:
 
 
 def connect_graph(
-    host: str = "localhost",
-    port: int = 7687,
+    host: str = DEFAULT_GRAPH_HOST,
+    port: int = DEFAULT_GRAPH_PORT,
     username: str = "",
     password: str = "",
-    visibility_scope=(),
+    visibility_scope: dict = EMPTY_MAPPING,
 ) -> MemGraphConnection:
     """Connect to the graph database and check that its schema is compatible.
 

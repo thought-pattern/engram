@@ -90,8 +90,8 @@ def internal_validated_settings(value: dict[str, object]) -> dict:
             max_posting_visits=max_posting_visits,
             max_prefix_expansions=max_prefix_expansions,
         )
-    except ValueError as error:
-        raise InvalidRequestError(str(error)) from error
+    except ValueError as err:
+        raise InvalidRequestError(str(err)) from err
     return result
 
 

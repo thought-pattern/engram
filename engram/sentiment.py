@@ -4,14 +4,9 @@ Provides a coarse sentiment label (positive / negative / neutral) for a piece of
 text. This lets templates respond with an appropriate tone to open-ended input
 without enumerating every emotion word as its own pattern.
 
-``VADER_ANALYZER`` owns the VADER analyzer for the process: the lexicon is
-checked and the analyzer built on first use, once. If the lexicon cannot be
-obtained, analysis degrades gracefully to a neutral verdict.
+The VADER lexicon is a required NLTK package: the process's analyzer belongs to
+``nltk_data.NLTK_RESOURCES``, and a missing lexicon raises ``RuntimeError``.
 """
-
-from threading import Lock
-
-from nltk.sentiment import SentimentIntensityAnalyzer
 
 from engram.constants import (
     NEGATIVE,
@@ -21,34 +16,7 @@ from engram.constants import (
     POSITIVE,
     POSITIVE_THRESHOLD,
 )
-from engram.nltk_data import ensure_resource
-
-
-class VaderAnalyzer:
-    """Own the lazily built VADER analyzer and the lexicon's availability.
-
-    ``resolved`` records that the lexicon check has run. ``analyzer`` is the
-    built analyzer, or ``()`` when the lexicon is unavailable; the absence is
-    retained, so the check is not repeated.
-    """
-
-    def __init__(self) -> None:
-        self.lock = Lock()
-        self.resolved = False
-        self.analyzer: object = ()
-
-    def current(self):
-        """Return the VADER analyzer, or falsy () when the lexicon is unavailable."""
-        with self.lock:
-            if not self.resolved:
-                if ensure_resource("sentiment/vader_lexicon", "vader_lexicon"):
-                    self.analyzer = SentimentIntensityAnalyzer()
-                self.resolved = True
-            analyzer = self.analyzer
-        return analyzer
-
-
-VADER_ANALYZER = VaderAnalyzer()
+from engram.nltk_data import NLTK_RESOURCES
 
 
 def sentiment_scores(text: str) -> dict:
@@ -58,16 +26,15 @@ def sentiment_scores(text: str) -> dict:
         text: Input text.
 
     Returns:
-        Dict with compound, pos, neu, neg keys. Neutral scores if text is empty
-        or the lexicon is unavailable.
+        Dict with compound, pos, neu, neg keys; neutral scores for empty text.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
     if not text or not text.strip():
         neutral_scores = dict(NEUTRAL_SCORES)
         return neutral_scores
-    analyzer = VADER_ANALYZER.current()
-    if not analyzer:
-        neutral_scores = dict(NEUTRAL_SCORES)
-        return neutral_scores
+    analyzer = NLTK_RESOURCES.sentiment_analyzer()
     scores = analyzer.polarity_scores(text)
     return scores
 

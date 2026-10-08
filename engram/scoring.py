@@ -18,10 +18,10 @@ portable across queries:
   statement; priority applies only when the statement matched (overlap > 0).
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from math import log as math_log
 
-from engram.constants import EARLIEST_UTC, SYNONYM_OVERLAP_WEIGHT
+from engram.constants import EARLIEST_UTC, NEUTRAL_HIT_RATE, SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry_hit_rate
 
 
@@ -120,7 +120,7 @@ def calculate_overlap(
     return overlap
 
 
-def calculate_recency(statement: dict, half_life_seconds: float, current_time=()) -> float:
+def calculate_recency(statement: dict, half_life_seconds: float, current_time: datetime) -> float:
     """Exponential time-decay recency of a statement's last activity.
 
     1.0 for a statement created or hit this instant, 0.5 one half-life ago,
@@ -131,13 +131,16 @@ def calculate_recency(statement: dict, half_life_seconds: float, current_time=()
     Args:
         statement: The statement to weigh.
         half_life_seconds: Seconds for recency to halve.
+        current_time: The caller's one time snapshot for the whole scoring pass.
 
     Returns:
         Recency score from 0.0 to 1.0.
     """
-    last_active = statement.get("last_hit", "") or statement.get("created_at", EARLIEST_UTC)
-    observed_at = current_time if isinstance(current_time, datetime) else datetime.now(UTC)
-    age_seconds = (observed_at - last_active).total_seconds()
+    if statement.get("last_hit_available", False):
+        last_active = statement.get("last_hit", EARLIEST_UTC)
+    else:
+        last_active = statement.get("created_at", EARLIEST_UTC)
+    age_seconds = (current_time - last_active).total_seconds()
     if age_seconds <= 0:
         result = 1.0
         return result
@@ -157,19 +160,16 @@ def calculate_average_hit_rate(
         keyword_index: Keyword index with statistics.
 
     Returns:
-        Average hit rate, 0.5 when there is nothing to average.
+        Average hit rate, NEUTRAL_HIT_RATE when there is nothing to average.
     """
     if not matched_keywords:
-        result = 0.5
-        return result  # Default when no matches
+        result = NEUTRAL_HIT_RATE
+        return result
 
     hit_rates: list[float] = []
     for kw in matched_keywords:
         entry = keyword_index.get(kw, {})
-        if entry:
-            hit_rates.append(keyword_entry_hit_rate(entry))
-        else:
-            hit_rates.append(0.5)  # Default for unknown keywords
+        hit_rates.append(keyword_entry_hit_rate(entry) if entry else NEUTRAL_HIT_RATE)
 
     average = sum(hit_rates) / len(hit_rates)
     return average
@@ -184,8 +184,8 @@ def score_statement_components(
     weight_recency: float,
     weight_hit_rate: float,
     recency_half_life_seconds: float,
+    current_time: datetime,
     synonyms=(),
-    current_time=(),
 ) -> dict[str, float]:
     """Return the aggregate lexical score and its existing scoring inputs."""
     match = keyword_match_weights(query_keywords, statement.get("keywords", []), synonyms)

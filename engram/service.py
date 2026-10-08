@@ -21,6 +21,8 @@ from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import (
     ANONYMOUS_CONVERSATION_LEASE_SECONDS,
+    DEFAULT_LEARNED_SOURCE_LABEL,
+    DEFAULT_PROPOSE_LIMIT,
     DEFAULT_USER_ID,
     EMPTY_CONFIG,
     EMPTY_MAPPING,
@@ -29,6 +31,7 @@ from engram.constants import (
     MAX_CACHE_REQUEST_BYTES,
     MAX_CALLER_ID_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
+    MAX_CONTEXTUAL_TURN,
     MAX_FEEDBACK_REASON_BYTES,
     MAX_METADATA_KEY_BYTES,
     MAX_METADATA_STRING_BYTES,
@@ -57,7 +60,7 @@ from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
 from engram.conversation import ConversationRuntime, statement_view
 from engram.coordination import AtomicMutationCoordinator, MutationCoordinationError
 from engram.core import Engram
-from engram.eligibility import EligibilityContextCapture
+from engram.eligibility import capture_standalone_eligibility_context
 from engram.errors import (
     ConflictError,
     ConversationOwnershipError,
@@ -66,6 +69,7 @@ from engram.errors import (
     LifecycleError,
     ResolutionCancelledError,
     ResourceNotFoundError,
+    WorkingMemoryExceededError,
 )
 from engram.feedback import (
     FeedbackObservationKind,
@@ -180,12 +184,12 @@ def service_request_signature(**values) -> str:
     """
     try:
         result = json_dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError) as error:
-        raise InvalidRequestError("metadata and request values must be JSON-compatible") from error
+    except (TypeError, ValueError) as err:
+        raise InvalidRequestError("metadata and request values must be JSON-compatible") from err
     try:
         encoded = result.encode("utf-8")
-    except UnicodeEncodeError as error:
-        raise InvalidRequestError("metadata and request values must contain valid Unicode") from error
+    except UnicodeEncodeError as err:
+        raise InvalidRequestError("metadata and request values must contain valid Unicode") from err
     if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
         raise InvalidRequestError(f"service request exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
     return result
@@ -302,8 +306,8 @@ def normalize_service_user_id(user_id: str) -> str:
         result = sessions.normalize_user_id(user_id)
         require_any_text(result, "user_id", MAX_CALLER_ID_BYTES, blank_is_empty=True)
         return result
-    except ValueError as error:
-        raise InvalidRequestError(str(error)) from error
+    except ValueError as err:
+        raise InvalidRequestError(str(err)) from err
 
 
 def no_cancellation_check() -> bool:
@@ -401,7 +405,7 @@ def bounded_miss_result(
         if size > budget.get("max_output_bytes", 0):
             raise InvalidRequestError("negative resolution result exceeds max_output_bytes")
         if size > budget.get("max_working_memory_bytes", 0):
-            raise MemoryError("negative resolution result exceeds max_working_memory_bytes")
+            raise WorkingMemoryExceededError("negative resolution result exceeds max_working_memory_bytes")
         updated = budget_consumption_with_changes(consumption, {"output_bytes": size, "working_memory_bytes": size})
         if updated == consumption:
             return result
@@ -435,9 +439,9 @@ class EngramCore:
         if engram == ():
             try:
                 selected_engram = Engram(config=config)
-            except ValueError as error:
-                LOGGER.error("Engram could not start with the supplied configuration", exc_info=error)
-                raise InvalidRequestError("Engram configuration is invalid; the server log has the details") from error
+            except ValueError as err:
+                LOGGER.error("Engram could not start with the supplied configuration", exc_info=err)
+                raise InvalidRequestError("Engram configuration is invalid; the server log has the details") from err
         elif isinstance(engram, Engram):
             if config:
                 raise InvalidRequestError("config cannot be supplied with an existing Engram")
@@ -528,6 +532,8 @@ class EngramCore:
         its caller's cancellation between bounded waits, so a cancelled caller
         leaves the queue without waiting for that holder to finish.
         """
+        if not callable(cancellation_check):
+            raise InvalidRequestError("cancellation_check must be callable")
         with self.resolution_condition:
             while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
                 self.require_running()
@@ -559,8 +565,8 @@ class EngramCore:
             if callable(reconnect):
                 try:
                     reconnect()
-                except Exception as error:
-                    LOGGER.warning("graph reconnect could not start", exc_info=error)
+                except Exception as err:
+                    LOGGER.warning("graph reconnect could not start", exc_info=err)
 
     @contextlib_contextmanager
     def graph_operation(self):
@@ -878,7 +884,7 @@ class EngramCore:
         request: str,
         request_id: str,
         *,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         identity: dict[str, object] = EMPTY_MAPPING,
@@ -913,14 +919,14 @@ class EngramCore:
             if identity:
                 try:
                     selected_identity = validate_query_identity(identity)
-                except IdentityValidationError as error:
-                    raise InvalidRequestError("identity must be a QueryIdentity") from error
+                except IdentityValidationError as err:
+                    raise InvalidRequestError("identity must be a QueryIdentity") from err
             selected_budget: object = EMPTY_MAPPING
             if budget:
                 try:
                     selected_budget = validate_resolution_budget(budget)
-                except InvalidRequestError as error:
-                    raise InvalidRequestError("budget must be a ResolutionBudget") from error
+                except InvalidRequestError as err:
+                    raise InvalidRequestError("budget must be a ResolutionBudget") from err
             if not isinstance(required_metadata, dict):
                 raise InvalidRequestError("required_metadata must be an object")
             if not isinstance(configured_resolvers, tuple) or not all(
@@ -961,8 +967,8 @@ class EngramCore:
                 prior_result = prior.get("result", {})
                 try:
                     prior_result = validate_resolution_result(prior_result)
-                except InvalidRequestError as error:
-                    raise LifecycleError("resolution request cache is malformed") from error
+                except InvalidRequestError as err:
+                    raise LifecycleError("resolution request cache is malformed") from err
                 self.record_resolution_telemetry(prior_result, replayed=True)
                 return prior_result
             scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
@@ -975,12 +981,12 @@ class EngramCore:
                 diagnostic_seed=request_id,
                 budget=selected_budget,
             )
-            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
+                session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 prior_turn = session.get("query_frame_turn", 0)
-                if isinstance(prior_turn, bool) or not isinstance(prior_turn, int) or not 0 <= prior_turn <= 1_000_000:
+                if isinstance(prior_turn, bool) or not isinstance(prior_turn, int) or not 0 <= prior_turn <= MAX_CONTEXTUAL_TURN:
                     raise LifecycleError("user contextual query-frame turn is malformed")
-                if prior_turn == 1_000_000:
+                if prior_turn == MAX_CONTEXTUAL_TURN:
                     prior_turn = 0
                     session["previous_query_frame"] = {}
                 current_turn = prior_turn + 1
@@ -1032,9 +1038,9 @@ class EngramCore:
                         negative_hit = True
             except ResolutionCancelledError:
                 raise
-            except Exception as error:
+            except Exception as err:
                 # Negative-cache ownership and lookup are optional optimizations.
-                LOGGER.warning("negative-resolution lookup failed closed", exc_info=error)
+                LOGGER.warning("negative-resolution lookup failed closed", exc_info=err)
                 negative_key_available = False
                 negative_hit = False
             if negative_hit:
@@ -1053,8 +1059,8 @@ class EngramCore:
             if negative_key_available and negative_resolution_admissible(raw_result, plan):
                 try:
                     self.negative_resolutions.admit(negative_key, evaluation_time)
-                except Exception as error:
-                    LOGGER.warning("negative-resolution admission failed", exc_info=error)
+                except Exception as err:
+                    LOGGER.warning("negative-resolution admission failed", exc_info=err)
             result = apply_rollout(raw_result, rollout)
             candidate_statement_ids = finalization.get("candidate_statement_ids", ()) if rollout_mode != RolloutMode.SHADOW else ()
             candidacy_observations = self.feedback_observations(
@@ -1097,9 +1103,9 @@ class EngramCore:
             require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
             try:
                 verdict = FeedbackOutcome(outcome)
-            except (TypeError, ValueError) as error:
+            except (TypeError, ValueError) as err:
                 supported = ", ".join(value.value for value in FeedbackOutcome if value != FeedbackOutcome.CANDIDATE)
-                raise InvalidRequestError(f"feedback outcome must be one of: {supported}") from error
+                raise InvalidRequestError(f"feedback outcome must be one of: {supported}") from err
             if verdict == FeedbackOutcome.CANDIDATE:
                 raise InvalidRequestError("candidate is an internal observation, not an external feedback outcome")
             record = self.resolution_requests.get(resolution_request_id, {})
@@ -1144,11 +1150,11 @@ class EngramCore:
                             "external regulator marked the observed candidate generation stale",
                         )
                         lifecycle_status = LifecycleHandoffStatus.COMPLETED
-                    except (ConflictError, ResourceNotFoundError, InvalidRequestError) as error:
-                        LOGGER.info("stale-lifecycle handoff conflicted", exc_info=error)
+                    except (ConflictError, ResourceNotFoundError, InvalidRequestError) as err:
+                        LOGGER.info("stale-lifecycle handoff conflicted", exc_info=err)
                         lifecycle_status = LifecycleHandoffStatus.CONFLICTED
-                    except MutationCoordinationError as error:
-                        LOGGER.error("stale-lifecycle handoff failed", exc_info=error)
+                    except MutationCoordinationError as err:
+                        LOGGER.error("stale-lifecycle handoff failed", exc_info=err)
                         lifecycle_status = LifecycleHandoffStatus.FAILED
                 else:
                     lifecycle_status = LifecycleHandoffStatus.PENDING
@@ -1180,7 +1186,7 @@ class EngramCore:
 
     def start_conversation(
         self,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
@@ -1343,8 +1349,8 @@ class EngramCore:
             require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
             require_any_text(value, "value", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
-            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
             with self.engram.session_lock:
+                session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
                 predicates = session.get("predicates", {})
                 predicates[name] = value
                 session["predicates"] = predicates
@@ -1356,11 +1362,9 @@ class EngramCore:
             require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
             require_any_text(default, "default", MAX_METADATA_STRING_BYTES, allow_empty=True)
             normalized_user_id = normalize_service_user_id(user_id)
-            session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
-            if not session:
-                return default
             with self.engram.session_lock:
-                result = session.get("predicates", {}).get(name, default)
+                session = sessions.get_session(self.engram, normalized_user_id, create_if_missing=False)
+                result = session.get("predicates", {}).get(name, default) if session else default
                 return result
 
     def warm_vector_recall(self) -> bool:
@@ -1373,9 +1377,9 @@ class EngramCore:
                 vector_status = self.internal_component_status.get("vector", {})
                 result = vector_status.get("ready", False) and vector_status.get("enabled", False)
                 return result
-            except Exception as error:
-                LOGGER.error("Vector recall could not be initialized", exc_info=error)
-                raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from error
+            except Exception as err:
+                LOGGER.error("Vector recall could not be initialized", exc_info=err)
+                raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from err
 
     def maintain_engagement(self, value: dict) -> dict:
         """Trusted administrative pause, physical purge and explicit resumption."""
@@ -1477,8 +1481,8 @@ class EngramCore:
             if callable(disconnect):
                 try:
                     disconnect()
-                except Exception as error:
-                    LOGGER.warning("graph client disconnect failed while closing Engram", exc_info=error)
+                except Exception as err:
+                    LOGGER.warning("graph client disconnect failed while closing Engram", exc_info=err)
             self.internal_state = CoreState.CLOSED
             self.resolution_condition.notify_all()
             result = True
@@ -1488,10 +1492,10 @@ class EngramCore:
         self,
         request: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        limit: int = 1,
+        limit: int = DEFAULT_PROPOSE_LIMIT,
         required_metadata: dict = EMPTY_METADATA,
         required_source_label: str = "",
     ) -> dict:
@@ -1568,7 +1572,7 @@ class EngramCore:
 
             exact_artifact: dict[str, object] = {}
             try:
-                eligibility_context = EligibilityContextCapture(self.internal_clock).capture_standalone(scope, True)
+                eligibility_context = capture_standalone_eligibility_context(self.internal_clock, scope, True)
                 exact = self.engram.response_repository.exact_lookup(
                     scoped_retrieval_key_from_text(scope, request),
                     eligibility_context,
@@ -1800,8 +1804,9 @@ class EngramCore:
             self.response_mutations.record_response_hit(statement_id, accounting_request_id("response-hit", proposal_id))
             proposal = record.get("proposal", {})
             if proposal.get("user_id", "") != DEFAULT_USER_ID:
-                sessions.get_session(self.engram, proposal.get("user_id", ""), create_if_missing=True)
-                sessions.update_session_context(self.engram, proposal.get("user_id", ""), current_artifact.get("response", ""))
+                with self.engram.session_lock:
+                    sessions.get_session(self.engram, proposal.get("user_id", ""), create_if_missing=True)
+                    sessions.update_session_context(self.engram, proposal.get("user_id", ""), current_artifact.get("response", ""))
             self.regulated_metrics["accepted"] += 1
         else:
             rejections = self.regulated_metrics.get("rejections", Counter())
@@ -1817,10 +1822,10 @@ class EngramCore:
         request: str,
         response: str,
         request_id: str,
-        user_id: str = "0",
+        user_id: str = DEFAULT_USER_ID,
         namespace: str = "",
         context_fingerprint: str = "",
-        source_label: str = "unknown",
+        source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
         """Create one DYNAMIC ACTIVE response artifact through base commit."""
@@ -1863,8 +1868,9 @@ class EngramCore:
             if learned and not replayed:
                 self.engram.eviction_count += len(evicted_statement_ids)
             if learned and normalized_user_id != DEFAULT_USER_ID:
-                sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
-                sessions.update_session_context(self.engram, normalized_user_id, response)
+                with self.engram.session_lock:
+                    sessions.get_session(self.engram, normalized_user_id, create_if_missing=True)
+                    sessions.update_session_context(self.engram, normalized_user_id, response)
             if replayed:
                 self.regulated_metrics["idempotent_retries"] += 1
             elif learned:

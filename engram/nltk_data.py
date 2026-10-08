@@ -3,21 +3,28 @@
 In a source checkout, all NLTK corpora and models used by ENGRAM are stored in
 a local, gitignored ``data/nltk_data`` directory at the repository root, so they
 can be fetched once at setup time rather than retrieved during normal runtime.
-Importing this module wires that directory onto NLTK's search path. An installed
-package has no checkout, so NLTK's standard locations apply instead (the
-``NLTK_DATA`` environment variable, ``~/nltk_data``, and so on). Downloading is
-available only through an explicit bootstrap request; normal callers perform an
-offline check.
+An installed package has no checkout, so NLTK's standard locations apply instead
+(the ``NLTK_DATA`` environment variable, ``~/nltk_data``, and so on).
+Downloading is available only through an explicit bootstrap request; normal
+callers perform an offline check.
+
+``NLTK_RESOURCES`` owns NLTK readiness for the process. Every Engram function
+that reads NLTK data calls ``NLTK_RESOURCES.require()`` first, which wires the
+checkout directory onto NLTK's search path, requires every package in
+``REQUIRED_PACKAGES`` and loads the shared readers once. Importing this module
+changes nothing.
 
 Run ``python -m engram.nltk_data`` once after installation to pre-fetch
 everything.
 """
 
-from functools import lru_cache
 from os import makedirs as os_makedirs
 from pathlib import Path
+from threading import Lock
 
 from nltk import data as nltk_data, download as nltk_download
+from nltk.corpus import wordnet, words
+from nltk.sentiment import SentimentIntensityAnalyzer
 
 from engram.constants import REQUIRED_PACKAGES
 
@@ -56,12 +63,12 @@ def configure_path() -> str:
     return directory
 
 
-@lru_cache(maxsize=64)
 def is_available(find_path: str) -> bool:
-    """Return True if a resource resolves on NLTK's path.
+    """Return True if a resource resolves on NLTK's path now.
 
     Checks both the bare path (extracted installs, the default location) and the
-    ``.zip`` form (packages downloaded into a custom directory stay zipped).
+    ``.zip`` form (packages downloaded into a custom directory stay zipped). The
+    answer is not cached, so a change to the data or the path is seen at once.
     """
     for candidate in (find_path, find_path + ".zip"):
         try:
@@ -92,10 +99,12 @@ def ensure_resource(find_path: str, download_name: str, *, download: bool = Fals
     if not download:
         result = False
         return result
-    nltk_download(download_name, download_dir=local_data_dir() or None, quiet=True)
-    cache_clear = getattr(is_available, "cache_clear", ())
-    if callable(cache_clear):
-        cache_clear()
+    data_directory = local_data_dir()
+    if data_directory:
+        nltk_download(download_name, download_dir=data_directory, quiet=True)
+    else:
+        # An installed Engram has no checkout data directory, so NLTK chooses its standard download location.
+        nltk_download(download_name, quiet=True)
     available = is_available(find_path)
     return available
 
@@ -121,8 +130,69 @@ def ensure_nltk_data(download: bool = True) -> list:
     return missing
 
 
-# Wire the local path on import so any nltk.data.find sees local data first.
-configure_path()
+class NltkResources:
+    """Own NLTK readiness and the shared NLTK resources for the process.
+
+    ``require`` loads once, under ``lock``: it requires every package (through
+    ``verify``) and then loads the WordNet and word-list readers, the English
+    word set and the VADER analyzer, so concurrent requests never race a lazy
+    first load. ``verify`` re-checks availability on every call without
+    reloading; Engram construction runs it before ``require``.
+
+    ``reader_lock`` serializes WordNet reads: NLTK's shared reader opens and
+    closes its zipped corpus around each read, and concurrent reads can trip its
+    internal file-handle assertion. Loading never takes ``reader_lock``, so a
+    caller may load before taking it but must not load while holding it.
+    """
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.reader_lock = Lock()
+        self.loaded = False
+        self.english_words: set[str] = set()
+        # Holds the one analyzer once ``require`` has loaded.
+        self.sentiment_analyzers: list[SentimentIntensityAnalyzer] = []
+
+    def verify(self) -> None:
+        """Put a checkout's data directory on NLTK's path and require every package.
+
+        Raises:
+            RuntimeError: a package in ``REQUIRED_PACKAGES`` is not available.
+        """
+        missing = ensure_nltk_data(download=False)
+        if missing:
+            missing_names = ", ".join(download_name for _, download_name in missing)
+            raise RuntimeError(f"required NLTK resources are unavailable: {missing_names}")
+
+    def require(self) -> None:
+        """Make NLTK data usable, verifying and loading the shared resources on the first call.
+
+        Raises:
+            RuntimeError: a package in ``REQUIRED_PACKAGES`` is not available.
+        """
+        with self.lock:
+            if not self.loaded:
+                self.verify()
+                words.ensure_loaded()
+                wordnet.ensure_loaded()
+                self.english_words = {entry.lower() for entry in words.words()}
+                self.sentiment_analyzers = [SentimentIntensityAnalyzer()]
+                self.loaded = True
+
+    def is_english_word(self, word: str) -> bool:
+        """Return whether the already lowercased ``word`` is in NLTK's English word list."""
+        self.require()
+        known = word in self.english_words
+        return known
+
+    def sentiment_analyzer(self) -> SentimentIntensityAnalyzer:
+        """Return the process's VADER analyzer."""
+        self.require()
+        analyzer = self.sentiment_analyzers[0]
+        return analyzer
+
+
+NLTK_RESOURCES = NltkResources()
 
 
 def main() -> int:

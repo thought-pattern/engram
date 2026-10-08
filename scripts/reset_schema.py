@@ -50,8 +50,8 @@ def main() -> None:
             report["applied"] = False
         print(report)
         sys_exit(0)
-    except Exception as error:
-        print({"valid": False, "error": str(error)})
+    except Exception as err:
+        print({"valid": False, "error": str(err)})
         sys_exit(1)
     finally:
         connection.disconnect()

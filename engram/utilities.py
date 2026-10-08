@@ -6,6 +6,7 @@ plugins dynamically, execute Python expressions, or consult ambient time.
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
+from hashlib import sha256 as hashlib_sha256
 from importlib.metadata import version as package_version
 from importlib.resources import files
 from logging import getLogger as logging_getLogger
@@ -167,8 +168,8 @@ def numeric_literal(value: str) -> Decimal:
         raise UtilityInputError("numeric_limit")
     try:
         result = Decimal(value)
-    except DecimalException as error:
-        raise UtilityInputError("arithmetic_syntax") from error
+    except DecimalException as err:
+        raise UtilityInputError("arithmetic_syntax") from err
     result = checked_decimal(result)
     return result
 
@@ -256,8 +257,8 @@ def arithmetic_power(tokens: tuple[str, ...], index: int, operations: int, depth
             raise UtilityInputError("operation_limit")
         try:
             left = checked_decimal(left ** int(right))
-        except DecimalException as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except DecimalException as err:
+            raise UtilityInputError("arithmetic_domain") from err
     return left, index, operations
 
 
@@ -276,8 +277,8 @@ def arithmetic_term(tokens: tuple[str, ...], index: int, operations: int, depth:
             else:
                 value %= right
             value = checked_decimal(value)
-        except (DecimalException, ZeroDivisionError) as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except (DecimalException, ZeroDivisionError) as err:
+            raise UtilityInputError("arithmetic_domain") from err
     return value, index, operations
 
 
@@ -301,8 +302,8 @@ def evaluate_arithmetic(text: str) -> tuple[str, str, int]:
         context.prec = UTILITY_NUMERIC_PRECISION_DIGITS
         try:
             value, index, operations = arithmetic_expression(tokens, 0, 0, 0)
-        except DecimalException as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except DecimalException as err:
+            raise UtilityInputError("arithmetic_domain") from err
     if index != len(tokens):
         raise UtilityInputError("arithmetic_syntax")
     result = (decimal_text(value), "calculate " + " ".join(tokens), operations)
@@ -464,8 +465,8 @@ def evaluate_set(text: str) -> tuple[str, str, int]:
 def iso_date(value: str) -> date:
     try:
         parsed = date.fromisoformat(value)
-    except ValueError as error:
-        raise UtilityInputError("date_time_domain") from error
+    except ValueError as err:
+        raise UtilityInputError("date_time_domain") from err
     return parsed
 
 
@@ -493,8 +494,8 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
         delta = count if arithmetic.group(2).casefold() == "plus" else -count
         try:
             response = (source + timedelta(days=delta)).isoformat()
-        except OverflowError as error:
-            raise UtilityInputError("date_time_domain") from error
+        except OverflowError as err:
+            raise UtilityInputError("date_time_domain") from err
         result = (response, f"date {source.isoformat()} {arithmetic.group(2).casefold()} {count} days", 1)
         return result
     difference = re_fullmatch(
@@ -516,8 +517,8 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
             source_text = source_text[:-1] + "+00:00"
         try:
             source = datetime.fromisoformat(source_text)
-        except ValueError as error:
-            raise UtilityInputError("date_time_domain") from error
+        except ValueError as err:
+            raise UtilityInputError("date_time_domain") from err
         if source.tzinfo is None or source.utcoffset() is None:
             raise UtilityInputError("date_time_domain")
         requested_zone = conversion.group(2)
@@ -692,6 +693,13 @@ EMPTY_UTILITY_EVALUATION = {
 }
 
 
+def utility_statement_id(plugin_name: str, canonical_input: str) -> str:
+    """Return the deterministic statement ID of one plugin's answer to one canonical input."""
+    digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
+    result = f"utility:{plugin_name}:sha256:{digest}"
+    return result
+
+
 def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     """Evaluate exactly one compiled-in plugin, used for authority rechecks."""
     if not isinstance(request, str) or not isinstance(plugin_name, str) or plugin_name not in UTILITY_EVALUATORS:
@@ -706,11 +714,11 @@ def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     try:
         evaluator = UTILITY_EVALUATORS.get(plugin_name, evaluate_arithmetic)
         response, canonical_input, operations = evaluator(request)
-    except UtilityInputError as error:
-        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": error.code}
+    except UtilityInputError as err:
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": err.code}
         return result
-    except Exception as error:
-        logger.warning("Utility plugin %s failed", plugin_name, exc_info=error)
+    except Exception as err:
+        logger.warning("Utility plugin %s failed", plugin_name, exc_info=err)
         result = {**EMPTY_UTILITY_EVALUATION, "status": "failed", "plugin_name": plugin_name, "error_code": "plugin_failure"}
         return result
     if len(response.encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES:

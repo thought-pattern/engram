@@ -1,26 +1,32 @@
-"""Session management for ENGRAM.
+"""Session lifecycle operations over an Engram instance's session map.
 
-This module provides session management functionality including creation,
-retrieval, updates, expiration, and cleanup of user sessions.
+The ``engram.sessions`` map and its ``engram.session_lock`` belong to the Engram
+instance; this module is the only code that adds, replaces or removes a session.
+A session record is live shared state, so every read or change of one happens
+while the caller holds ``session_lock``. The module sits above ``engram.models``,
+which defines the record shape, and below ``core``, ``conversation``, ``pipeline``
+and ``service``.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from engram.constants import DEFAULT_USER_ID, EARLIEST_UTC, SessionOverflow
-from engram.errors import InvalidRequestError, ResourceExhaustedError
+from engram.errors import InvalidRequestError, ResourceExhaustedError, ResourceNotFoundError
 from engram.models import session, session_update_context
 
 
 class SessionLimitExceededError(ResourceExhaustedError):
     """Raised when session limit is reached and overflow is REJECT."""
 
-    pass
 
-
-class SessionNotFoundError(Exception):
+class SessionNotFoundError(ResourceNotFoundError):
     """Raised when a session is not found."""
 
-    pass
+
+def require_session_lock(engram) -> None:
+    """Refuse a live session access made without holding ``engram.session_lock``."""
+    if not engram.session_lock.held_by_current_thread():
+        raise RuntimeError("live session access requires holding session_lock")
 
 
 def normalize_user_id(user_id: str = "") -> str:
@@ -57,7 +63,11 @@ def start_session(engram, session_id: str = "", metadata=()) -> str:
             else:  # LRU
                 expire_lru_session(engram)
 
-        sess = session(session_id=session_id, metadata=metadata)
+        sess = session(
+            session_id=session_id or f"sess_{engram.identifier_source()}",
+            created_at=engram.clock(),
+            metadata=metadata,
+        )
         sess["predicates"] = dict(engram.default_predicates)
         identifier = sess.get("session_id", "")
         engram.sessions[identifier] = sess
@@ -65,8 +75,11 @@ def start_session(engram, session_id: str = "", metadata=()) -> str:
         return result
 
 
-def get_session(engram, session_id: str, create_if_missing: bool = True):
-    """Retrieve an existing session.
+def get_session(engram, session_id: str, create_if_missing: bool = True) -> dict:
+    """Return the live session record, creating it when asked.
+
+    The caller must hold ``engram.session_lock`` for as long as it reads or changes
+    the returned record; a call without the lock raises ``RuntimeError``.
 
     Args:
         engram: Engram instance.
@@ -76,12 +89,21 @@ def get_session(engram, session_id: str, create_if_missing: bool = True):
     Returns:
         Session object or an empty dict if not found and create_if_missing is False.
     """
-    with engram.session_lock:
+    require_session_lock(engram)
+    session = engram.sessions.get(session_id, {})
+    if not session and create_if_missing:
+        start_session(engram, session_id=session_id)
         session = engram.sessions.get(session_id, {})
-        if not session and create_if_missing:
-            start_session(engram, session_id=session_id)
-            session = engram.sessions.get(session_id, {})
-        return session
+    return session
+
+
+def restore_session(engram, record: dict) -> None:
+    """Put back a session record the caller took out of the map earlier in the same locked operation."""
+    require_session_lock(engram)
+    identifier = record.get("session_id", "")
+    if not identifier:
+        raise InvalidRequestError("a restored session must carry its session_id")
+    engram.sessions[identifier] = record
 
 
 def update_session_context(engram, session_id: str, previous_response: str) -> None:
@@ -100,7 +122,7 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
         session = engram.sessions.get(session_id, {})
         if not session:
             raise SessionNotFoundError(f"Session not found: {session_id}")
-        session_update_context(session, previous_response)
+        session_update_context(session, previous_response, moment=engram.clock())
 
 
 def delete_session(engram, session_id: str) -> bool:
@@ -122,11 +144,12 @@ def delete_session(engram, session_id: str) -> bool:
         return result
 
 
-def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:
+def expire_sessions(engram, now: datetime, inactive_threshold: timedelta = timedelta()) -> int:
     """Remove inactive sessions based on threshold.
 
     Args:
         engram: Engram instance.
+        now: The caller's aware UTC time snapshot for this sweep.
         inactive_threshold: Inactivity cutoff. Defaults to session_ttl from config.
 
     Returns:
@@ -137,7 +160,6 @@ def expire_sessions(engram, inactive_threshold: timedelta = timedelta()) -> int:
 
     # Comparing elapsed inactivity, rather than subtracting the threshold from
     # now, keeps every representable threshold free of datetime underflow.
-    now = datetime.now(UTC)
     expired_ids: list[str] = []
 
     with engram.session_lock:

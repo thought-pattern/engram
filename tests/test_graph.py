@@ -16,9 +16,8 @@ from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_wr
 from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
 from engram.utilities import UTILITY_TZDATA_VERSION
-
-from .bolt_stub import BoltStub
-from .support_fixtures import PROPOSITION_REFERENCE_A
+from tests.bolt_stub import BoltStub
+from tests.support_fixtures import PROPOSITION_REFERENCE_A
 
 
 def same(a, b) -> bool:
@@ -495,6 +494,7 @@ def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call
             index_name="proposition_embeddings",
             limit=25,
             min_similarity=0.5,
+            evaluation_time="2026-08-12T16:00:00Z",
         )
 
         assert rows == []

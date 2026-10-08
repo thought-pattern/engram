@@ -1,6 +1,5 @@
 """Versioned, bounded, retrieval-only symbolic rewrites."""
 
-from enum import StrEnum
 from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
 from logging import getLogger as logging_getLogger
@@ -16,75 +15,41 @@ from re import (
 from time import perf_counter_ns as time_perf_counter_ns
 from unicodedata import normalize as unicodedata_normalize
 
-from engram.constants import MAX_REQUEST_BYTES, MAX_TRACE_STEPS, QueryOperator
+from engram.constants import (
+    DEFAULT_REWRITE_MAX_DEPTH,
+    DEFAULT_REWRITE_MAX_ELAPSED_NS,
+    DEFAULT_REWRITE_MAX_EXPANSIONS,
+    MAX_ENUM_WIRE_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_REWRITE_APPLICATIONS_PER_RULE,
+    MAX_REWRITE_CATEGORY_BYTES,
+    MAX_REWRITE_CORPUS_ID_BYTES,
+    MAX_REWRITE_ELAPSED_NS,
+    MAX_REWRITE_LICENSE_BYTES,
+    MAX_REWRITE_PATTERN_BYTES,
+    MAX_REWRITE_PRIORITY,
+    MAX_REWRITE_PROVENANCE_BYTES,
+    MAX_REWRITE_RULE_ID_BYTES,
+    MAX_REWRITE_RULE_TOKENS,
+    MAX_REWRITE_RULES,
+    MAX_TIMESTAMP_BYTES,
+    MAX_TRACE_STEPS,
+    REWRITE_CORPUS_FIELDS,
+    REWRITE_INPUT_FIELDS,
+    REWRITE_PROVENANCE_FIELDS,
+    REWRITE_RULE_FIELDS,
+    REWRITE_SAFE_TEMPLATE_FIELDS,
+    QueryOperator,
+    RewriteMatchMode,
+    RewriteScope,
+    RewriteStopReason,
+)
 from engram.errors import InvalidRequestError
 from engram.resolution import query_frame_with_changes, rewrite_trace_step, validate_query_frame
 from engram.validation import require_any_text
 
 logger = logging_getLogger(__name__)
-MAX_REWRITE_RULES = 256
-MAX_REWRITE_RULE_ID_BYTES = 96
-MAX_REWRITE_PATTERN_BYTES = 512
-MAX_REWRITE_PROVENANCE_BYTES = 512
-MAX_REWRITE_PRIORITY = 10_000
-MAX_REWRITE_APPLICATIONS_PER_RULE = 8
-DEFAULT_REWRITE_MAX_DEPTH = 8
-DEFAULT_REWRITE_MAX_EXPANSIONS = 16
-DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
-
-RULE_FIELDS = set(
-    {
-        "rule_id",
-        "category",
-        "input_constraints",
-        "output_template",
-        "priority",
-        "scope",
-        "max_applications",
-        "provenance",
-    }
-)
-INPUT_FIELDS = set(
-    {
-        "match_mode",
-        "pattern",
-        "min_tokens",
-        "max_tokens",
-        "required_operators",
-        "requires_inherited_subject",
-    }
-)
-PROVENANCE_FIELDS = set({"author", "origin", "license", "created_at"})
-CORPUS_FIELDS = set({"corpus_id", "rules"})
-SAFE_TEMPLATE_FIELDS = set({"subject"})
 TOKEN_RE = re_compile(r"[^\W_]+(?:['’][^\W_]+)?", UNICODE)
-
-
-class RewriteMatchMode(StrEnum):
-    """Closed matching operations; none can invoke a response template."""
-
-    EXACT = "exact"
-    PREFIX = "prefix"
-    SUFFIX = "suffix"
-    TOKEN_SEQUENCE = "token_sequence"
-
-
-class RewriteScope(StrEnum):
-    """Whether a rule may depend on inherited conversational context."""
-
-    GLOBAL = "global"
-    CONTEXTUAL = "contextual"
-
-
-class RewriteStopReason(StrEnum):
-    """Concrete terminal state for one bounded rewrite execution."""
-
-    FIXED_POINT = "fixed_point"
-    DEPTH_LIMIT = "depth_limit"
-    EXPANSION_LIMIT = "expansion_limit"
-    CYCLE = "cycle"
-    OUTPUT_LIMIT = "output_limit"
-    TIME_LIMIT = "time_limit"
 
 
 def internal_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
@@ -124,21 +89,23 @@ def rule_precedence(rule: dict) -> tuple[int, str]:
 
 def rewrite_rule(value: object) -> dict:
     """Validate and copy one exact version-1 rule record."""
-    data = internal_mapping(value, "RewriteRule", RULE_FIELDS)
-    constraint_data = internal_mapping(data.get("input_constraints", {}), "RewriteInputConstraints", INPUT_FIELDS)
-    provenance_data = internal_mapping(data.get("provenance", {}), "RewriteProvenance", PROVENANCE_FIELDS)
+    data = internal_mapping(value, "RewriteRule", REWRITE_RULE_FIELDS)
+    constraint_data = internal_mapping(data.get("input_constraints", {}), "RewriteInputConstraints", REWRITE_INPUT_FIELDS)
+    provenance_data = internal_mapping(data.get("provenance", {}), "RewriteProvenance", REWRITE_PROVENANCE_FIELDS)
     try:
-        mode = RewriteMatchMode(internal_text(constraint_data.get("match_mode", ""), "rewrite match_mode", 32))
-        scope = RewriteScope(internal_text(data.get("scope", ""), "rewrite scope", 32))
-    except ValueError as error:
-        raise InvalidRequestError("rewrite rule uses an unsupported enum value") from error
+        mode = RewriteMatchMode(internal_text(constraint_data.get("match_mode", ""), "rewrite match_mode", MAX_ENUM_WIRE_BYTES))
+        scope = RewriteScope(internal_text(data.get("scope", ""), "rewrite scope", MAX_ENUM_WIRE_BYTES))
+    except ValueError as err:
+        raise InvalidRequestError("rewrite rule uses an unsupported enum value") from err
     raw_operators = constraint_data.get("required_operators", [])
     if not isinstance(raw_operators, (list, tuple)) or len(raw_operators) > len(QueryOperator):
         raise InvalidRequestError("rewrite required_operators must be a bounded list")
     try:
-        operators = tuple(QueryOperator(internal_text(value, "rewrite required operator", 32)) for value in raw_operators)
-    except ValueError as error:
-        raise InvalidRequestError("rewrite required_operators contains an unsupported operator") from error
+        operators = tuple(
+            QueryOperator(internal_text(value, "rewrite required operator", MAX_ENUM_WIRE_BYTES)) for value in raw_operators
+        )
+    except ValueError as err:
+        raise InvalidRequestError("rewrite required_operators contains an unsupported operator") from err
     if len(set(operators)) != len(operators):
         raise InvalidRequestError("rewrite required_operators must be unique")
     requires_subject = constraint_data.get("requires_inherited_subject", False)
@@ -148,13 +115,13 @@ def rewrite_rule(value: object) -> dict:
         raise InvalidRequestError("inherited-subject rewrite rules must be contextual")
     template = internal_text(data.get("output_template", ""), "rewrite output_template", MAX_REWRITE_PATTERN_BYTES, empty=True)
     fields = {match.group(1) for match in re_finditer(r"\{([^{}]+)\}", template)}
-    if fields.difference(SAFE_TEMPLATE_FIELDS) or ("{subject}" in template) != requires_subject:
+    if fields.difference(REWRITE_SAFE_TEMPLATE_FIELDS) or ("{subject}" in template) != requires_subject:
         raise InvalidRequestError("rewrite output_template uses unsupported or inconsistent fields")
     constraint: dict = {
         "match_mode": mode,
         "pattern": internal_text(constraint_data.get("pattern", ""), "rewrite pattern", MAX_REWRITE_PATTERN_BYTES),
-        "min_tokens": internal_integer(constraint_data.get("min_tokens", 0), "rewrite min_tokens", 1, 512),
-        "max_tokens": internal_integer(constraint_data.get("max_tokens", 0), "rewrite max_tokens", 1, 512),
+        "min_tokens": internal_integer(constraint_data.get("min_tokens", 0), "rewrite min_tokens", 1, MAX_REWRITE_RULE_TOKENS),
+        "max_tokens": internal_integer(constraint_data.get("max_tokens", 0), "rewrite max_tokens", 1, MAX_REWRITE_RULE_TOKENS),
         "required_operators": operators,
         "requires_inherited_subject": requires_subject,
     }
@@ -163,12 +130,12 @@ def rewrite_rule(value: object) -> dict:
     provenance: dict = {
         "author": internal_text(provenance_data.get("author", ""), "rewrite provenance author", MAX_REWRITE_PROVENANCE_BYTES),
         "origin": internal_text(provenance_data.get("origin", ""), "rewrite provenance origin", MAX_REWRITE_PROVENANCE_BYTES),
-        "license": internal_text(provenance_data.get("license", ""), "rewrite provenance license", 96),
-        "created_at": internal_text(provenance_data.get("created_at", ""), "rewrite provenance created_at", 40),
+        "license": internal_text(provenance_data.get("license", ""), "rewrite provenance license", MAX_REWRITE_LICENSE_BYTES),
+        "created_at": internal_text(provenance_data.get("created_at", ""), "rewrite provenance created_at", MAX_TIMESTAMP_BYTES),
     }
     result: dict = {
         "rule_id": internal_text(data.get("rule_id", ""), "rewrite rule_id", MAX_REWRITE_RULE_ID_BYTES),
-        "category": internal_text(data.get("category", ""), "rewrite category", 64),
+        "category": internal_text(data.get("category", ""), "rewrite category", MAX_REWRITE_CATEGORY_BYTES),
         "input_constraints": constraint,
         "output_template": template,
         "priority": internal_integer(data.get("priority", 0), "rewrite priority", 0, MAX_REWRITE_PRIORITY),
@@ -188,10 +155,10 @@ def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
     """Load one exact corpus document without accepting unknown fields."""
     try:
         decoded = json_loads(value)
-    except (TypeError, json_JSONDecodeError) as error:
-        raise InvalidRequestError("rewrite corpus must be valid JSON") from error
-    data = internal_mapping(decoded, "RewriteCorpus", CORPUS_FIELDS)
-    internal_text(data.get("corpus_id", ""), "rewrite corpus_id", 128)
+    except (TypeError, json_JSONDecodeError) as err:
+        raise InvalidRequestError("rewrite corpus must be valid JSON") from err
+    data = internal_mapping(decoded, "RewriteCorpus", REWRITE_CORPUS_FIELDS)
+    internal_text(data.get("corpus_id", ""), "rewrite corpus_id", MAX_REWRITE_CORPUS_ID_BYTES)
     raw_rules = data.get("rules", [])
     if not isinstance(raw_rules, list) or not 1 <= len(raw_rules) <= MAX_REWRITE_RULES:
         raise InvalidRequestError(f"rewrite corpus rules must contain 1 through {MAX_REWRITE_RULES} items")
@@ -279,7 +246,7 @@ class RewriteEngine:
         self.max_depth = internal_integer(max_depth, "rewrite max_depth", 1, MAX_TRACE_STEPS)
         self.max_expansions = internal_integer(max_expansions, "rewrite max_expansions", 1, MAX_REWRITE_RULES)
         self.max_output_bytes = internal_integer(max_output_bytes, "rewrite max_output_bytes", 1, MAX_REQUEST_BYTES)
-        self.max_elapsed_ns = internal_integer(max_elapsed_ns, "rewrite max_elapsed_ns", 1, 10_000_000_000)
+        self.max_elapsed_ns = internal_integer(max_elapsed_ns, "rewrite max_elapsed_ns", 1, MAX_REWRITE_ELAPSED_NS)
         if not callable(clock_ns):
             raise InvalidRequestError("rewrite clock_ns must be callable")
         self.internal_clock_ns = clock_ns

@@ -45,8 +45,8 @@ def main() -> None:
         report = verify_schema(connection, SCHEMA_FILE)
         print(report)
         sys_exit(0 if report.get("valid", False) else 1)
-    except Exception as error:
-        print({"valid": False, "error": str(error)})
+    except Exception as err:
+        print({"valid": False, "error": str(err)})
         sys_exit(1)
     finally:
         connection.disconnect()

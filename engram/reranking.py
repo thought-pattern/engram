@@ -5,46 +5,30 @@ from threading import Lock as threading_Lock
 from time import monotonic_ns as time_monotonic_ns
 
 from engram.config import reranker_config
+from engram.constants import RERANKER_COEFFICIENTS, RERANKER_FEATURES, RERANKER_INTERCEPT
 from engram.errors import InvalidRequestError, ResolutionCancelledError
-
-RERANKER_FEATURES = (
-    "base_score",
-    "exact",
-    "lexical",
-    "semantic",
-    "entity",
-    "relation",
-    "object_type",
-    "support",
-    "freshness",
-    "authority",
-    "agreement",
-)
-RERANKER_COEFFICIENTS: dict[str, float] = {
-    "base_score": 2.40,
-    "exact": 4.00,
-    "lexical": 0.65,
-    "semantic": 0.85,
-    "entity": 0.55,
-    "relation": 0.55,
-    "object_type": 0.40,
-    "support": 0.80,
-    "freshness": 0.20,
-    "authority": 0.50,
-    "agreement": 0.65,
-}
-RERANKER_INTERCEPT = -1.20
 
 
 def unit(value: object, name: str) -> float:
+    """Return a reranker feature value that is a finite number from 0.0 to 1.0, or raise."""
     if not isinstance(value, (int, float)) or isinstance(value, bool) or not math_isfinite(float(value)):
         raise InvalidRequestError(f"reranker {name} must be a finite number")
-    result = max(0.0, min(1.0, float(value)))
+    if not 0.0 <= value <= 1.0:
+        raise InvalidRequestError(f"reranker {name} must be between 0 and 1")
+    result = float(value)
     return result
 
 
 def internal_score(features: dict) -> tuple[float, dict[str, float]]:
-    normalized = {name: unit(features.get(name, 0.0), name) for name in RERANKER_FEATURES}
+    """Score one candidate's features with the fixed logistic model.
+
+    Every key must be one of RERANKER_FEATURES; a feature that is absent counts
+    as 0.0. Returns the probability and the validated feature values.
+    """
+    unknown = sorted(str(name) for name in set(features) - set(RERANKER_FEATURES))
+    if unknown:
+        raise InvalidRequestError(f"reranker features are not part of the model: {unknown}")
+    normalized = {str(name): unit(features.get(name, 0.0), str(name)) for name in RERANKER_FEATURES}
     logit = RERANKER_INTERCEPT + sum(RERANKER_COEFFICIENTS.get(name, 0.0) * normalized.get(name, 0.0) for name in RERANKER_FEATURES)
     if logit >= 0:
         exponent = math_exp(-logit)
@@ -61,8 +45,8 @@ class TransparentLogisticReranker:
     def __init__(self, settings: dict, clock_ns: object = ()) -> None:
         try:
             self.settings = reranker_config(**dict(settings))
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError(str(error)) from error
+        except (TypeError, ValueError) as err:
+            raise InvalidRequestError(str(err)) from err
         if clock_ns != () and not callable(clock_ns):
             raise InvalidRequestError("reranker clock_ns must be callable")
         self.internal_clock_ns = clock_ns if callable(clock_ns) else time_monotonic_ns

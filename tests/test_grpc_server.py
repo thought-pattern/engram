@@ -15,20 +15,20 @@ from grpc import (
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 from pytest import raises as pytest_raises
 
-from engram import engram_pb2, engram_pb2_grpc, grpc_server as grpc_server_module
+from engram import engram_pb2, grpc_server as grpc_server_module
 from engram.config import engram_config, graph_config
 from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
 from engram.core import Engram
+from engram.engram_pb2_grpc import EngramEvidenceServiceStub, EngramServiceStub
 from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
 from engram.identity import extract_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
 from engram.resolution import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore
-
-from .support_fixtures import ASSERTION_REFERENCE_A
-from .test_relation import RelationGraph
-from .test_scope_removal import RemovalExample
+from tests.support_fixtures import ASSERTION_REFERENCE_A
+from tests.test_relation import RelationGraph
+from tests.test_scope_removal import RemovalExample
 
 
 class GrpcCore(EngramCore):
@@ -61,7 +61,7 @@ def running_server(core: EngramCore, **kwargs):
         channel = grpc_insecure_channel(server.start())
         try:
             grpc_channel_ready_future(channel).result(timeout=5)
-            yield server, channel, engram_pb2_grpc.EngramServiceStub(channel)
+            yield server, channel, EngramServiceStub(channel)
         finally:
             channel.close()
     finally:
@@ -99,7 +99,7 @@ def test_engagement_maintenance_protocol_deletes_one_scope_and_keeps_peer_respon
     with running_server(example.core) as (_, _, stub):
         for action in ("plan", "prepare", "purge", "purge", "resume"):
             request = struct_pb2.Struct()
-            request.update(example.command(action))
+            request.update({**example.binding, "action": action})
             result = as_dict(stub.MaintainEngagement(request))
             if action == "plan":
                 assert result.get("dry_run", False) is True
@@ -308,7 +308,7 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
                 request_id="learn-evidence",
             )
         )
-        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+        stub = EngramEvidenceServiceStub(channel)
 
         result = stub.ResolveEvidence(
             engram_pb2.ResolveEvidenceRequest(
@@ -340,7 +340,7 @@ def test_grpc_evidence_service_uses_shared_graph_resolution(monkeypatch) -> None
         )
     )
     with running_server(core) as (_, channel, _):
-        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+        stub = EngramEvidenceServiceStub(channel)
 
         result = stub.ResolveEvidence(
             engram_pb2.ResolveEvidenceRequest(
@@ -360,7 +360,7 @@ def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() ->
     identity = extract_standalone_identity("Uncached evidence contract request")
     budget = resolution_budget()
     with running_server(core) as (_, channel, _):
-        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+        stub = EngramEvidenceServiceStub(channel)
 
         result = stub.ResolveEvidence(
             engram_pb2.ResolveEvidenceRequest(
@@ -378,7 +378,7 @@ def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() ->
 def test_evidence_service_enforces_the_shared_request_bound() -> None:
     core = GrpcCore()
     with running_server(core) as (_, channel, _):
-        stub = engram_pb2_grpc.EngramEvidenceServiceStub(channel)
+        stub = EngramEvidenceServiceStub(channel)
 
         with pytest_raises(grpc_RpcError) as failure:
             stub.ResolveEvidence(
@@ -394,7 +394,7 @@ def test_evidence_service_enforces_the_shared_request_bound() -> None:
         assert core.resolution_requests == {}
 
 
-def test_unhandled_grpc_failure_is_logged_in_full_and_redacted_for_the_client(caplog, monkeypatch) -> None:
+def test_unhandled_grpc_failure_logs_its_origin_and_is_redacted_for_the_client(caplog, monkeypatch) -> None:
     secret = "private-request-and-credential-content"
     core = GrpcCore()
 
@@ -411,8 +411,8 @@ def test_unhandled_grpc_failure_is_logged_in_full_and_redacted_for_the_client(ca
 
     assert failure.value.code() == grpc_StatusCode.INTERNAL
     assert failure.value.details() == "internal Engram failure"
-    assert secret in caplog.text
-    assert "Traceback" in caplog.text
+    assert secret not in caplog.text
+    assert "RuntimeError at test_grpc_server.py" in caplog.text
 
 
 def test_session_limit_is_resource_exhausted() -> None:
@@ -448,7 +448,8 @@ def test_chat_validation_is_invalid_argument_but_an_internal_value_error_is_inte
     assert invalid.value.details() == "text must be one non-empty string"
     assert internal.value.code() == grpc_StatusCode.INTERNAL
     assert internal.value.details() == "internal Engram failure"
-    assert secret in caplog.text
+    assert secret not in caplog.text
+    assert "ValueError at test_grpc_server.py" in caplog.text
 
 
 def test_exact_and_conflicting_mutation_retries_are_shared_across_python_mcp_and_grpc() -> None:
@@ -640,7 +641,7 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     core.chat = delayed_chat
     server = EngramGrpcServer(core, bind_address="127.0.0.1:0")
     channel = grpc_insecure_channel(server.start())
-    stub = engram_pb2_grpc.EngramServiceStub(channel)
+    stub = EngramServiceStub(channel)
     stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
     chat_future = stub.Chat.future(engram_pb2.ChatRequest(user_id="Alice", text="hello"), timeout=5)
     assert entered.wait(timeout=5)

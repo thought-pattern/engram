@@ -5,7 +5,6 @@ It parses declarative sentences and extracts subject-predicate-object
 relationships for dynamic learning.
 """
 
-from functools import lru_cache
 from logging import getLogger
 
 from nltk import ne_chunk
@@ -14,6 +13,7 @@ from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
 from engram.constants import (
+    ARTICLES,
     COMMAND_WORDS,
     COPULAS,
     KIND_COMMAND,
@@ -22,31 +22,13 @@ from engram.constants import (
     MAX_FACT_SUBJECT_TOKENS,
     POSSESSIVE_PRONOUNS,
     PRONOUNS,
+    PROPER_NOUN_POS_TAGS,
     QUESTION_WORDS,
 )
-from engram.nltk_data import ensure_resource
+from engram.nltk_data import NLTK_RESOURCES
 from engram.text import is_known_word, verb_only_word
 
 LOGGER = getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def ensure_nltk_data() -> None:
-    """Ensure required NLTK data is present, fetching into the local data dir."""
-    required = [
-        ("tokenizers/punkt", "punkt"),
-        ("tokenizers/punkt_tab", "punkt_tab"),
-        ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
-        ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
-        ("chunkers/maxent_ne_chunker", "maxent_ne_chunker"),
-        ("chunkers/maxent_ne_chunker_tab", "maxent_ne_chunker_tab"),
-        ("corpora/words", "words"),
-    ]
-    for path, package in required:
-        ensure_resource(path, package)
-
-
-PROPER_NOUN_TAGS = {"NNP", "NNPS"}
 
 
 def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) -> bool:
@@ -57,7 +39,7 @@ def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) ->
     the NNP/NNPS gate used for a span that opens the sentence. A capital later
     in the sentence skips that gate, so a mid-sentence name still counts.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
     wanted = surface.split()
     if not wanted or any(verb_only_word(word) for word in wanted):
         result = False
@@ -71,7 +53,7 @@ def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) ->
         window = tagged[start : start + width]
         if [word for word, _ in window] != wanted:
             continue
-        result = all(pos in PROPER_NOUN_TAGS for _, pos in window)
+        result = all(pos in PROPER_NOUN_POS_TAGS for _, pos in window)
         return result
     result = False
     return result
@@ -178,7 +160,7 @@ def clean_subject(tokens: list[str]) -> str:
         result = ""
         return result
 
-    while tokens and tokens[0].lower() in ("a", "an", "the"):
+    while tokens and tokens[0].lower() in ARTICLES:
         tokens = tokens[1:]
 
     cleaned = " ".join(tokens)
@@ -264,8 +246,11 @@ def extract_fact(text: str) -> dict:
     Returns:
         The fact dict (subject, predicate, obj, original) if a fact was
         extracted, otherwise an empty dict.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
 
     text = text.strip()
     if not text:
@@ -330,8 +315,11 @@ def extract_entities(text: str) -> list[dict]:
         List of entity dicts: text (the entity's tokens joined by single
         spaces), label (PERSON/ORGANIZATION/GPE/...), and the exact
         [start, end) character range those tokens occupy in text.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
 
     if not text or not text.strip():
         result = []

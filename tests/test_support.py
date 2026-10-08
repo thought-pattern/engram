@@ -3,8 +3,7 @@
 from pytest import raises as pytest_raises
 
 from engram.support import MAX_CONTRACT_NAME_BYTES, validate_support_reference
-
-from .support_fixtures import ASSERTION_REFERENCE_A
+from tests.support_fixtures import ASSERTION_REFERENCE_A
 
 
 def test_a_reference_naming_newer_contracts_is_accepted_and_kept_as_given() -> None:

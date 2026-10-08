@@ -66,6 +66,8 @@ def internal_measure(operation: object, samples: int) -> dict:
         started = time_perf_counter_ns()
         outcome = operation()
         elapsed = (time_perf_counter_ns() - started) / 1_000_000
+        if not isinstance(outcome, dict):
+            raise ValueError("benchmark operation must return a sparse search mapping")
         if outcome.get("complete", False):
             durations.append(elapsed)
         else:
@@ -296,6 +298,8 @@ def internal_latency(
             started = time_perf_counter_ns()
             outcome = search(str(raw.get("query", "")), 5)
             elapsed = (time_perf_counter_ns() - started) / 1_000_000
+            if not isinstance(outcome, dict):
+                raise ValueError("sparse benchmark search must return a sparse search mapping")
             if outcome.get("complete", False):
                 samples.append(elapsed)
             else:

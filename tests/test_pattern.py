@@ -2,6 +2,8 @@
 
 from random import Random
 
+from pytest import raises as pytest_raises
+
 from engram.pattern import PatternMatcher, normalize_pattern
 
 
@@ -852,6 +854,26 @@ def test_bot_pattern_matching_bot_with_sets_combined():
     assert result
     assert result[0] == "Combined match"
     assert result[1] == ["testbot", "blue"]
+
+
+def test_matcher_copies_its_tables_at_ingress():
+    """Changing the caller's dicts after construction leaves matching unchanged."""
+    sets = {"color": ["red"]}
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(sets=sets, bot_properties=bot)
+    pm.add_pattern("{bot:name} LIKES {set:color}", "Combined match")
+    sets.get("color", []).append("blue")
+    bot["name"] = "Other"
+
+    assert pm.match("testbot likes red")
+    assert not pm.match("testbot likes blue")
+    assert not pm.match("other likes red")
+
+
+def test_matcher_rejects_malformed_tables():
+    for sets, bot in (([("color", ["red"])], {}), ({"color": "red"}, {}), ({}, ["name"]), ({}, {"name": 1})):
+        with pytest_raises(ValueError):
+            PatternMatcher(sets=sets, bot_properties=bot)
 
 
 """Tests for normalize_pattern with set/bot references."""

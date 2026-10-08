@@ -13,14 +13,12 @@ Install once after dependencies:
     python -m spacy download en_core_web_sm
 """
 
-from logging import getLogger as logging_getLogger
 from threading import Lock
 
 from spacy import load as spacy_load
+from spacy.language import Language
 
 from engram.constants import MODEL_NAME
-
-logger = logging_getLogger(__name__)
 
 # Distinct disable-sets kept loaded at once. Callers use the full pipeline and
 # the parser/NER-free phrasing variant, so the bound is never reached in use.
@@ -31,18 +29,17 @@ class SpacyPipelines:
     """Own the loaded pipelines of one pre-provisioned spaCy model.
 
     Each distinct ``disable`` set is loaded once, under the lock, and reused.
-    A model that cannot be loaded is retained as ``()`` so callers degrade
-    gracefully and the load is not retried. At most
-    ``PIPELINE_CACHE_CAPACITY`` variants stay loaded; the least recently used
-    one is released first.
+    The model is a hard runtime requirement: a model that cannot be loaded raises
+    ``RuntimeError``. At most ``PIPELINE_CACHE_CAPACITY`` variants stay loaded;
+    the least recently used one is released first.
     """
 
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
         self.lock = Lock()
-        self.pipelines: dict[tuple, object] = {}
+        self.pipelines: dict[tuple, Language] = {}
 
-    def pipeline(self, disable=()):
+    def pipeline(self, disable=()) -> Language:
         """Return the pipeline with the ``disable`` components switched off.
 
         Args:
@@ -51,15 +48,16 @@ class SpacyPipelines:
                 ("ner",) to skip components not needed.
 
         Returns:
-            A loaded spaCy Language object, or falsy () if the model cannot be
-            loaded (so callers degrade gracefully rather than crash).
+            A loaded spaCy Language object.
+
+        Raises:
+            RuntimeError: the pre-provisioned model is not installed.
         """
         key = tuple(disable)
         with self.lock:
             if key in self.pipelines:
-                nlp = self.pipelines.get(key, ())
                 # Re-insert so dictionary order stays least recently used first.
-                del self.pipelines[key]
+                nlp = self.pipelines.pop(key)
             else:
                 nlp = self.load(key)
             self.pipelines[key] = nlp
@@ -67,13 +65,14 @@ class SpacyPipelines:
                 del self.pipelines[next(iter(self.pipelines))]
         return nlp
 
-    def load(self, disable: tuple):
-        """Load the model with ``disable`` components off. Returns () when it is absent."""
+    def load(self, disable: tuple) -> Language:
+        """Load the model with ``disable`` components off; raise ``RuntimeError`` when it is not installed."""
         try:
             nlp = spacy_load(self.model_name, disable=list(disable))
         except OSError as err:
-            logger.warning("spaCy model %s is not available", self.model_name, exc_info=err)
-            nlp = ()
+            raise RuntimeError(
+                f"spaCy model {self.model_name} is not installed; run: python -m spacy download {self.model_name}"
+            ) from err
         return nlp
 
 

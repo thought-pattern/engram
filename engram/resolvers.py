@@ -18,6 +18,7 @@ from engram.constants import (
     ACCOUNTING_FINALIZATION_FIELDS,
     EXACT_RESOLVER_COST_CLASS,
     EXACT_RESOLVER_NAME,
+    GRAPH_COMPOSITION_PRODUCER,
     MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS,
     MAX_PLAN_RESOLVERS,
     MAX_REASON_CODE_BYTES,
@@ -26,6 +27,8 @@ from engram.constants import (
     MAX_RESOURCE_COUNTER,
     MAX_STATEMENT_ID_BYTES,
     PROPOSITION_EVIDENCE_PRODUCERS,
+    PROPOSITION_PATH_FILTERS,
+    RELATION_ONE_HOP_PRODUCER,
     RESOLUTION_PLAN_ENTRY_FIELDS,
     RESOLUTION_PLAN_FIELDS,
     RESOLVER_BUDGET_FIELDS,
@@ -52,7 +55,14 @@ from engram.constants import (
     TemporalAxis,
     TemporalQueryOperator,
 )
-from engram.errors import ConflictError, InvalidRequestError, ResolutionCancelledError, ResourceNotFoundError
+from engram.errors import (
+    ConflictError,
+    InvalidRequestError,
+    ResolutionCancelledError,
+    ResourceNotFoundError,
+    VectorSupportScanExceededError,
+    WorkingMemoryExceededError,
+)
 from engram.evidence import (
     PropositionEligibilityEvaluator,
     assertion_basis_window,
@@ -113,7 +123,7 @@ from engram.resolution import (
     validate_query_frame,
     validate_resolver_result,
 )
-from engram.utilities import UtilityRegistry
+from engram.utilities import UtilityRegistry, utility_statement_id
 
 logger = logging_getLogger(__name__)
 
@@ -261,8 +271,8 @@ def resolver_reservation(
     try:
         validated_lease = validate_resolver_budget(lease)
         validated_consumption = validate_budget_consumption(consumption)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("reservation lease and consumption have invalid types") from error
+    except InvalidRequestError as err:
+        raise InvalidRequestError("reservation lease and consumption have invalid types") from err
     result: dict = {
         "resolver": resolver,
         "order": order,
@@ -711,8 +721,7 @@ class UtilityResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
-        statement_id = f"utility:{plugin_name}:sha256:{digest}"
+        statement_id = utility_statement_id(plugin_name, canonical_input)
         current = resolution_candidate(
             candidate_id=internal_candidate_id(CandidateSource.UTILITY, statement_id, frame.get("diagnostic_id", "")),
             statement_id=statement_id,
@@ -1167,8 +1176,8 @@ class StructuredGraphResolver:
                 frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
                 max_rows=min(64, remaining_rows),
             )
-        except InvalidRequestError as error:
-            reason = str(error)
+        except InvalidRequestError as err:
+            reason = str(err)
             if reason not in {value.value for value in CompositionReason}:
                 reason = CompositionReason.UNSUPPORTED_QUERY.value
             result = resolver_result(
@@ -1271,13 +1280,7 @@ class StructuredGraphResolver:
                         plan_operator,
                         step.get("subject_binding", ""),
                         step.get("object_binding", ""),
-                        (
-                            "canonical_identity",
-                            "object_type",
-                            "publication_revalidation",
-                            "temporal_eligibility",
-                            "visibility",
-                        ),
+                        PROPOSITION_PATH_FILTERS,
                         aggregation_inputs if position == len(path) - 1 else (),
                     )
                 )
@@ -1339,7 +1342,7 @@ class StructuredGraphResolver:
                     scope=frame.get("scope", {}),
                     lifecycle=LifecycleState.ACTIVE,
                     provenance={
-                        "producer": "graph_composition",
+                        "producer": GRAPH_COMPOSITION_PRODUCER,
                         "operator": plan_operator.value,
                         "root_entity_id": plan.get("root_entity_id", ""),
                         "root_label": plan.get("root_label", ""),
@@ -1383,7 +1386,7 @@ class StructuredGraphResolver:
             output_bytes = 0
         working_memory = working_size(execution) + record_bytes() + output_bytes
         if working_memory > budget.get("max_working_memory_bytes", 0):
-            raise MemoryError("composition working-memory estimate exceeded")
+            raise WorkingMemoryExceededError("composition working-memory estimate exceeded")
         result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
@@ -1621,7 +1624,7 @@ class StructuredGraphResolver:
                         scope=frame.get("scope", {}),
                         lifecycle=LifecycleState.ACTIVE,
                         provenance={
-                            "producer": "relation_one_hop",
+                            "producer": RELATION_ONE_HOP_PRODUCER,
                             "subject_entity_id": plan.get("subject_entity_id", ""),
                             "subject_label": subject_label,
                             "predicate_id": plan.get("predicate_id", ""),
@@ -1661,7 +1664,7 @@ class StructuredGraphResolver:
             output_bytes = 0
         working_memory = working_size(results) + record_bytes() + output_bytes
         if working_memory > budget.get("max_working_memory_bytes", 0):
-            raise MemoryError("relation resolution working-memory estimate exceeded")
+            raise WorkingMemoryExceededError("relation resolution working-memory estimate exceeded")
         result = resolver_result(
             resolver=self.name,
             state=ResolverState.COMPLETED,
@@ -1760,7 +1763,7 @@ class StructuredGraphResolver:
                 max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
                 basis_window=assertion_basis_window(frame),
             )
-        except MemoryError:
+        except WorkingMemoryExceededError:
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         records = []
@@ -1935,8 +1938,11 @@ class SupportSemanticResolver:
                 if remaining_vector_results
                 else []
             )
-        except MemoryError:
+        except WorkingMemoryExceededError:
             result = exhausted_result(self.name, ("working_memory_bytes",))
+            return result
+        except VectorSupportScanExceededError:
+            result = exhausted_result(self.name, ("vector_results",))
             return result
         candidates = []
         accounting = []
@@ -2132,8 +2138,8 @@ class ResolverRegistry:
             availability_failed = False
             try:
                 available = bool(selected and cost_allowed and resolver_available(available_operation, frame))
-            except Exception as error:
-                logger.warning("Resolver %s availability check failed", name, exc_info=error)
+            except Exception as err:
+                logger.warning("Resolver %s availability check failed", name, exc_info=err)
                 available = False
                 availability_failed = True
             reason = ""
@@ -2396,15 +2402,15 @@ class ResolverExecutor:
                 run_cooperative_check(cooperative_check)
             except ResolutionCancelledError:
                 raise
-            except Exception as error:
-                logger.warning("Resolver %s failed", resolver_name, exc_info=error)
+            except Exception as err:
+                logger.warning("Resolver %s failed", resolver_name, exc_info=err)
                 finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
                 result = resolver_result(
                     resolver=resolver_name,
                     state=ResolverState.FAILED,
                     reason_code="resolver_exception",
-                    diagnostics={"exception_type": type(error).__name__},
+                    diagnostics={"exception_type": type(err).__name__},
                     consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
                 )
             else:
@@ -2412,13 +2418,13 @@ class ResolverExecutor:
                 elapsed = max(0, finished - started)
                 try:
                     current_raw = validate_resolver_result(raw)
-                except InvalidRequestError as error:
-                    logger.warning("Resolver %s returned an invalid result", resolver_name, exc_info=error)
+                except InvalidRequestError as err:
+                    logger.warning("Resolver %s returned an invalid result", resolver_name, exc_info=err)
                     result = resolver_result(
                         resolver=resolver_name,
                         state=ResolverState.FAILED,
                         reason_code="invalid_resolver_result",
-                        diagnostics={"exception_type": type(error).__name__},
+                        diagnostics={"exception_type": type(err).__name__},
                         consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
                     )
                 else:
@@ -2605,8 +2611,8 @@ class ResolutionAccountingFinalizer:
             raise InvalidRequestError("accounting results must be a tuple of ResolverResult values")
         try:
             results = tuple(validate_resolver_result(value) for value in results)
-        except InvalidRequestError as error:
-            raise InvalidRequestError("accounting results must be a tuple of ResolverResult values") from error
+        except InvalidRequestError as err:
+            raise InvalidRequestError("accounting results must be a tuple of ResolverResult values") from err
         if not isinstance(accepted_statement_id, str):
             raise InvalidRequestError("accepted_statement_id must be a string")
         signature = accounting_signature(results, accepted_statement_id)
@@ -2678,8 +2684,8 @@ class ResolutionOrchestrator:
         else:
             try:
                 selected_evidence_policy = validate_evidence_usefulness_policy(evidence_policy)
-            except InvalidRequestError as error:
-                raise InvalidRequestError("orchestrator evidence_policy has an invalid type") from error
+            except InvalidRequestError as err:
+                raise InvalidRequestError("orchestrator evidence_policy has an invalid type") from err
         self.internal_registry = registry
         self.internal_executor = executor
         self.internal_accounting = accounting

@@ -76,20 +76,16 @@ def test_load_config_values_graph_mapping(tmp_path):
     assert graph.get("enabled", False) is True
 
 
-def test_load_config_ignores_and_logs_an_unknown_key(tmp_path, caplog):
-    # An extra or stale key must not stop startup; the log still names it.
-    cfg = load_config(internal_write(tmp_path, "capcity: 500\ncapacity: 7\n"))
-    assert cfg == engram_config(capacity=7)
-    assert "capcity" in caplog.text
+def test_load_config_rejects_an_unknown_key(tmp_path):
+    # A misspelled key would otherwise leave its setting silently at the default.
+    with pytest_raises(ValueError, match="capcity"):
+        load_config(internal_write(tmp_path, "capcity: 500\ncapacity: 7\n"))
 
 
-def test_load_config_ignores_an_unknown_graph_key(tmp_path, caplog):
+def test_load_config_rejects_an_unknown_graph_key(tmp_path):
     # A stale graph section (e.g. the pre-pymgclient uri/database form).
-    cfg = load_config(internal_write(tmp_path, "graph:\n  uri: bolt://localhost:7687\n  port: 7777\n"))
-    graph = cfg.get("graph", {})
-    assert graph.get("port", 0) == 7777
-    assert "uri" not in graph
-    assert "uri" in caplog.text
+    with pytest_raises(ValueError, match="uri"):
+        load_config(internal_write(tmp_path, "graph:\n  uri: bolt://localhost:7687\n  port: 7777\n"))
 
 
 def test_load_config_values_validation_applies(tmp_path):
@@ -97,11 +93,9 @@ def test_load_config_values_validation_applies(tmp_path):
         load_config(internal_write(tmp_path, "capacity: 0\n"))
 
 
-def test_load_config_ignores_an_unknown_conversation_key(tmp_path):
-    cfg = load_config(internal_write(tmp_path, "conversation:\n  persona: Mara\n  bot_name: Mara\n"))
-    conversation = cfg.get("conversation", {})
-    assert conversation.get("bot_name", "") == "Mara"
-    assert "persona" not in conversation
+def test_load_config_rejects_an_unknown_conversation_key(tmp_path):
+    with pytest_raises(ValueError, match="persona"):
+        load_config(internal_write(tmp_path, "conversation:\n  persona: Mara\n  bot_name: Mara\n"))
 
 
 def test_load_config_conversation_blank_bot_name_raises(tmp_path):

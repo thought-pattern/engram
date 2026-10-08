@@ -134,7 +134,7 @@ def test_engram_config_custom_stopwords() -> None:
     assert config.get("stopwords", set()) == custom
 
 
-def test_config_from_dict_builds_a_host_mapping_and_drops_retired_deployment_mode(caplog) -> None:
+def test_config_from_dict_builds_a_host_mapping() -> None:
     config = config_from_dict(
         {
             "session_overflow": "reject",
@@ -142,7 +142,6 @@ def test_config_from_dict_builds_a_host_mapping_and_drops_retired_deployment_mod
                 "host": "graph.internal",
                 "port": 7687,
                 "enabled": True,
-                "deployment_mode": "tapestry_managed",
                 "vector_enabled": False,
             },
         },
@@ -153,8 +152,11 @@ def test_config_from_dict_builds_a_host_mapping_and_drops_retired_deployment_mod
     assert config.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
     assert graph.get("host", "") == "graph.internal"
     assert graph.get("enabled", False) is True
-    assert "deployment_mode" not in graph
-    assert "deployment_mode" not in caplog.text
+
+
+def test_config_from_dict_rejects_an_unknown_graph_key() -> None:
+    with pytest_raises(ValueError, match="unknown graph config key"):
+        config_from_dict({"graph": {"host": "graph.internal", "deployment_mode": "tapestry_managed"}}, base_path="")
 
 
 @pytest_mark.parametrize("invalid", [[], (), "", 0, False])
@@ -183,7 +185,7 @@ def test_config_from_dict_starts_from_the_engram_file_and_applies_host_overrides
     )
 
     config = config_from_dict(
-        {"graph": {"host": "host-override", "enabled": True, "deployment_mode": "tapestry_managed"}},
+        {"graph": {"host": "host-override", "enabled": True}},
         base_path=str(base),
     )
 

@@ -6,8 +6,8 @@ backtracks when the rest of the input does not fit:
     1. ``$word``
     2. ``_`` (one or more words, shortest first)
     3. an exact word
-    4. ``{bot:name}`` from the live bot properties
-    5. ``{set:name}`` from the live word sets
+    4. ``{bot:name}`` from the matcher's bot properties
+    5. ``{set:name}`` from the matcher's word sets
     6. ``^`` (zero or more words, shortest first)
     7. ``#`` (zero or more words, shortest first)
     8. ``*`` (one or more words, shortest first)
@@ -27,16 +27,45 @@ misses or finds only a pure wildcard. Their captures are the original words.
 """
 
 from functools import lru_cache
-from re import (
-    IGNORECASE as IGNORECASE,
-    Match as re_Match,
-    compile as re_compile,
-    sub as re_sub,
-)
+from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compile, sub as re_sub
 
-from engram.constants import MAX_PATTERN_WORDS, WILDCARD_TOKENS
+from engram.constants import EMPTY_MAPPING, MAX_PATTERN_WORDS, WILDCARD_TOKENS
 from engram.substitutions import split_sentences
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
+
+
+def word_set_table(sets: object) -> dict[str, list[str]]:
+    """Validate a ``{set:name}`` table and return an owned copy of it.
+
+    Raises:
+        ValueError: ``sets`` is not an object whose names are strings and whose
+            members are lists of strings.
+    """
+    if not isinstance(sets, dict):
+        raise ValueError("sets must be an object of named word lists")
+    table: dict[str, list[str]] = {}
+    for name, members in sets.items():
+        well_formed = (
+            isinstance(name, str) and isinstance(members, (list, tuple)) and all(isinstance(member, str) for member in members)
+        )
+        if not well_formed:
+            raise ValueError("each word set must name a list of strings")
+        table[name] = list(members)
+    return table
+
+
+def bot_property_table(bot_properties: object) -> dict[str, str]:
+    """Validate a ``{bot:name}`` table and return an owned copy of it.
+
+    Raises:
+        ValueError: ``bot_properties`` is not an object of string names and values.
+    """
+    if not isinstance(bot_properties, dict):
+        raise ValueError("bot_properties must be an object of strings")
+    if not all(isinstance(name, str) and isinstance(value, str) for name, value in bot_properties.items()):
+        raise ValueError("bot_properties must be an object of strings")
+    table = dict(bot_properties)
+    return table
 
 
 def break_intra_word_marks(text: str) -> str:
@@ -47,7 +76,7 @@ def break_intra_word_marks(text: str) -> str:
     """
     pieces = []
     for word in text.split():
-        if word in {"*", "_", "#", "^"} or (len(word) > 1 and word.startswith("$") and word[1:].isalnum()):
+        if word in WILDCARD_TOKENS or (len(word) > 1 and word.startswith("$") and word[1:].isalnum()):
             pieces.append(word)
             continue
         pieces.append(word.replace("-", " ").replace("_", " "))
@@ -227,8 +256,8 @@ class PatternMatcher:
 
     def __init__(
         self,
-        sets=(),
-        bot_properties=(),
+        sets: dict = EMPTY_MAPPING,
+        bot_properties: dict = EMPTY_MAPPING,
         use_stemming: bool = False,
         use_lemmatization: bool = False,
         use_spacy_lemmatization: bool = False,
@@ -236,8 +265,10 @@ class PatternMatcher:
         """Initialize pattern matcher.
 
         Args:
-            sets: Optional dictionary of named word sets for {set:name} matching.
-            bot_properties: Optional bot properties for {bot:name} matching.
+            sets: Named word sets for {set:name} matching. The matcher keeps a
+                validated copy; ``replace_sets`` changes it later.
+            bot_properties: Bot properties for {bot:name} matching, copied the
+                same way; ``replace_bot_properties`` changes them later.
             use_stemming: If True, use stemmed matching as fallback when exact match fails.
             use_lemmatization: If True, try lemmatized matching as a fallback
                 (more precise than stemming) before stemmed matching.
@@ -255,9 +286,8 @@ class PatternMatcher:
         # Pattern paths lead to an optional that segment and then an optional
         # topic segment; a category with neither sits at the pattern leaf.
         self.default_trie = GraphNode()
-        # Preserve caller-owned dict references, including explicitly empty maps.
-        self.internal_sets = sets if isinstance(sets, dict) else {}
-        self.internal_bot_properties = bot_properties if isinstance(bot_properties, dict) else {}
+        self.internal_sets = word_set_table(sets)
+        self.internal_bot_properties = bot_property_table(bot_properties)
         self.internal_use_stemming = use_stemming
         self.internal_use_lemmatization = use_lemmatization
         self.internal_lemmatize = lemmatize_text_spacy if use_spacy_lemmatization else lemmatize_text
@@ -266,6 +296,24 @@ class PatternMatcher:
     def internal_patterns(self) -> list[dict]:
         """Entries in insertion order."""
         result = list(self.internal_entries.values())
+        return result
+
+    def replace_sets(self, sets: dict) -> None:
+        """Replace the {set:name} table with a validated copy; the caller holds the lock that guards the matcher."""
+        self.internal_sets = word_set_table(sets)
+
+    def replace_bot_properties(self, bot_properties: dict) -> None:
+        """Replace the {bot:name} table with a validated copy; the caller holds the lock that guards the matcher."""
+        self.internal_bot_properties = bot_property_table(bot_properties)
+
+    def word_sets(self) -> dict[str, list[str]]:
+        """Return an isolated copy of the {set:name} table."""
+        result = {name: list(members) for name, members in self.internal_sets.items()}
+        return result
+
+    def bot_properties(self) -> dict[str, str]:
+        """Return an isolated copy of the {bot:name} table."""
+        result = dict(self.internal_bot_properties)
         return result
 
     def add_pattern(

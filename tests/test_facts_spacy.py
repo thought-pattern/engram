@@ -1,13 +1,7 @@
 """Tests for spaCy dependency-parse fact extraction."""
 
-from pytest import mark as pytest_mark
-
 from engram.config import engram_config
 from engram.facts_spacy import extract_facts
-from engram.spacy_setup import SPACY_PIPELINES
-
-# These tests need the en_core_web_sm model. Skip cleanly if it is absent.
-requires_model = pytest_mark.skipif(not SPACY_PIPELINES.pipeline(), reason="spaCy model en_core_web_sm not installed")
 
 
 def internal_first(text: str) -> dict:
@@ -20,7 +14,6 @@ def internal_first(text: str) -> dict:
 """Copula sentences still extract correctly via spaCy."""
 
 
-@requires_model
 def test_copula_extraction_is_fact():
     """'X is Y' yields (X, is, Y)."""
     fact = internal_first("Paris is the capital of France.")
@@ -29,7 +22,6 @@ def test_copula_extraction_is_fact():
     assert fact.get("obj", "") == "capital of France"
 
 
-@requires_model
 def test_copula_extraction_are_fact():
     """Plural copula yields the 'are' predicate."""
     fact = internal_first("Cats are mammals.")
@@ -38,7 +30,6 @@ def test_copula_extraction_are_fact():
     assert fact.get("obj", "") == "mammals"
 
 
-@requires_model
 def test_copula_extraction_copula_with_preposition():
     """'X is in Y' yields the prepositional triple (X, in, Y)."""
     fact = internal_first("Paris is in France.")
@@ -50,7 +41,6 @@ def test_copula_extraction_copula_with_preposition():
 """Action-verb sentences (impossible for the copula extractor) work."""
 
 
-@requires_model
 def test_action_verb_extraction_transitive_verb():
     """SVO with a transitive verb uses the verb lemma as predicate."""
     fact = internal_first("Einstein developed the theory of relativity.")
@@ -59,7 +49,6 @@ def test_action_verb_extraction_transitive_verb():
     assert "theory of relativity" in fact.get("obj", "")
 
 
-@requires_model
 def test_action_verb_extraction_have_verb():
     """'has' is extracted as the lemma 'have'."""
     fact = internal_first("The Eiffel Tower has 1665 steps.")
@@ -68,7 +57,6 @@ def test_action_verb_extraction_have_verb():
     assert "steps" in fact.get("obj", "")
 
 
-@requires_model
 def test_action_verb_extraction_verb_with_preposition():
     """An intransitive verb plus preposition yields 'lemma prep'."""
     fact = internal_first("The book belongs to Mary.")
@@ -80,26 +68,22 @@ def test_action_verb_extraction_verb_with_preposition():
 """Facts carry NER entity types for subject and object when recognized."""
 
 
-@requires_model
 def test_entity_types_gpe_subject():
     fact = internal_first("Paris is the capital of France.")
     assert fact.get("subject_type", "") == "GPE"
 
 
-@requires_model
 def test_entity_types_org_entities():
     fact = internal_first("Microsoft acquired GitHub.")
     assert fact.get("subject_type", "") == "ORG"
     assert fact.get("obj_type", "") == "ORG"
 
 
-@requires_model
 def test_entity_types_person_object():
     fact = internal_first("The book belongs to Mary.")
     assert fact.get("obj_type", "") == "PERSON"
 
 
-@requires_model
 def test_entity_types_unrecognized_entity_is_empty():
     # The small model does not tag every proper noun; type degrades to "".
     fact = internal_first("Cats are mammals.")
@@ -110,22 +94,18 @@ def test_entity_types_unrecognized_entity_is_empty():
 """Questions, commands, and pronoun subjects are not extracted."""
 
 
-@requires_model
 def test_non_facts_skips_question():
     assert extract_facts("What is the capital of France?") == []
 
 
-@requires_model
 def test_non_facts_skips_command():
     assert extract_facts("Remember that dogs are loyal.") == []
 
 
-@requires_model
 def test_non_facts_skips_pronoun_subject():
     assert extract_facts("I am happy.") == []
 
 
-@requires_model
 def test_non_facts_empty_text():
     assert extract_facts("") == []
     assert extract_facts("   ") == []
@@ -134,7 +114,6 @@ def test_non_facts_empty_text():
 """Multiple declarative sentences yield multiple facts."""
 
 
-@requires_model
 def test_multiple_sentences_two_facts():
     facts = extract_facts("Cats are mammals. Shakespeare wrote Hamlet.")
     triples = {(fact.get("subject", ""), fact.get("predicate", ""), fact.get("obj", "")) for fact in facts}
