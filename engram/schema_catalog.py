@@ -3,8 +3,9 @@
 from importlib.resources import files
 from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
 
+# A label index has no property; the catalog represents it with an empty property name.
 ORDINARY_INDEX_PATTERN = re_compile(
-    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)" r"\((?P<property>[A-Za-z][A-Za-z0-9_]*)\)",
+    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)" r"(?:\((?P<property>[A-Za-z][A-Za-z0-9_]*)\))?",
     IGNORECASE,
 )
 TEXT_INDEX_PATTERN = re_compile(
@@ -248,7 +249,7 @@ def schema_catalog(text: str) -> dict:
         normalized = statement
         match = ORDINARY_INDEX_PATTERN.fullmatch(normalized)
         if match:
-            catalog.get("ordinary_indexes", []).append({"label": match.group("label"), "property": match.group("property")})
+            catalog.get("ordinary_indexes", []).append({"label": match.group("label"), "property": match.group("property") or ""})
             continue
         match = TEXT_INDEX_PATTERN.fullmatch(normalized)
         if match:
@@ -329,6 +330,10 @@ def validate_schema_contract(text: str) -> dict:
     for group in ("ordinary_indexes", "constraints"):
         if any(value.get("label", "") not in admitted_labels for value in catalog.get(group, [])):
             raise ValueError("schema contains an unknown current label")
+    # Memgraph has no implicit label index, so a label match without an indexed property scans every vertex.
+    label_indexes = {label for label, property_name in indexed if not property_name}
+    if admitted_labels - label_indexes:
+        raise ValueError("every current label requires a label index")
 
     relationships = {
         (value.get("origin", ""), value.get("relationship", ""), value.get("target", ""))
@@ -391,15 +396,18 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
             catalog.get("text_indexes", []).append(
                 {"name": name, "label": str(row.get("label", "") or ""), "properties": properties}
             )
+        elif index_type.casefold() == "label" and row.get("property") is None:
+            catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": ""})
         else:
             for property_name in properties:
                 catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": property_name})
     for row in constraint_rows:
         constraint_type = str(row.get("constraint type", "") or "").casefold()
-        for property_name in catalog_properties(row.get("properties", ())):
-            catalog.get("constraints", []).append(
-                {"constraint_type": constraint_type, "label": str(row.get("label", "") or ""), "property": property_name}
-            )
+        # A composite uniqueness constraint is one definition; its sorted property names are joined by commas.
+        properties = ",".join(sorted(catalog_properties(row.get("properties", ()))))
+        catalog.get("constraints", []).append(
+            {"constraint_type": constraint_type, "label": str(row.get("label", "") or ""), "property": properties}
+        )
     for row in vector_rows:
         index_type = str(row.get("index_type", "") or "")
         catalog.get("vector_indexes", []).append(

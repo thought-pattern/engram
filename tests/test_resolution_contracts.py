@@ -545,7 +545,7 @@ def test_resolution_result_current_package_fields_are_exact() -> None:
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         resolution_result_from_dict(missing)
     added = resolution_result_to_dict(evidence_result)
-    added["unsupported_version"] = 1
+    added["unsupported_field"] = 1
     with pytest_raises(InvalidRequestError, match="invalid fields"):
         resolution_result_from_dict(added)
     with pytest_raises(InvalidRequestError, match="unpackaged Proposition evidence"):

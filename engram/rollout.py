@@ -1,4 +1,4 @@
-"""Small policy-versioned rollout controls for unified resolution."""
+"""Small policy-driven rollout controls for unified resolution."""
 
 from collections import Counter
 

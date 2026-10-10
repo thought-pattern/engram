@@ -13,7 +13,7 @@ from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import CONVERSATION_REPORT_VERSION, DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.constants import DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.errors import InvalidRequestError
 from engram.feedback import canonical_utc
 from engram.template import TEMPLATE_RANDOM
@@ -243,7 +243,6 @@ class ConversationRuntime:
         with self.lock:
             snapshot = self.inspect()
             result = {
-                "report_version": CONVERSATION_REPORT_VERSION,
                 "started_at": self.started_at,
                 "finished_at": utc_now(),
                 "user_id": self.user_id,

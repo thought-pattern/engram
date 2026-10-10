@@ -812,7 +812,7 @@ def test_bot_pattern_matching_bot_match_basic():
 
 def test_bot_pattern_matching_bot_match_captures_value():
     """Test that bot match captures the matched value."""
-    bot = {"name": "Alice", "version": "1.0"}
+    bot = {"name": "Alice"}
     pm = PatternMatcher(bot_properties=bot)
     pm.add_pattern("YOU ARE {bot:name}", "Correct!")
 

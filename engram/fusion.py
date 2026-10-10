@@ -1,4 +1,4 @@
-"""Versioned candidate normalization, fusion, eligibility, and ambiguity policy."""
+"""Candidate normalization, fusion, eligibility, and ambiguity policy."""
 
 from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps
@@ -1426,7 +1426,6 @@ class CandidateFusionEngine:
         reranker_report: dict = {
             "applied": False,
             "reason": "not_configured",
-            "model_version": "",
             "elapsed_ns": 0,
             "model_time_target_exceeded": False,
             "input_bytes": 0,
@@ -1464,7 +1463,6 @@ class CandidateFusionEngine:
                     "applied": False,
                     "reason": "reranker_exception",
                     "exception_type": type(err).__name__,
-                    "model_version": reranker_settings.get("model_version", ""),
                     "elapsed_ns": 0,
                     "model_time_target_exceeded": False,
                     "input_bytes": 0,
@@ -1495,7 +1493,6 @@ class CandidateFusionEngine:
                             "provenance": {
                                 **dict(item_candidate.get("provenance", {})),
                                 "reranker_implementation": reranker_settings.get("implementation", ""),
-                                "reranker_model_version": reranker_settings.get("model_version", ""),
                             },
                             "diagnostics": {
                                 **dict(item_candidate.get("diagnostics", {})),
@@ -1658,7 +1655,6 @@ class CandidateFusionEngine:
                 "reranker": {
                     "applied": reranker_report.get("applied", False),
                     "reason": reranker_report.get("reason", ""),
-                    "model_version": reranker_report.get("model_version", ""),
                 },
                 "candidates": [],
             }

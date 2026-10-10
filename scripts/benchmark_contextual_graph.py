@@ -4,7 +4,6 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
-from platform import python_version as platform_python_version
 from statistics import median as statistics_median
 from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
@@ -13,7 +12,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import UNCONSTRAINED_ASSERTION_BASIS, VERSION, ExpectedObjectType, ResolutionOutcome
+from engram.constants import UNCONSTRAINED_ASSERTION_BASIS, ExpectedObjectType, ResolutionOutcome
 from engram.core import Engram
 from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
@@ -298,8 +297,6 @@ def run(manifest_path: Path) -> dict:
         "benchmark_id": manifest.get("benchmark_id", ""),
         "manifest_authored_at": manifest.get("authored_at", ""),
         "executed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "engram_version": VERSION,
-        "python_version": platform_python_version(),
         "source": benchmark_source_state(),
         "passed": not all_failures,
         "failures": all_failures,

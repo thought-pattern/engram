@@ -1,4 +1,4 @@
-"""Versioned feedback learning and bounded negative-resolution state."""
+"""Feedback learning and bounded negative-resolution state."""
 
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -195,7 +195,7 @@ def canonical_binary_encoding(value: object) -> bytes:
 def canonical_fingerprint(value: object) -> str:
     """Return one domain-separated, canonical binary SHA-256 fingerprint."""
     encoded = canonical_binary_encoding(value)
-    result = hashlib_sha256(b"engram-feedback-fingerprint-v1\0" + encoded).hexdigest()
+    result = hashlib_sha256(b"engram-feedback-fingerprint\0" + encoded).hexdigest()
     return result
 
 

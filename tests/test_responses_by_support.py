@@ -18,12 +18,10 @@ OTHER_PROPOSITION_ID = "prp_" + "b" * 64
 
 def learned(core: EngramCore, request_id: str, identifier: str) -> str:
     support = {
-        "schema_version": "tapestry-engram-support",
         "record_kind": "proposition",
         "id": identifier,
         "state_revision": 1,
         "support_revision": 1,
-        "representation_contract": "tapestry-ke-representation",
         "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
         "dependency_state_digest": "dep_" + "c" * 64,
     }

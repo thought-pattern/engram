@@ -1053,8 +1053,10 @@ class EngramCore:
                 frame,
                 request_id,
                 plan,
-                accept_exact=accept_exact and rollout_mode == RolloutMode.REGULATED_DIRECT_ANSWER,
+                accept_exact=accept_exact,
                 cooperative_check=selected_cancellation_check,
+                # Only a released direct answer earns success credit; other modes observe it.
+                credit_success=rollout_mode == RolloutMode.REGULATED_DIRECT_ANSWER,
             )
             if negative_key_available and negative_resolution_admissible(raw_result, plan):
                 try:

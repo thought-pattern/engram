@@ -10,7 +10,6 @@ from pathlib import Path
 from pytest import raises as pytest_raises
 
 from engram.config import conversation_config, engram_config, load_config
-from engram.constants import VERSION
 from engram.core import Engram, load_seed_files
 from engram.pattern import normalize_pattern
 
@@ -339,13 +338,12 @@ def test_predicate_file_supplies_get_name_on_a_new_session(tmp_path):
 def test_bot_name_wins_over_the_properties_file(tmp_path):
     properties = write_json(
         tmp_path / "properties.json",
-        {"name": "FILEBOT", "version": "9.9.9", "city": "Kyoto"},
+        {"name": "FILEBOT", "city": "Kyoto"},
     )
     engram = Engram(config=engram_config(conversation=conversation_config(bot_name="Mara", properties_file=properties)))
 
     bot_properties = engram.pattern_matcher.bot_properties()
     assert bot_properties.get("name", "") == "Mara"
-    assert bot_properties.get("version", "") == VERSION
     assert bot_properties.get("city", "") == "Kyoto"
 
 

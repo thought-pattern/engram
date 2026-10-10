@@ -2,7 +2,7 @@
 
 ## Runtime boundary
 
-Engram exposes one unversioned protobuf package, `engram`, from one source
+Engram exposes one protobuf package, `engram`, from one source
 contract: [engram.proto](../engram/engram.proto). The contract publishes two
 services from the same generated modules:
 
@@ -28,8 +28,8 @@ reads and is not Engram-owned response or conversation state.
 
 When graph recall is enabled, startup checks that the graph's schema is
 compatible before publishing readiness: it must have every definition in
-`engram/schema.cypher`, and it may have more. The separate administrative schema
-command can create that schema on an empty graph.
+`engram/schema.cypher`, and it may have more. The graph's owner creates that
+schema; Engram never writes to the graph.
 
 During request resolution, a graph connection, query, or optional vector-index
 failure contributes no graph result. If no local resolver supplies a result,
@@ -280,9 +280,9 @@ idempotent.
 - Treat returned conversation reports as sensitive application data.
 - Grant mutation RPCs only to callers authorized to change Engram process
   memory.
-- Runtime graph operations issue reads and no writes. This behavior does not
-  require restricted credentials or an interface incapable of mutation. Schema
-  setup is a separate explicit administrative operation.
+- Engram only reads the graph. Its graph client refuses mutating Cypher, so
+  this does not depend on restricted credentials. The graph's owner creates the
+  schema.
 
 ## Verification coverage
 

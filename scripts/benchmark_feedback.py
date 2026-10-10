@@ -4,7 +4,7 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, python_version as platform_python_version
+from platform import machine as platform_machine
 from statistics import median as statistics_median
 from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
@@ -251,8 +251,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "source": benchmark_source_state(),
         "provenance": "synthetic offline engineering regression; no formula or threshold was fitted from these samples",
         "environment": {
-            "python": platform_python_version(),
-            "platform": platform_platform(),
+            "machine": platform_machine(),
         },
         "parameters": {"samples": samples, "memory_records": memory_records, "scale_records": scale_records},
         "latency": {

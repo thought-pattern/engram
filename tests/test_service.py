@@ -18,7 +18,6 @@ from engram.constants import (
     Tier,
 )
 from engram.core import Engram
-from engram.graph import MemGraphConnection
 from engram.errors import (
     ConflictError,
     ConversationOwnershipError,
@@ -27,6 +26,7 @@ from engram.errors import (
     ResolutionCancelledError,
     ResourceNotFoundError,
 )
+from engram.graph import MemGraphConnection
 from engram.identity import extract_standalone_identity, scope_key
 from engram.service import EngramCore
 
@@ -422,14 +422,14 @@ def test_unified_python_api_rejects_falsey_non_mapping_absence(field, invalid) -
 
 def test_unified_python_api_accepts_mapping_absence_and_authoritative_identity() -> None:
     core = EngramCore()
-    scope = scope_key("support", "python-api-v1")
+    scope = scope_key("support", "python-api")
     identity = extract_standalone_identity("When did Engram launch?", scope)
 
     result = core.resolve_request(
         "When did Engram launch?",
         "python-api-authoritative",
         namespace="support",
-        context_fingerprint="python-api-v1",
+        context_fingerprint="python-api",
         identity=identity,
         budget={},
         configured_resolvers=("exact",),
@@ -485,7 +485,7 @@ def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -
         namespace="support",
         context_fingerprint="tier:pro",
         source_label="actor:test",
-        metadata={"actor_version": "actor-7"},
+        metadata={"actor_model": "actor-7"},
     )
 
     artifact = core.engram.response_repository.get_artifact(learned.get("statement_id", ""))
@@ -499,7 +499,7 @@ def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -
     assert scope.get("context_fingerprint", "") == "tier:pro"
     assert provenance.get("caller_id", "") == "Alice"
     assert provenance.get("source_label", "") == "actor:test"
-    assert artifact.get("metadata", {}) == {"actor_version": "actor-7"}
+    assert artifact.get("metadata", {}) == {"actor_model": "actor-7"}
     assert core.engram.sessions.get("Alice", {}).get("previous_response", "") == artifact.get("response", "")
 
 

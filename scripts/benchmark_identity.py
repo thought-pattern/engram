@@ -4,7 +4,7 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, processor as platform_processor, python_version as platform_python_version
+from platform import machine as platform_machine, processor as platform_processor
 from sys import argv as sys_argv, path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
@@ -78,8 +78,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {
-            "python": platform_python_version(),
-            "platform": platform_platform(),
+            "machine": platform_machine(),
             "processor": platform_processor(),
         },
         "method": {

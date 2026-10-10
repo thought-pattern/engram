@@ -11,7 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
-from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA, VERSION
+from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
 from engram.errors import ConflictError, EngramCoreError, LifecycleError, failure_origin
 from engram.service import EngramCore, normalize_service_user_id
@@ -263,7 +263,6 @@ class EngramMCPServer(MCPServer):
     def __init__(self, service=()):
         super().__init__(
             "Engram",
-            version=VERSION,
             instructions=(
                 "Use engram_start once, then use engram_send for chatbot turns, engram_query for unified "
                 "information resolution, or the propose/resolve tools for regulated cache work. Use "

@@ -27,11 +27,11 @@ from engram.constants import (
     DEFAULT_CAPACITY,
     DEFAULT_CONTRACTIONS,
     DEFAULT_CONVERSATION_DUPLICATE_POLICY,
-    DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
-    DEFAULT_SRAI_DEPTH_LIMIT,
     DEFAULT_GENDER,
+    DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
     DEFAULT_PERSON,
     DEFAULT_PERSON2,
+    DEFAULT_SRAI_DEPTH_LIMIT,
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_EMOTION,
     DIALOGUE_OPINION,
@@ -51,7 +51,6 @@ from engram.constants import (
     MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS,
     MIN_SPELL_TOKEN_LENGTH,
     UNCONSTRAINED_ASSERTION_BASIS,
-    VERSION,
     Tier,
 )
 from engram.dialogue import (
@@ -452,7 +451,6 @@ class Engram:
         self.pattern_matcher = PatternMatcher(
             bot_properties={
                 "name": conversation_settings.get("bot_name", DEFAULT_BOT_NAME),
-                "version": VERSION,
             },
             use_stemming=self.config.get("use_stemming", False),
             use_lemmatization=self.config.get("use_lemmatization", False),
@@ -551,7 +549,7 @@ class Engram:
         """Load properties, sets, maps, predicates, and substitutions before categories.
 
         A later file replaces the same set name, map name, or property. Substitutions
-        merge over the built-in tables. ``bot_name`` and the library version win
+        merge over the built-in tables. ``bot_name`` wins
         over a properties file. ``settings`` is the validated ``conversation_config``
         section, whose file lists and optional paths are always present.
         """
@@ -560,7 +558,6 @@ class Engram:
         if properties_file:
             bot_properties.update(read_string_map(properties_file, "properties"))
         bot_properties["name"] = settings.get("bot_name", DEFAULT_BOT_NAME).strip()
-        bot_properties["version"] = VERSION
         word_sets = self.pattern_matcher.word_sets()
         for path in settings.get("set_files", []):
             for name, members in read_set_file(path).items():

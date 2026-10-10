@@ -18,8 +18,7 @@ from engram.constants import (
     APPROVED_SEMANTIC_DIMENSION,
     APPROVED_SEMANTIC_LICENSE_ID,
     APPROVED_SEMANTIC_MODEL_ID,
-    APPROVED_SEMANTIC_MODEL_VERSION,
-    SEMANTIC_ARTIFACT_HASH_VERSION,
+    APPROVED_SEMANTIC_MODEL_REVISION,
 )
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
@@ -50,7 +49,7 @@ def model_artifact_sha256(path: Path) -> str:
     if not files:
         raise InvalidRequestError("semantic model artifact contains no files")
     digest = hashlib_sha256()
-    digest.update(f"engram-model-artifact-v{SEMANTIC_ARTIFACT_HASH_VERSION}\0".encode())
+    digest.update(b"engram-model-artifact\0")
     for file_path in files:
         if file_path.is_symlink():
             raise InvalidRequestError("semantic model artifact must not contain symbolic links")
@@ -190,11 +189,10 @@ def embedding_record(spec: dict, embedding: tuple[float, ...], identity: dict) -
         "ordinal": ordinal,
         "text": text,
         "model_id": identity.get("model_id", ""),
-        "model_version": identity.get("model_version", ""),
+        "model_revision": identity.get("model_revision", ""),
         "artifact_sha256": identity.get("artifact_sha256", ""),
         "backend": identity.get("backend", ""),
         "dimension": identity.get("dimension", 0),
-        "normalization_version": identity.get("normalization_version", 0),
         "embedding": embedding,
     }
     return result
@@ -223,7 +221,7 @@ class StandaloneSemanticRetriever:
                 if not injected_model:
                     approved_identity = {
                         "model_id": APPROVED_SEMANTIC_MODEL_ID,
-                        "model_version": APPROVED_SEMANTIC_MODEL_VERSION,
+                        "model_revision": APPROVED_SEMANTIC_MODEL_REVISION,
                         "license_id": APPROVED_SEMANTIC_LICENSE_ID,
                         "artifact_sha256": APPROVED_SEMANTIC_ARTIFACT_SHA256,
                         "backend": APPROVED_SEMANTIC_BACKEND,
@@ -231,7 +229,7 @@ class StandaloneSemanticRetriever:
                     }
                     configured_identity = {
                         "model_id": settings.get("model_id", ""),
-                        "model_version": settings.get("model_version", ""),
+                        "model_revision": settings.get("model_revision", ""),
                         "license_id": settings.get("license_id", ""),
                         "artifact_sha256": settings.get("artifact_sha256", ""),
                         "backend": settings.get("backend", ""),
@@ -262,12 +260,11 @@ class StandaloneSemanticRetriever:
                 self.internal_model = selected_model
                 self.internal_identity = {
                     "model_id": settings.get("model_id", ""),
-                    "model_version": settings.get("model_version", ""),
+                    "model_revision": settings.get("model_revision", ""),
                     "license_id": settings.get("license_id", ""),
                     "artifact_sha256": actual_sha256,
                     "backend": settings.get("backend", ""),
                     "dimension": settings.get("dimension", 0),
-                    "normalization_version": settings.get("normalization_version", 0),
                 }
                 self.internal_healthy = True
             except Exception as err:

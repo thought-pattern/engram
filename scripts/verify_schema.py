@@ -9,7 +9,7 @@ if str(REPO_ROOT) not in sys_path:
     sys_path.insert(0, str(REPO_ROOT))
 
 from engram.config import load_config
-from engram.constants import GRAPH_ADMIN_TIMEOUT_SECONDS
+from engram.constants import GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
@@ -38,7 +38,7 @@ def main() -> None:
         "username": configured.get("username", ""),
         "password": configured.get("password", ""),
     }
-    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_ADMIN_TIMEOUT_SECONDS)
+    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS)
     try:
         if not connection.connect():
             raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")

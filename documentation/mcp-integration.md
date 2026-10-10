@@ -263,9 +263,9 @@ is the receipt lifetime and retry boundary.
 - `source_label` records opaque provenance; MCP host policy supplies authorization.
 - `engram_add_fact` is an explicit write to shared Engram knowledge and should
   be granted only to callers authorized to add facts.
-- Runtime graph operations issue reads and no writes. This behavior does not
-  require restricted credentials or an interface incapable of mutation. Graph
-  schema setup remains a separate administrative utility.
+- Engram only reads the graph. Its graph client refuses mutating Cypher, so
+  this does not depend on restricted credentials. The graph's owner creates the
+  schema.
 - During resolution, a graph connection, query, or optional vector-index failure
   contributes no graph result. If no local resolver succeeds, the result is the
   same miss produced by a successful graph query with no rows; graph-health
@@ -301,8 +301,8 @@ Input:
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "required_metadata": {
-    "model_version": "model-7",
-    "policy_version": "regulator-4"
+    "actor_model": "model-7",
+    "policy_digest": "4f1c9e"
   },
   "required_source_label": "support-answers",
   "limit": 1
@@ -312,8 +312,8 @@ Input:
 `namespace` and `context_fingerprint` are exact-match scope keys. Empty values
 match only entries carrying empty scope values. `required_metadata` applies
 exact top-level matches to the metadata stored with each response, and
-`required_source_label` optionally filters provenance. This permits model,
-prompt, source-data, tool-set, and policy version isolation before regulation.
+`required_source_label` optionally filters provenance. This isolates responses
+by model, policy, or any other stored metadata before regulation.
 
 Output:
 
@@ -338,9 +338,9 @@ Output:
       "source_label": "support-answers",
       "introduced_by_user_id": "",
       "metadata": {
-        "model_version": "model-7",
-        "prompt_version": "support-12",
-        "policy_version": "regulator-4"
+        "actor_model": "model-7",
+        "regulator_model": "model-3",
+        "policy_digest": "4f1c9e"
       }
     }
   ],
@@ -396,9 +396,9 @@ of `IDK` are rejected. `source_label` defaults to `unknown`.
   "context_fingerprint": "account-tier:pro",
   "source_label": "support-answers",
   "metadata": {
-    "model_version": "model-7",
-    "prompt_version": "support-12",
-    "policy_version": "regulator-4"
+    "actor_model": "model-7",
+    "regulator_model": "model-3",
+    "policy_digest": "4f1c9e"
   }
 }
 ```

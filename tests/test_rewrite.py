@@ -104,7 +104,7 @@ def test_engine_rejects_empty_oversized_and_duplicate_rule_sets() -> None:
         RewriteEngine(())
     with pytest_raises(InvalidRequestError, match="1 through"):
         RewriteEngine(tuple(rule for _ in range(257)))
-    with pytest_raises(InvalidRequestError, match="unique identity"):
+    with pytest_raises(InvalidRequestError, match="unique identities"):
         RewriteEngine((rule, rule))
 
 

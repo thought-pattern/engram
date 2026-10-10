@@ -79,7 +79,7 @@ def test_template_context_get_response():
 
 def test_template_context_get_bot():
     """Test bot property retrieval via direct access."""
-    ctx = template_context(bot={"name": "TestBot", "version": "1.0"})
+    ctx = template_context(bot={"name": "TestBot"})
     bot = ctx.get("bot", {})
     assert bot.get("name", "") == "TestBot"
     assert bot.get("missing", "") == ""
@@ -686,17 +686,9 @@ def test_template_integration_nested_template():
 def test_system_variables_program_variable():
     """Test {program} returns bot name."""
     processor = TemplateProcessor()
-    ctx = template_context(bot={"name": "TestBot", "version": "1.0"})
+    ctx = template_context(bot={"name": "TestBot"})
     result = processor.process("My name is {program}", ctx)
     assert result == "My name is TestBot"
-
-
-def test_system_variables_version_variable():
-    """Test {version} returns bot version."""
-    processor = TemplateProcessor()
-    ctx = template_context(bot={"name": "TestBot", "version": "2.5.1"})
-    result = processor.process("Version {version}", ctx)
-    assert result == "Version 2.5.1"
 
 
 def test_system_variables_program_default():

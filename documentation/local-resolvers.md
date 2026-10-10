@@ -53,7 +53,7 @@ to disable it.
 Standalone semantic retrieval embeds canonical requests and aliases using the
 reviewed local `all-MiniLM-L6-v2` artifact. Runtime is
 CPU-only and offline. Enabling it requires the configured model path, immutable
-version, payload checksum, license, backend, and dimension. Provision explicitly:
+revision, payload checksum, license, backend, and dimension. Provision explicitly:
 
 ```powershell
 python scripts/provision_semantic_model.py

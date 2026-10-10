@@ -1,4 +1,4 @@
-"""Versioned, transport-neutral query identity and retrieval contracts.
+"""Transport-neutral query identity and retrieval contracts.
 
 This module deliberately depends only on the standard library plus Engram's
 literal constants and error types. Identity construction therefore performs no
@@ -161,7 +161,7 @@ def scope_key(
     namespace: object = "",
     context_fingerprint: object = "",
 ) -> dict:
-    """Build one versioned exact eligibility boundary."""
+    """Build one exact eligibility boundary."""
 
     result: dict = {
         "namespace": identity_text(namespace, "scope namespace", MAX_NAMESPACE_BYTES, allow_empty=True),
@@ -372,7 +372,7 @@ def scoped_retrieval_key(
         allow_empty=False,
     )
     if normalize_retrieval_key(validated_normalized_key) != validated_normalized_key:
-        raise IdentityValidationError("normalized retrieval key does not match its normalization version")
+        raise IdentityValidationError("normalized retrieval key is not in normalized form")
     result: dict = {
         "scope": validated_scope,
         "normalized_key": validated_normalized_key,
@@ -610,7 +610,7 @@ def query_identity(
         allow_empty=False,
     )
     if normalize_retrieval_key(validated_canonical_form) != validated_canonical_form:
-        raise IdentityValidationError("identity canonical_form must already match its normalization version")
+        raise IdentityValidationError("identity canonical_form must already be in normalized form")
     if not isinstance(operator, QueryOperator):
         raise IdentityValidationError("identity operator must be a QueryOperator")
     if not isinstance(entities, tuple):

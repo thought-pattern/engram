@@ -212,7 +212,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                     request_id="learn-1",
                     user_id="Alice",
                     namespace="support",
-                    metadata=struct_pb2.Struct(fields={"actor_version": struct_pb2.Value(string_value="actor-7")}),
+                    metadata=struct_pb2.Struct(fields={"actor_model": struct_pb2.Value(string_value="actor-7")}),
                 )
             )
         )
@@ -223,7 +223,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                     request_id="proposal-1",
                     user_id="Carol",
                     namespace="support",
-                    required_metadata=struct_pb2.Struct(fields={"actor_version": struct_pb2.Value(string_value="actor-7")}),
+                    required_metadata=struct_pb2.Struct(fields={"actor_model": struct_pb2.Value(string_value="actor-7")}),
                 )
             )
         )

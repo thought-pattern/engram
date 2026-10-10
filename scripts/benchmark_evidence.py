@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, python_version as platform_python_version
+from platform import machine as platform_machine
 from statistics import median as statistics_median
 from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
@@ -258,7 +258,7 @@ def measure_evidence(samples: int) -> dict:
         "benchmark_id": "section7-evidence-benchmark",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
-        "environment": {"python": platform_python_version(), "platform": platform_platform()},
+        "environment": {"machine": platform_machine()},
         "policy": evidence_usefulness_policy_to_dict(policy),
         "policy_provenance": {
             "selection": "hand_authored_conservative_unfitted",

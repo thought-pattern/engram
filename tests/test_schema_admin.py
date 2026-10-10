@@ -1,8 +1,8 @@
-"""Engram schema installation and graph compatibility tests."""
+"""Engram graph compatibility tests; every check only reads the graph."""
 
 from pytest import raises
 
-from engram.schema_admin import install_schema, verify_schema
+from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema, schema_catalog, validate_schema_contract
 
 SCHEMA_FILE = packaged_schema()
@@ -12,18 +12,13 @@ WRITE_PREFIXES = ("CREATE ", "DROP ", "DELETE ", "SET ", "MERGE ")
 
 
 class RecordingConnection:
-    """Serve Engram's catalog, optionally altered, and record all graph operations."""
+    """Serve Engram's catalog, optionally altered, and record every graph read."""
 
     def __init__(self, nodes: int = 0, extra_index: bool = False, missing_index: bool = False):
         self.nodes = nodes
         self.extra_index = extra_index
         self.missing_index = missing_index
         self.reads = []
-        self.writes = []
-
-    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
-        self.writes.append({"query": statement, "parameters": dict(parameters)})
-        return []
 
     def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
         self.reads.append({"query": query, "parameters": dict(parameters)})
@@ -91,22 +86,6 @@ class RecordingConnection:
         raise AssertionError(f"unexpected read: {query}")
 
 
-class FailingAdministrativeConnection(RecordingConnection):
-    """Expose the driver's own failure on the third DDL statement of a fresh install."""
-
-    def execute_admin(self, statement: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
-        result = super().execute_admin(statement, parameters)
-        if len(self.writes) == 3:
-            raise RuntimeError("injected DDL failure")
-        return result
-
-    def execute(self, query: str, parameters: dict = DEFAULT_PARAMETERS) -> list:
-        if query in {"SHOW INDEX INFO", "SHOW CONSTRAINT INFO", "SHOW VECTOR INDEX INFO"}:
-            return []
-        result = super().execute(query, parameters)
-        return result
-
-
 class InvalidVectorConnection(RecordingConnection):
     """Return the right vector name with a contract-breaking dimension."""
 
@@ -127,19 +106,10 @@ class ResizedVectorConnection(RecordingConnection):
         return rows
 
 
-def test_install_on_a_compatible_graph_is_idempotent_and_read_only() -> None:
-    connection = RecordingConnection()
-    report = install_schema(connection, SCHEMA_FILE)
-    assert report.get("valid", False) is True
-    assert report.get("idempotent", False) is True
-    assert connection.writes == []
-
-
 def test_a_graph_with_a_larger_schema_is_compatible() -> None:
     connection = RecordingConnection(nodes=12, extra_index=True)
     report = verify_schema(connection, SCHEMA_FILE)
     assert report.get("valid", False) is True
-    assert connection.writes == []
     assert all(not record.get("query", "").lstrip().upper().startswith(WRITE_PREFIXES) for record in connection.reads)
 
 
@@ -148,7 +118,7 @@ def test_a_graph_missing_a_needed_definition_is_incompatible() -> None:
     report = verify_schema(connection, SCHEMA_FILE)
     assert report.get("valid", True) is False
     assert "ordinary_indexes" in report.get("catalog", {}).get("missing", {})
-    assert connection.writes == []
+    assert all(not record.get("query", "").lstrip().upper().startswith(WRITE_PREFIXES) for record in connection.reads)
 
 
 def test_static_contract_rejects_required_relationship_and_vector_drift() -> None:
@@ -166,32 +136,11 @@ def test_static_contract_rejects_required_relationship_and_vector_drift() -> Non
         validate_schema_contract(wrong_vector_shape)
 
 
-def test_installer_requires_an_empty_graph() -> None:
-    connection = RecordingConnection(nodes=1)
-    with raises(RuntimeError, match="requires an empty graph"):
-        install_schema(connection, SCHEMA_FILE)
-    assert connection.writes == []
-
-
-def test_installer_refuses_a_partial_catalog_without_writes() -> None:
-    connection = RecordingConnection(missing_index=True)
-    with raises(RuntimeError, match="lacks definitions Engram needs"):
-        install_schema(connection, SCHEMA_FILE)
-    assert connection.writes == []
-
-
-def test_installer_stops_on_first_ddl_failure() -> None:
-    connection = FailingAdministrativeConnection()
-    with raises(RuntimeError, match="injected DDL failure"):
-        install_schema(connection, SCHEMA_FILE)
-    assert len(connection.writes) == 3
-
-
 def test_vector_index_storage_sizing_does_not_affect_compatibility() -> None:
     connection = ResizedVectorConnection()
     report = verify_schema(connection, SCHEMA_FILE)
     assert report.get("valid", False) is True
-    assert connection.writes == []
+    assert all(not record.get("query", "").lstrip().upper().startswith(WRITE_PREFIXES) for record in connection.reads)
 
 
 def test_invalid_vector_shape_fails_closed_without_writes() -> None:
@@ -199,4 +148,4 @@ def test_invalid_vector_shape_fails_closed_without_writes() -> None:
     report = verify_schema(connection, SCHEMA_FILE)
     assert report.get("valid", True) is False
     assert "vector_indexes" in report.get("catalog", {}).get("missing", {})
-    assert connection.writes == []
+    assert all(not record.get("query", "").lstrip().upper().startswith(WRITE_PREFIXES) for record in connection.reads)

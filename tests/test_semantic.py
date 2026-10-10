@@ -70,7 +70,7 @@ def settings(tmp_path: Path, **changes) -> dict:
     values = {
         "enabled": True,
         "model_path": str(model_path),
-        "model_version": "test-v1",
+        "model_revision": "test",
         "artifact_sha256": model_artifact_sha256(model_path),
         "dimension": 4,
         "min_similarity": 0.45,

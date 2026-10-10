@@ -15,7 +15,6 @@ from engram.core import Engram
 from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
-from engram.utilities import UTILITY_TZDATA_VERSION
 from tests.bolt_stub import BoltStub
 from tests.support_fixtures import PROPOSITION_REFERENCE_A
 
@@ -421,7 +420,6 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
             "enabled": False,
             "ready": False,
             "implementation": "transparent_logistic",
-            "model_version": "transparent-logistic",
             "requests": 0,
             "completed": 0,
             "fallbacks": 0,
@@ -435,11 +433,7 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
                 "arithmetic": {"enabled": False, "ready": False},
                 "boolean": {"enabled": False, "ready": False},
                 "set": {"enabled": False, "ready": False},
-                "date_time": {
-                    "enabled": False,
-                    "ready": False,
-                    "timezone_database_version": UTILITY_TZDATA_VERSION,
-                },
+                "date_time": {"enabled": False, "ready": False},
                 "unit_conversion": {"enabled": False, "ready": False},
                 "version": {"enabled": False, "ready": False},
                 "identifier": {"enabled": False, "ready": False},
@@ -575,7 +569,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         "Rome declined through overlapping political and military pressures.",
         request_id="learn-1",
         namespace="support",
-        context_fingerprint="local-v1",
+        context_fingerprint="local",
         metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
 
@@ -583,7 +577,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         "zygomatic quasar lattice",
         request_id="proposal-1",
         namespace="support",
-        context_fingerprint="local-v1",
+        context_fingerprint="local",
     )
 
     candidates = proposal.get("candidates", [])

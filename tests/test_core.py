@@ -948,7 +948,7 @@ def test_engram_sets_and_bot_properties_get_bot_properties() -> None:
     engram.pattern_matcher.replace_bot_properties({**engram.pattern_matcher.bot_properties(), "custom": "value"})
 
     props = engram.pattern_matcher.bot_properties()
-    assert {"name", "version", "custom"} <= props.keys()
+    assert {"name", "custom"} <= props.keys()
     assert props.get("custom", "") == "value"
     props["custom"] = "changed"
     assert engram.pattern_matcher.bot_properties().get("custom", "") == "value"

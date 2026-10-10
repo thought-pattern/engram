@@ -304,7 +304,7 @@ def run(corpus_path: Path) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse_ArgumentParser()
-    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition-v1.json"))
+    parser.add_argument("--corpus", type=Path, default=Path("eval/section10-composition.json"))
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     report = run(arguments.corpus)

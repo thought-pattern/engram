@@ -1,5 +1,7 @@
 [project]
 name = "engram"
+# The packaging standard requires a version field. Engram is deployed atomically and
+# carries no version, so setuptools records its 0.0.0 placeholder.
 dynamic = ["version"]
 description = "In-process conversational retrieval and regulated response resolution"
 license = {text = "Apache-2.0"}
@@ -62,9 +64,6 @@ include = ["engram*"]
 
 [tool.setuptools.package-data]
 engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json", "data/*.toml"]
-
-[tool.setuptools.dynamic]
-version = {attr = "engram.constants.VERSION"}
 
 [tool.ruff]
 line-length = 132

@@ -651,7 +651,7 @@ def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
         ownership=PropositionOwnership.COMPANY,
         basis=DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
         scope=scope_key(namespace="support", context_fingerprint="tenant:acme"),
-        authority="visibility-authority-v3",
+        authority="visibility-authority",
         authority_available=True,
     )
     record = proposition_evidence_record_with_changes(

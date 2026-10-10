@@ -17,7 +17,7 @@ if str(REPOSITORY) not in sys_path:
 from mcp.client import Client
 
 from engram.config import load_config
-from engram.constants import VERSION, ExpectedObjectType, ResolutionOutcome, ResolverState
+from engram.constants import ExpectedObjectType, ResolutionOutcome, ResolverState
 from engram.core import Engram
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from engram.service import EngramCore
@@ -202,7 +202,6 @@ async def compare(config_path: str) -> dict:
         )
     result = {
         "created_at": datetime.now(UTC).isoformat(),
-        "engram_version": VERSION,
         "transport": "official MCP Client against repository MCPServer",
         "seed_enabled": False,
         "user_id": "Graph Comparison",

@@ -18,10 +18,6 @@ from tomllib import loads as toml_loads
 # Package metadata
 # =============================================================================
 
-# Canonical package version. pyproject.toml derives the distribution version
-# from this via setuptools' dynamic ``attr``, so the version lives in exactly one
-# place, and core.py exposes it as the bot's ``version`` property.
-VERSION = "1.2.0"
 DEFAULT_USER_ID = "0"
 # Service-boundary defaults shared by EngramCore, the gRPC servicer and the MCP tools.
 DEFAULT_PROPOSE_LIMIT = 1
@@ -62,7 +58,6 @@ DEFAULT_GRACE_SECONDS = 10.0
 # Shutdown waits this long past the grace period for gRPC's own drain to finish.
 SHUTDOWN_DRAIN_MARGIN_SECONDS = 5.0
 DEFAULT_MAX_WORKERS = 10
-CONVERSATION_REPORT_VERSION = 2
 DIALOGUE_ACKNOWLEDGMENT = "acknowledgment"
 DIALOGUE_CLOSING = "closing"
 DIALOGUE_COMMAND = "command"
@@ -869,12 +864,11 @@ UTILITY_UNIT_PRECISION_DIGITS = 16
 STANDALONE_SEMANTIC_RESOLVER_NAME = "standalone_semantic"
 STANDALONE_SEMANTIC_RESOLVER_COST_CLASS = CostClass.EXPENSIVE
 APPROVED_SEMANTIC_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
-APPROVED_SEMANTIC_MODEL_VERSION = "826711e54e001c83835913827a843d8dd0a1def9"
+APPROVED_SEMANTIC_MODEL_REVISION = "826711e54e001c83835913827a843d8dd0a1def9"
 APPROVED_SEMANTIC_LICENSE_ID = "apache-2.0"
 APPROVED_SEMANTIC_ARTIFACT_SHA256 = "ff12d37a18ee862cd4a5b8476466bc84f06d0801da9b749023eed74251cefcb8"
 APPROVED_SEMANTIC_BACKEND = "native"
 APPROVED_SEMANTIC_DIMENSION = 384
-SEMANTIC_ARTIFACT_HASH_VERSION = 1
 STRUCTURED_GRAPH_RESOLVER_NAME = "structured_graph"
 STRUCTURED_GRAPH_RESOLVER_COST_CLASS = CostClass.STANDARD
 SUPPORT_SEMANTIC_RESOLVER_NAME = "support_semantic"
@@ -1094,9 +1088,9 @@ SEMANTIC_SIMILARITY_FLOOR = 0.60
 SOURCE_AGREEMENT_FLOOR = 1.0
 MAX_VISIBILITY_GRANTS = 4_096
 # Every runtime graph operation, connecting included, must finish within this
-# time. Schema tooling runs outside the request path and gets longer.
+# time. The schema check runs outside the request path and gets longer.
 GRAPH_TIMEOUT_SECONDS = 0.5
-GRAPH_ADMIN_TIMEOUT_SECONDS = 30.0
+GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS = 30.0
 WRITE_CLAUSE = re_compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
     IGNORECASE,
@@ -1524,8 +1518,6 @@ DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS = 64
 MAX_SPARSE_PREFIX_EXPANSIONS = 1_024
 APPROVED_SEMANTIC_LICENSE_IDS = set({"apache-2.0", "mit", "bsd-3-clause"})
 SEMANTIC_BACKENDS = set({"native", "onnx", "quantized"})
-DEFAULT_SEMANTIC_NORMALIZATION_VERSION = 1
-MAX_SEMANTIC_NORMALIZATION_VERSION = 1_000_000
 DEFAULT_SEMANTIC_BATCH_SIZE = 32
 MAX_SEMANTIC_BATCH_SIZE = 1_024
 DEFAULT_SEMANTIC_MAX_INPUT_BYTES = 16_384
@@ -1536,7 +1528,6 @@ DEFAULT_SEMANTIC_MAX_SCAN_RECORDS = 100_000
 MAX_SEMANTIC_SCAN_RECORDS = 10_000_000
 MAX_SEMANTIC_DIMENSION = 65_536
 RERANKER_IMPLEMENTATION = "transparent_logistic"
-DEFAULT_RERANKER_MODEL_VERSION = "transparent-logistic"
 DEFAULT_RERANKER_SHORTLIST_SIZE = 8
 MAX_RERANKER_SHORTLIST_SIZE = 64
 DEFAULT_RERANKER_MAX_INPUT_BYTES = 65_536
@@ -1587,7 +1578,7 @@ class PropositionEligibilityReason(StrEnum):
 
 
 class EvidenceUsefulnessReason(StrEnum):
-    """Stable inspectable reasons from the unfitted version-1 inclusion policy."""
+    """Stable inspectable reasons from the unfitted inclusion policy."""
 
     CANONICAL_COMPLETENESS_UNAVAILABLE = "canonical_completeness_unavailable"
     CANONICAL_COMPLETENESS_BELOW_FLOOR = "canonical_completeness_below_floor"
@@ -2070,7 +2061,6 @@ TEMPLATE_SIMPLE_VARIABLE_TOKENS = {
     "date": "{date}",
     "time": "{time}",
     "program": "{program}",
-    "version": "{version}",
 }
 GRPC_REGULATOR_OUTCOME_NAMES = {
     "REGULATOR_OUTCOME_ACCEPTED": "accepted",

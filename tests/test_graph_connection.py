@@ -129,17 +129,6 @@ def test_disconnect_stops_the_driver_loop(stub) -> None:
     assert connection.reconnect_after_turn() is False
 
 
-def test_admin_statements_may_write_and_raise_the_driver_error(stub, client) -> None:
-    stub.rows = []
-    assert client.execute_admin("CREATE INDEX ON :Entity(id)") == []
-    assert stub.queries[-1][0] == "CREATE INDEX ON :Entity(id)"
-
-    stub.mode = "fail"
-    stub.failure_message = "index already exists"
-    with pytest_raises(Exception, match="index already exists"):
-        client.execute_admin("CREATE INDEX ON :Entity(id)")
-
-
 def test_timeout_must_be_positive() -> None:
     with pytest_raises(ValueError, match="positive"):
         MemGraphConnection(timeout_seconds=0)

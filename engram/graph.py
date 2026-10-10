@@ -953,17 +953,6 @@ class MemGraphConnection:
             # Only the exception type crosses this boundary.
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
-    def execute_admin(self, statement: str, parameters=()) -> list:
-        """Run one schema administration statement for the schema tooling.
-
-        Unlike ``execute`` it permits DDL and raises the
-        driver's own error, so an operator sees why a statement failed.
-        Runtime reads never use it.
-        """
-        loop, driver = self.current_driver()
-        result = self.run_on(loop, driver, statement, dict(parameters) if parameters else {})
-        return result
-
     def visibility_parameters(self) -> dict:
         """Return exact non-user visibility parameters for every graph read."""
         result = visibility_parameters(self.visibility_scope)

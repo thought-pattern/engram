@@ -11,12 +11,10 @@ GLOBAL_VISIBILITY = {
 }
 
 ASSERTION_REFERENCE_A = {
-    "schema_version": "tapestry-engram-support",
     "record_kind": "assertion",
     "id": "ast_" + "a" * 64,
     "state_revision": 0,
     "support_revision": {},
-    "representation_contract": "representation-v1",
     "visibility_scope": GLOBAL_VISIBILITY,
     "dependency_state_digest": "dep_" + "a" * 64,
 }

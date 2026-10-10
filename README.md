@@ -44,10 +44,10 @@ state. Restart begins with no dynamic accepted responses, learned conversational
 statements or facts, sessions, proposals, mutation receipts, reports, turn
 diagnostics, or counters inherited from the previous process.
 
-Engram-owned runtime contract, utility, projection, and resource names identify
-one current implementation without version suffixes. Callers and packaged
-resources use those same names; previous suffixed names are not compatibility
-aliases. Actual external model, protocol, and package versions are unchanged.
+Engram deploys atomically with its callers. Each runtime contract, utility,
+projection, and resource has one current name, which callers and packaged
+resources share. External model, protocol, and package versions are pinned by
+the requirements and the provisioned model manifest.
 
 ## Integration guides
 
@@ -495,7 +495,7 @@ applies the mapping on top: top-level values replace the file's, and sections
 such as `graph` override the file's section key by key. Tapestry's managed
 server starts this way, so the seed files named in `config.yml` load under it.
 
-One unversioned `engram` protobuf package supplies conversation, cache, and
+One `engram` protobuf package supplies conversation, cache, and
 unified evidence-resolution services from the same library contract. See
 [gRPC integration](documentation/grpc-integration.md) for RPCs, client examples,
 health, TLS, cancellation, process-memory behavior, and shutdown.
@@ -612,18 +612,15 @@ compatible when it has every index and constraint in `engram/schema.cypher`; it 
 have more. Startup checks this and fails if a needed definition is missing.
 Local Engram operation without graph recall is unaffected.
 
+Engram only reads the graph. The graph's owner creates its schema, and Engram
+checks it:
+
 ```bash
-python scripts/setup_schema.py --check    # validate engram/schema.cypher; no database
-python scripts/verify_schema.py           # check a graph is compatible (read-only)
-python scripts/setup_schema.py --apply    # create the schema on an empty graph
-python scripts/setup_schema.py --verify   # same check as verify_schema.py
-python scripts/reset_schema.py            # dry-run only; empty graph required
-python scripts/reset_schema.py --apply
+python scripts/verify_schema.py           # check a graph is compatible
 ```
 
-The installer and reset commands refuse a graph that holds any data. Engram's
-graph-facing queries, decoders, and accepted-response support values use the
-current Proposition/Assertion contracts.
+Engram's graph-facing queries, decoders, and accepted-response support values
+use the current Proposition/Assertion contracts.
 
 Static schema admission derives allowed labels from Engram's current identity
 contracts and retains its exact text/vector definitions. The statement parser

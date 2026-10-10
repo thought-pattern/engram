@@ -33,13 +33,11 @@ from engram.constants import (
     DEFAULT_RECENCY_HALF_LIFE_SECONDS,
     DEFAULT_RERANKER_MAX_INPUT_BYTES,
     DEFAULT_RERANKER_MAX_MODEL_TIME_MS,
-    DEFAULT_RERANKER_MODEL_VERSION,
     DEFAULT_RERANKER_SHORTLIST_SIZE,
     DEFAULT_SEMANTIC_BATCH_SIZE,
     DEFAULT_SEMANTIC_MAX_INPUT_BYTES,
     DEFAULT_SEMANTIC_MAX_RECORDS,
     DEFAULT_SEMANTIC_MAX_SCAN_RECORDS,
-    DEFAULT_SEMANTIC_NORMALIZATION_VERSION,
     DEFAULT_SESSION_TTL_SECONDS,
     DEFAULT_SPARSE_MAX_POSTING_VISITS,
     DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS,
@@ -59,7 +57,6 @@ from engram.constants import (
     MAX_SEMANTIC_BATCH_SIZE,
     MAX_SEMANTIC_DIMENSION,
     MAX_SEMANTIC_INPUT_BYTES,
-    MAX_SEMANTIC_NORMALIZATION_VERSION,
     MAX_SEMANTIC_RECORDS,
     MAX_SEMANTIC_SCAN_RECORDS,
     MAX_SPARSE_POSTING_VISITS,
@@ -200,12 +197,11 @@ def semantic_config(
     enabled: bool = False,
     model_path: str = "",
     model_id: str = APPROVED_SEMANTIC_MODEL_ID,
-    model_version: str = "",
+    model_revision: str = "",
     license_id: str = APPROVED_SEMANTIC_LICENSE_ID,
     artifact_sha256: str = "",
     dimension: int = APPROVED_SEMANTIC_DIMENSION,
     backend: str = APPROVED_SEMANTIC_BACKEND,
-    normalization_version: int = DEFAULT_SEMANTIC_NORMALIZATION_VERSION,
     batch_size: int = DEFAULT_SEMANTIC_BATCH_SIZE,
     max_input_bytes: int = DEFAULT_SEMANTIC_MAX_INPUT_BYTES,
     max_records: int = DEFAULT_SEMANTIC_MAX_RECORDS,
@@ -218,7 +214,7 @@ def semantic_config(
     for name, value in (
         ("model_path", model_path),
         ("model_id", model_id),
-        ("model_version", model_version),
+        ("model_revision", model_revision),
         ("license_id", license_id),
         ("artifact_sha256", artifact_sha256),
         ("backend", backend),
@@ -235,7 +231,6 @@ def semantic_config(
         raise ValueError("semantic artifact_sha256 must be a SHA-256 hex digest")
     for name, value, maximum in (
         ("dimension", dimension, MAX_SEMANTIC_DIMENSION),
-        ("normalization_version", normalization_version, MAX_SEMANTIC_NORMALIZATION_VERSION),
         ("batch_size", batch_size, MAX_SEMANTIC_BATCH_SIZE),
         ("max_input_bytes", max_input_bytes, MAX_SEMANTIC_INPUT_BYTES),
         ("max_records", max_records, MAX_SEMANTIC_RECORDS),
@@ -250,18 +245,17 @@ def semantic_config(
         or not 0.0 <= min_similarity <= 1.0
     ):
         raise ValueError("semantic min_similarity must be between 0 and 1")
-    if enabled and (not model_path.strip() or not model_version.strip() or not artifact_sha256):
-        raise ValueError("enabled semantic retrieval requires model_path, model_version, and artifact_sha256")
+    if enabled and (not model_path.strip() or not model_revision.strip() or not artifact_sha256):
+        raise ValueError("enabled semantic retrieval requires model_path, model_revision, and artifact_sha256")
     result: dict = {
         "enabled": enabled,
         "model_path": model_path.strip(),
         "model_id": model_id.strip(),
-        "model_version": model_version.strip(),
+        "model_revision": model_revision.strip(),
         "license_id": license_id.strip().casefold(),
         "artifact_sha256": artifact_sha256.casefold(),
         "dimension": dimension,
         "backend": backend,
-        "normalization_version": normalization_version,
         "batch_size": batch_size,
         "max_input_bytes": max_input_bytes,
         "max_records": max_records,
@@ -274,7 +268,6 @@ def semantic_config(
 def reranker_config(
     enabled: bool = False,
     implementation: str = RERANKER_IMPLEMENTATION,
-    model_version: str = DEFAULT_RERANKER_MODEL_VERSION,
     shortlist_size: int = DEFAULT_RERANKER_SHORTLIST_SIZE,
     max_input_bytes: int = DEFAULT_RERANKER_MAX_INPUT_BYTES,
     max_model_time_ms: int = DEFAULT_RERANKER_MAX_MODEL_TIME_MS,
@@ -284,8 +277,6 @@ def reranker_config(
         raise ValueError("reranker enabled must be a boolean")
     if implementation != RERANKER_IMPLEMENTATION:
         raise ValueError(f"reranker implementation must be {RERANKER_IMPLEMENTATION}")
-    if not isinstance(model_version, str) or not model_version.strip():
-        raise ValueError("reranker model_version must be a non-empty string")
     for name, value, maximum in (
         ("shortlist_size", shortlist_size, MAX_RERANKER_SHORTLIST_SIZE),
         ("max_input_bytes", max_input_bytes, MAX_RERANKER_INPUT_BYTES),
@@ -296,7 +287,6 @@ def reranker_config(
     result: dict = {
         "enabled": enabled,
         "implementation": implementation,
-        "model_version": model_version.strip(),
         "shortlist_size": shortlist_size,
         "max_input_bytes": max_input_bytes,
         "max_model_time_ms": max_model_time_ms,

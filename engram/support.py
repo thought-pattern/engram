@@ -2,20 +2,16 @@
 
 Engram validates structure for safe storage and transport. It does not
 interpret epistemic state; the producer performs current-state validation.
-A reference is accepted on its shape, not on the contract versions it names.
 """
 
 from engram.constants import MAX_METADATA_BYTES, MAX_SUPPORT_REVISION
 from engram.validation import require_any_text
 
-MAX_CONTRACT_NAME_BYTES = 128
 SUPPORT_REFERENCE_FIELDS = {
-    "schema_version",
     "record_kind",
     "id",
     "state_revision",
     "support_revision",
-    "representation_contract",
     "visibility_scope",
     "dependency_state_digest",
 }
@@ -71,12 +67,6 @@ def validate_support_reference(value) -> dict:
     """Validate and defensively copy one opaque support reference."""
     if not isinstance(value, dict) or set(value) != SUPPORT_REFERENCE_FIELDS:
         raise ValueError("support reference has an invalid shape")
-    schema_version = require_any_text(value.get("schema_version", ""), "support schema_version", MAX_CONTRACT_NAME_BYTES)
-    representation_contract = require_any_text(
-        value.get("representation_contract", ""),
-        "support representation_contract",
-        MAX_CONTRACT_NAME_BYTES,
-    )
     kind = require_any_text(value.get("record_kind", ""), "support record_kind", MAX_METADATA_BYTES)
     if kind not in {"assertion", "proposition"}:
         raise ValueError("support record_kind is not registered")
@@ -93,12 +83,10 @@ def validate_support_reference(value) -> dict:
     if not digest.startswith("dep_") or len(digest) != 68:
         raise ValueError("support dependency_state_digest is malformed")
     result = {
-        "schema_version": schema_version,
         "record_kind": kind,
         "id": identifier,
         "state_revision": state_revision,
         "support_revision": proposition_revision,
-        "representation_contract": representation_contract,
         "visibility_scope": validate_support_visibility(value.get("visibility_scope", {})),
         "dependency_state_digest": digest,
     }

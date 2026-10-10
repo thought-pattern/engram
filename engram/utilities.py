@@ -7,7 +7,6 @@ plugins dynamically, execute Python expressions, or consult ambient time.
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
 from hashlib import sha256 as hashlib_sha256
-from importlib.metadata import version as package_version
 from importlib.resources import files
 from logging import getLogger as logging_getLogger
 from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
@@ -33,7 +32,6 @@ from engram.constants import (
 
 logger = logging_getLogger(__name__)
 
-UTILITY_TZDATA_VERSION = package_version("tzdata")
 UTILITY_ALLOWED_TIMEZONES = {
     "UTC",
     "America/New_York",
@@ -781,7 +779,6 @@ class UtilityRegistry:
             }
             for name in UTILITY_PLUGIN_NAMES
         }
-        plugins.get("date_time", {})["timezone_database_version"] = UTILITY_TZDATA_VERSION
         result = {
             "enabled": self.enabled,
             "ready": self.available(),

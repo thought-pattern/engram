@@ -3,11 +3,10 @@
 from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from gc import collect as gc_collect
-from importlib import metadata
 from json import dumps as json_dumps
 from os import cpu_count as os_cpu_count
 from pathlib import Path
-from platform import platform as platform_platform, processor as platform_processor, python_version as platform_python_version
+from platform import machine as platform_machine, processor as platform_processor
 from subprocess import run as subprocess_run
 from sys import argv as sys_argv, executable as sys_executable, path as sys_path, stderr as sys_stderr
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
@@ -29,15 +28,6 @@ from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark.json")
-PACKAGE_NAMES = (
-    "grpcio",
-    "grpcio-tools",
-    "neo4j",
-    "nltk",
-    "protobuf",
-    "sentence-transformers",
-    "spacy",
-)
 # Read-only provenance shared by every synthetic artifact; artifact validation copies it.
 RUNTIME_BENCHMARK_PROVENANCE = {
     "source_label": "runtime:benchmark",
@@ -225,14 +215,12 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
     config["graph"] = graph_config(enabled=False, vector_enabled=False)
     engram = Engram(config=config)
     selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
-    # The current eight-field opaque support contract, as the Tapestry producer emits it.
+    # The six-field opaque support reference, as the Tapestry producer emits it.
     support_reference = {
-        "schema_version": "tapestry-engram-support",
         "record_kind": "proposition",
         "id": proposition_id,
         "state_revision": 0,
         "support_revision": 0,
-        "representation_contract": "representation-v1",
         "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
         "dependency_state_digest": "dep_" + "a" * 64,
     }
@@ -350,16 +338,6 @@ def startup_result(iterations: int) -> dict:
     return result
 
 
-def package_versions() -> dict[str, str]:
-    versions = {}
-    for package in PACKAGE_NAMES:
-        try:
-            versions[package] = metadata.version(package)
-        except metadata.PackageNotFoundError:
-            versions[package] = ""
-    return versions
-
-
 def reported(label: str, operation: object):
     """Report long setup stages without including them in latency samples."""
     if not callable(operation):
@@ -393,11 +371,9 @@ def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {
-            "python": platform_python_version(),
-            "platform": platform_platform(),
+            "machine": platform_machine(),
             "processor": platform_processor(),
             "logical_cpu_count": os_cpu_count() or 0,
-            "packages": package_versions(),
         },
         "method": {
             "clock": "time.perf_counter_ns",

@@ -68,7 +68,6 @@ class TransparentLogisticReranker:
                 "enabled": self.enabled,
                 "ready": self.enabled,
                 "implementation": self.settings.get("implementation", ""),
-                "model_version": self.settings.get("model_version", ""),
                 "requests": self.internal_requests,
                 "completed": self.internal_completed,
                 "fallbacks": self.internal_fallbacks,
@@ -110,7 +109,6 @@ class TransparentLogisticReranker:
             result = {
                 "applied": False,
                 "reason": "shortlist_budget",
-                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": max(0, self.clock_ns() - started),
                 "model_time_target_exceeded": False,
                 "input_bytes": 0,
@@ -143,7 +141,6 @@ class TransparentLogisticReranker:
             result = {
                 "applied": False,
                 "reason": "disabled",
-                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": 0,
                 "model_time_target_exceeded": False,
                 "input_bytes": 0,
@@ -162,7 +159,6 @@ class TransparentLogisticReranker:
             result = {
                 "applied": False,
                 "reason": "input_budget",
-                "model_version": self.settings.get("model_version", ""),
                 "elapsed_ns": elapsed,
                 "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
                 "input_bytes": input_bytes,
@@ -203,7 +199,6 @@ class TransparentLogisticReranker:
         result = {
             "applied": True,
             "reason": "completed",
-            "model_version": self.settings.get("model_version", ""),
             "elapsed_ns": elapsed,
             "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
             "input_bytes": input_bytes,

@@ -36,7 +36,7 @@ from engram.resolution import QueryFrameBuilder, capture_resolution_budget
 from engram.resolvers import StructuredGraphResolver, resolver_budget
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
-from scripts.benchmark_runtime import internal_measure, package_versions, reported
+from scripts.benchmark_runtime import internal_measure, reported
 
 DEFAULT_OUTPUT = Path("eval/results/scale/benchmark-scale.json")
 TARGET_REQUEST = "What are the baseline support hours?"
@@ -405,7 +405,6 @@ def run_benchmark(sizes: list[int], pattern_sizes: list[int], trim_sizes: list[i
     result = {
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
-        "environment": {"packages": package_versions()},
         "method": {
             "clock": "time.perf_counter_ns",
             "latency_unit": "milliseconds",

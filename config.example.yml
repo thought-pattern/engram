@@ -59,12 +59,11 @@ semantic:
   enabled: false
   model_path: ""
   model_id: sentence-transformers/all-MiniLM-L6-v2
-  model_version: ""
+  model_revision: ""
   license_id: apache-2.0
   artifact_sha256: ""
   dimension: 384
   backend: native # native | onnx | quantized; only provisioned/installed backends become ready
-  normalization_version: 1
   batch_size: 32
   max_input_bytes: 16384
   max_records: 100000
@@ -78,7 +77,6 @@ semantic:
 reranker:
   enabled: false
   implementation: transparent_logistic
-  model_version: transparent-logistic
   shortlist_size: 8
   max_input_bytes: 65536
   max_model_time_ms: 25
@@ -139,9 +137,8 @@ conversation:
 # --- Knowledge graph (optional) ---
 # Graph database connection over Bolt with Cypher queries (for example Memgraph
 # or Neo4j). The graph's schema must include every definition in engram/schema.cypher;
-# it may have more. To create them on an empty graph:
-# python scripts/setup_schema.py --apply
-# Runtime queries are read-only. The password is never saved with cache state;
+# it may have more. The graph's owner creates them; Engram only reads the graph.
+# Check a graph with: python scripts/verify_schema.py The password is never saved with cache state;
 # supply it through this external runtime configuration.
 # The graph database is optional: set enabled: false to run without it. When
 # enabled, it must be reachable and have a compatible schema at startup, or

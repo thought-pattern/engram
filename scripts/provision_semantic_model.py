@@ -17,12 +17,12 @@ from engram.constants import (
     APPROVED_SEMANTIC_DIMENSION,
     APPROVED_SEMANTIC_LICENSE_ID,
     APPROVED_SEMANTIC_MODEL_ID,
-    APPROVED_SEMANTIC_MODEL_VERSION,
+    APPROVED_SEMANTIC_MODEL_REVISION,
 )
 from engram.semantic import model_artifact_sha256
 
 DEFAULT_MODEL_ID = APPROVED_SEMANTIC_MODEL_ID
-DEFAULT_REVISION = APPROVED_SEMANTIC_MODEL_VERSION
+DEFAULT_REVISION = APPROVED_SEMANTIC_MODEL_REVISION
 DEFAULT_LICENSE = APPROVED_SEMANTIC_LICENSE_ID
 DEFAULT_DIMENSION = APPROVED_SEMANTIC_DIMENSION
 NATIVE_ALLOW_PATTERNS = [
@@ -56,7 +56,7 @@ def main() -> int:
     manifest_path = destination.parent / f"{destination.name}.engram-model.json"
     expected_identity = {
         "model_id": DEFAULT_MODEL_ID,
-        "model_version": args.revision,
+        "model_revision": args.revision,
         "license_id": DEFAULT_LICENSE,
         "dimension": DEFAULT_DIMENSION,
         "backend": APPROVED_SEMANTIC_BACKEND,

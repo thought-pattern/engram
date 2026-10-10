@@ -169,7 +169,6 @@ def test_fusion_applies_reranker_to_bounded_shortlist_and_preserves_provenance()
 
     assert reranker_report.get("applied", False) is True
     assert len(reranker_report.get("scores", [])) == 2
-    assert selected.get("provenance", {}).get("reranker_model_version", "")
     assert selected.get("diagnostics", {}).get("reranker_score", 0.0) > 0.0
 
 
@@ -206,7 +205,6 @@ def test_fusion_does_not_use_reranker_elapsed_time_as_answer_policy() -> None:
     assert reranker_report.get("reason", "") == "completed"
     assert reranker_report.get("model_time_target_exceeded", False) is True
     assert selected.get("statement_id", "") == "exact-statement"
-    assert selected.get("provenance", {}).get("reranker_model_version", "")
 
 
 def test_fusion_counts_an_isolated_reranker_exception_as_a_fallback(monkeypatch) -> None:

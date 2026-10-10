@@ -4,7 +4,7 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, python_version as platform_python_version
+from platform import machine as platform_machine
 from statistics import median as statistics_median
 from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
@@ -170,7 +170,7 @@ def measure_fusion(samples: int) -> dict:
         "benchmark_id": "fusion-benchmark",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
-        "environment": {"python": platform_python_version(), "platform": platform_platform()},
+        "environment": {"machine": platform_machine()},
         "policy": fusion_policy_to_dict(fusion_policy()),
         "policy_provenance": {
             "selection": "hand_authored_conservative_unfitted",

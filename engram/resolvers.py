@@ -479,7 +479,7 @@ def internal_candidate_id(source: CandidateSource, statement_id: str, diagnostic
 
 def composition_candidate_id(operator: str, proposition_ids: tuple[str, ...], diagnostic_id: str) -> str:
     """Name one request-local composition proposal from exact ordered native fields."""
-    digest = hashlib_sha256(b"engram-composition-candidate-v1\0")
+    digest = hashlib_sha256(b"engram-composition-candidate\0")
     for value in (operator, diagnostic_id, *proposition_ids):
         encoded = value.encode("utf-8")
         digest.update(len(encoded).to_bytes(8, "big"))
@@ -867,7 +867,7 @@ class StandaloneSemanticResolver:
                     "generation": generation,
                     "source_label": artifact.get("provenance", {}).get("source_label", ""),
                     "semantic_model_id": artifact_identity.get("model_id", ""),
-                    "semantic_model_version": artifact_identity.get("model_version", ""),
+                    "semantic_model_revision": artifact_identity.get("model_revision", ""),
                     "matched_representation_id": match.get("representation_id", ""),
                     "matched_representation_origin": origin,
                     "matched_alias_ordinal": match.get("ordinal", -1) if origin == "alias" else -1,
@@ -901,7 +901,7 @@ class StandaloneSemanticResolver:
             accounting=tuple(accounting),
             diagnostics={
                 "scanned_records": scanned_records,
-                "model_version": artifact_identity.get("model_version", ""),
+                "model_revision": artifact_identity.get("model_revision", ""),
                 "backend": artifact_identity.get("backend", ""),
             },
             consumption=budget_consumption(
@@ -2714,10 +2714,17 @@ class ResolutionOrchestrator:
         plan: dict,
         accept_exact: bool = False,
         cooperative_check: object = (),
+        credit_success: bool = True,
     ) -> tuple[dict, dict]:
-        """Resolve using a plan already created for this frame by the registry."""
+        """Resolve using a plan already created for this frame by the registry.
+
+        ``credit_success`` False still decides the exact ANSWER a released result
+        would carry, but records it as observed candidacy without success credit.
+        """
         if not isinstance(accept_exact, bool):
             raise InvalidRequestError("accept_exact must be a boolean")
+        if not isinstance(credit_success, bool):
+            raise InvalidRequestError("credit_success must be a boolean")
         execution = self.internal_executor.execute(frame, plan, cooperative_check)
         run_cooperative_check(cooperative_check)
         execution_results = execution.get("results", ())
@@ -2898,6 +2905,7 @@ class ResolutionOrchestrator:
             if outcome == ResolutionOutcome.ANSWER
             and selected.get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
             and accept_exact
+            and credit_success
             else ""
         )
         preview_ids = tuple(

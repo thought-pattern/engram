@@ -100,7 +100,7 @@ immediately, so an unresponsive database costs a turn at most one timeout. When 
 turn ends (a chat or resolution request, or any gRPC call), the connection is
 replaced in the background without delaying the response, and graph reads resume
 once it succeeds. A failed reconnect is retried after the next turn. The schema
-scripts use a 30-second limit instead (`GRAPH_ADMIN_TIMEOUT_SECONDS`).
+check uses a 30-second limit instead (`GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS`).
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,

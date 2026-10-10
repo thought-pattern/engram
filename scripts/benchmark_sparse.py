@@ -440,14 +440,14 @@ def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) 
     cold_case = queries[0] if queries and isinstance(queries[0], dict) else {}
     cold_text = str(cold_case.get("query", ""))
     cold_build = internal_measure(lambda: sparse_ranking(artifacts, cold_text, 5, selected_scope, settings, retained_index), 1)
-    build_latencies["fielded_bm25_v1"] = cold_build.get("p50_ms", 0.0)
-    build_latencies["fielded_bm25_v1_rebuild"] = 0.0
+    build_latencies["fielded_bm25"] = cold_build.get("p50_ms", 0.0)
+    build_latencies["fielded_bm25_rebuild"] = 0.0
 
     searches = {
         "unfielded_bm25": bm25,
         "sqlite_fts5": fts5.search,
-        "fielded_bm25_v1": lambda text, limit: sparse_ranking(artifacts, text, limit, selected_scope, settings, retained_index),
-        "fielded_bm25_v1_rebuild": lambda text, limit: sparse_ranking(artifacts, text, limit, selected_scope, settings, ()),
+        "fielded_bm25": lambda text, limit: sparse_ranking(artifacts, text, limit, selected_scope, settings, retained_index),
+        "fielded_bm25_rebuild": lambda text, limit: sparse_ranking(artifacts, text, limit, selected_scope, settings, ()),
     }
     try:
         relevance = {name: internal_relevance(name, search, queries) for name, search in searches.items()}
@@ -455,8 +455,8 @@ def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) 
     finally:
         fts5.close()
     scale = scale_profile() if include_scale else {}
-    selected_relevance = relevance.get("fielded_bm25_v1", {})
-    reference_cases = relevance.get("fielded_bm25_v1_rebuild", {}).get("cases", [])
+    selected_relevance = relevance.get("fielded_bm25", {})
+    reference_cases = relevance.get("fielded_bm25_rebuild", {}).get("cases", [])
     verdicts = {
         "selected_cases_complete": selected_relevance.get("incomplete_cases", 0) == 0,
         "indexed_matches_rebuild": selected_relevance.get("cases", []) == reference_cases,
@@ -490,7 +490,7 @@ def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) 
             "queries": len(queries),
         },
         "decision": {
-            "selected": "fielded_bm25_v1",
+            "selected": "fielded_bm25",
             "rationale": "deterministic request-local CPU operation with explicit field and technical signals",
         },
         "engines": {
@@ -500,12 +500,12 @@ def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) 
                 "portability": "requires a Python SQLite build with FTS5 enabled",
                 "in_memory_page_bytes": fts5.page_bytes,
             },
-            "fielded_bm25_v1": {
+            "fielded_bm25": {
                 "license": "Engram project code",
                 "portability": "Python runtime; no service or extension dependency",
                 "measured_owner": "retained SparseIndex",
             },
-            "fielded_bm25_v1_rebuild": {
+            "fielded_bm25_rebuild": {
                 "license": "Engram project code",
                 "portability": "Python runtime; no service or extension dependency",
                 "measured_owner": "full per-request rebuild; independent reference for the retained index",
@@ -540,7 +540,7 @@ def main() -> int:
             {
                 "passed": passed,
                 "verdicts": report.get("verdicts", {}),
-                "selected_relevance": report.get("relevance", {}).get("fielded_bm25_v1", {}),
+                "selected_relevance": report.get("relevance", {}).get("fielded_bm25", {}),
             },
             default=str,
         )

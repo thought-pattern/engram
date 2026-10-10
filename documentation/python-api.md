@@ -11,7 +11,7 @@ dictionary. Callers use keyed access and may use the explicit codecs in
 `engram.resolution` when a JSON-compatible or serialized value is required.
 
 Lower-level `Engram` statement, pattern, graph, and conversation operations are
-current first-party interfaces. MCP and the unversioned gRPC services are
+current first-party interfaces. MCP and the gRPC services are
 separate `EngramCore` adapters.
 
 Conversation methods use canonical unknown user `"0"` for omitted or empty

@@ -33,7 +33,7 @@ MODEL_MANIFEST_FIELD_DEFAULTS = {
     "license_id": "",
     "model_id": "",
     "model_path": "",
-    "model_version": "",
+    "model_revision": "",
 }
 # Every corpus, query and gate field the benchmark reads; a corpus lacking one is refused.
 CORPUS_FIELDS = {"documents", "queries", "gates", "evaluation_role"}
@@ -143,7 +143,7 @@ def main() -> int:
         enabled=True,
         model_path=model_path.as_posix(),
         model_id=manifest.get("model_id", ""),
-        model_version=manifest.get("model_version", ""),
+        model_revision=manifest.get("model_revision", ""),
         license_id=manifest.get("license_id", ""),
         artifact_sha256=expected_checksum,
         dimension=manifest.get("dimension", 0),
@@ -415,7 +415,6 @@ def main() -> int:
         "sparse_baseline": {"metrics": sparse_metrics},
         "reranker": {
             "implementation": "transparent_logistic",
-            "model_version": "transparent-logistic",
             "metrics": reranker_metrics,
             "p50_overhead_ms": percentile(reranker_latencies, 0.50),
             "p95_overhead_ms": percentile(reranker_latencies, 0.95),

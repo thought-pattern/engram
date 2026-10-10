@@ -8,7 +8,6 @@ from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from pathlib import Path
-from platform import python_version as platform_python_version
 from sys import argv as sys_argv, path as sys_path
 from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
@@ -26,7 +25,6 @@ from engram.constants import (
     MCP_CONFORMANCE_MINIMUM_TURNS,
     MCP_TURN_EVALUATION_CHECKS,
     MCP_TURN_EVENT_FIELDS,
-    VERSION,
 )
 from engram.conversation_seed import load_conversation_pairs
 from engram.mcp_server import EngramMCPServer, MCPConversationService
@@ -79,7 +77,7 @@ SEMANTIC_MANIFEST_FIELD_DEFAULTS = {
     "license_id": "",
     "model_id": "",
     "model_path": "",
-    "model_version": "",
+    "model_revision": "",
 }
 
 
@@ -184,7 +182,6 @@ async def internal_run(
         if not client.server_info:
             raise RuntimeError("MCP initialization did not return server information")
         server_name = client.server_info.name
-        server_version = client.server_info.version
         started = tool_json(
             await client.call_tool(
                 "engram_start",
@@ -326,18 +323,15 @@ async def internal_run(
             "sparse_ready": sparse_status.get("ready", False),
             "semantic_enabled": semantic_active,
             "semantic_ready": semantic_status.get("ready", False),
-            "semantic_model_version": semantic_status.get("artifact_identity", {}).get("model_version", ""),
+            "semantic_model_revision": semantic_status.get("artifact_identity", {}).get("model_revision", ""),
             "semantic_record_count": semantic_status.get("record_count", 0),
             "reranker_enabled": reranker_active,
             "reranker_ready": reranker_status.get("ready", False),
-            "reranker_model_version": reranker_status.get("model_version", ""),
             "utility_enabled": utility_active,
             "utility_ready": utility_status.get("ready", False),
             "utility_plugins": utility_status.get("plugins", {}),
         },
-        "server": {"name": server_name, "version": server_version},
-        "engram_version": VERSION,
-        "python": platform_python_version(),
+        "server": {"name": server_name},
         "source_state": benchmark_source_state(),
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),

@@ -1,4 +1,4 @@
-"""Versioned, bounded, retrieval-only symbolic rewrites."""
+"""Bounded, retrieval-only symbolic rewrites."""
 
 from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
@@ -88,7 +88,7 @@ def rule_precedence(rule: dict) -> tuple[int, str]:
 
 
 def rewrite_rule(value: object) -> dict:
-    """Validate and copy one exact version-1 rule record."""
+    """Validate and copy one exact rule record."""
     data = internal_mapping(value, "RewriteRule", REWRITE_RULE_FIELDS)
     constraint_data = internal_mapping(data.get("input_constraints", {}), "RewriteInputConstraints", REWRITE_INPUT_FIELDS)
     provenance_data = internal_mapping(data.get("provenance", {}), "RewriteProvenance", REWRITE_PROVENANCE_FIELDS)
@@ -165,13 +165,13 @@ def load_rewrite_corpus_text(value: str) -> tuple[dict, ...]:
     rules = tuple(rewrite_rule(rule) for rule in raw_rules)
     identities = tuple(rule.get("rule_id", "") for rule in rules)
     if len(set(identities)) != len(identities):
-        raise InvalidRequestError("rewrite corpus contains duplicate rule identity/version pairs")
+        raise InvalidRequestError("rewrite corpus contains duplicate rule identities")
     result = tuple(sorted(rules, key=rule_precedence))
     return result
 
 
 def load_default_rewrite_corpus() -> tuple[dict, ...]:
-    """Eagerly load the package-owned, independently authored version-1 corpus."""
+    """Eagerly load the package-owned, independently authored corpus."""
     resource = files("engram").joinpath("data/rewrite-rules.json")
     result = load_rewrite_corpus_text(resource.read_text(encoding="utf-8"))
     return result
@@ -242,7 +242,7 @@ class RewriteEngine:
         self.rules = tuple(sorted((rewrite_rule(rule) for rule in rules), key=rule_precedence))
         rule_identities = tuple(rule.get("rule_id", "") for rule in self.rules)
         if len(set(rule_identities)) != len(rule_identities):
-            raise InvalidRequestError("rewrite rules must have unique identity/version pairs")
+            raise InvalidRequestError("rewrite rules must have unique identities")
         self.max_depth = internal_integer(max_depth, "rewrite max_depth", 1, MAX_TRACE_STEPS)
         self.max_expansions = internal_integer(max_expansions, "rewrite max_expansions", 1, MAX_REWRITE_RULES)
         self.max_output_bytes = internal_integer(max_output_bytes, "rewrite max_output_bytes", 1, MAX_REQUEST_BYTES)

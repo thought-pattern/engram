@@ -29,7 +29,6 @@ from engram.constants import (
     TEMPLATE_TRANSFORM_EXPRESSION,
     TRIPLE_QUERY_OBJECT,
     TRIPLE_QUERY_SUBJECT,
-    VERSION,
 )
 from engram.graph import graph_is_empty, graph_single, is_write_cypher, projection_timestamp
 from engram.nlp import input_kind
@@ -205,7 +204,6 @@ def simple_variable_values(context: dict) -> dict[str, str]:
         TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("date", ""): datetime.now().strftime("%B %d, %Y"),
         TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("time", ""): datetime.now().strftime("%H:%M:%S"),
         TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("program", ""): context.get("bot", {}).get("name", "ENGRAM"),
-        TEMPLATE_SIMPLE_VARIABLE_TOKENS.get("version", ""): context.get("bot", {}).get("version", VERSION),
     }
     return result
 

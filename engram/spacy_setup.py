@@ -55,11 +55,8 @@ class SpacyPipelines:
         """
         key = tuple(disable)
         with self.lock:
-            if key in self.pipelines:
-                # Re-insert so dictionary order stays least recently used first.
-                nlp = self.pipelines.pop(key)
-            else:
-                nlp = self.load(key)
+            # A cached pipeline is re-inserted so dictionary order stays least recently used first.
+            nlp = self.pipelines.pop(key) if key in self.pipelines else self.load(key)
             self.pipelines[key] = nlp
             while len(self.pipelines) > PIPELINE_CACHE_CAPACITY:
                 del self.pipelines[next(iter(self.pipelines))]
