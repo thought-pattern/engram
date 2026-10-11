@@ -231,13 +231,7 @@ def normalize_seed_pair(pair, path: str) -> dict:
         raise ValueError(f"seed file {path} templates must be objects")
     if not text.strip() and not template:
         raise ValueError(f"seed file {path} entries require a response or template")
-    result = {
-        "pattern": pattern,
-        "response": text,
-        "that": that,
-        "topic": topic,
-        "template": dict(template),
-    }
+    result = {"pattern": pattern, "response": text, "that": that, "topic": topic, "template": dict(template)}
     return result
 
 
@@ -394,12 +388,7 @@ class Engram:
     common statement pool.
     """
 
-    def __init__(
-        self,
-        config: dict = EMPTY_CONFIG,
-        clock: object = utc_now,
-        identifier_source: object = random_identifier,
-    ) -> None:
+    def __init__(self, config: dict = EMPTY_CONFIG, clock: object = utc_now, identifier_source: object = random_identifier) -> None:
         """Initialize ENGRAM instance.
 
         Args:
@@ -449,9 +438,7 @@ class Engram:
         self.maps: dict[str, dict[str, str]] = {}
 
         self.pattern_matcher = PatternMatcher(
-            bot_properties={
-                "name": conversation_settings.get("bot_name", DEFAULT_BOT_NAME),
-            },
+            bot_properties={"name": conversation_settings.get("bot_name", DEFAULT_BOT_NAME)},
             use_stemming=self.config.get("use_stemming", False),
             use_lemmatization=self.config.get("use_lemmatization", False),
             use_spacy_lemmatization=self.config.get("use_spacy_lemmatization", False),
@@ -520,7 +507,6 @@ class Engram:
                 port=graph_config.get("port", 0),
                 username=graph_config.get("username", ""),
                 password=graph_config.get("password", ""),
-                visibility_scope=graph_config.get("visibility_scope", {}),
             )
         # A failed constructor returns no owner that could close the client,
         # so every later failure releases it here before propagating.
@@ -640,17 +626,11 @@ class Engram:
             "nltk": {"enabled": True, "ready": True},
             "graph": {"enabled": graph_enabled, "ready": graph_ready},
             "vector": {"enabled": vector_enabled, "ready": vector_ready},
-            "sparse": {
-                "enabled": sparse_enabled,
-                "ready": sparse_enabled,
-            },
+            "sparse": {"enabled": sparse_enabled, "ready": sparse_enabled},
             "semantic": self.semantic_retriever.health(),
             "reranker": self.reranker.health(),
             "utility": self.utility_registry.health(),
-            "spacy": {
-                "enabled": spacy_full_enabled or graph_enabled,
-                "ready": spacy_ready,
-            },
+            "spacy": {"enabled": spacy_full_enabled or graph_enabled, "ready": spacy_ready},
         }
         return result
 
@@ -699,8 +679,8 @@ class Engram:
             result = []
             return result
         execute = self.graph_operation("execute")
-        # A failed read raises RuntimeError; parameters the connection refuses (such as a
-        # template rebinding a visibility binding) raise ValueError. Both withhold recall.
+        # A failed read raises RuntimeError; a query or parameters the connection refuses (such as
+        # a mutating clause or a non-mapping parameter set) raise ValueError. Both withhold recall.
         try:
             records = execute(cypher, params)
             if not isinstance(records, list):
@@ -732,11 +712,7 @@ class Engram:
         model_source = model_path or model_name
         if model_path and not Path(model_path).is_dir():
             raise FileNotFoundError(f"vector model path does not exist: {model_path}")
-        self.graph_embedding_model = SentenceTransformer(
-            model_source,
-            device="cpu",
-            local_files_only=True,
-        )
+        self.graph_embedding_model = SentenceTransformer(model_source, device="cpu", local_files_only=True)
 
     def encode_graph_query(self, text: str) -> list[float]:
         """Encode one graph-recall query with the startup-loaded local model."""
@@ -745,10 +721,7 @@ class Engram:
         if not self.graph_embedding_model:
             raise RuntimeError("vector recall model was not initialized")
         encoded = self.graph_embedding_model.encode(
-            [text],
-            normalize_embeddings=True,
-            show_progress_bar=False,
-            convert_to_numpy=True,
+            [text], normalize_embeddings=True, show_progress_bar=False, convert_to_numpy=True
         )
         vector = encoded[0].tolist()
         if len(vector) != dimension:
@@ -835,9 +808,7 @@ class Engram:
             return result
 
     def current_proposition_projection(
-        self,
-        proposition_id: str,
-        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+        self, proposition_id: str, basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS
     ) -> tuple[dict, ...]:
         """Re-read one canonical Proposition through the fixed by-ID capability.
 
@@ -877,14 +848,7 @@ class Engram:
         result = self.graph_client_available()
         return result
 
-    def sparse_candidates(
-        self,
-        text: str,
-        scope,
-        *,
-        limit: int,
-        max_working_memory_bytes: int,
-    ) -> dict:
+    def sparse_candidates(self, text: str, scope, *, limit: int, max_working_memory_bytes: int) -> dict:
         """Search request-local sparse structures derived from the current artifacts."""
         artifacts = self.response_repository.trusted_artifacts()
         result = search_sparse_artifacts(
@@ -900,14 +864,7 @@ class Engram:
         return result
 
     def semantic_candidates(
-        self,
-        text: str,
-        scope,
-        *,
-        limit: int,
-        max_vector_results: int,
-        max_working_memory_bytes: int,
-        cooperative_check=(),
+        self, text: str, scope, *, limit: int, max_vector_results: int, max_working_memory_bytes: int, cooperative_check=()
     ) -> dict:
         """Search request-local embeddings derived from the current artifacts."""
         artifacts = self.response_repository.trusted_artifacts()
@@ -924,32 +881,16 @@ class Engram:
         )
         return result
 
-    def vector_supported_matches(
-        self,
-        text: str,
-        *,
-        limit: int,
-        artifact_filter=(),
-    ) -> list[tuple[dict, float]]:
+    def vector_supported_matches(self, text: str, *, limit: int, artifact_filter=()) -> list[tuple[dict, float]]:
         """Rank scoped cached responses through their KG support Propositions."""
         result = [
             (match.get("artifact", {}), match.get("retrieval_score", 0.0))
-            for match in self.vector_supported_match_components(
-                text,
-                limit=limit,
-                artifact_filter=artifact_filter,
-            )
+            for match in self.vector_supported_match_components(text, limit=limit, artifact_filter=artifact_filter)
         ]
         return result
 
     def vector_supported_match_components(
-        self,
-        text: str,
-        *,
-        limit: int,
-        artifact_filter=(),
-        cooperative_check=(),
-        max_working_memory_bytes: int = 0,
+        self, text: str, *, limit: int, artifact_filter=(), cooperative_check=(), max_working_memory_bytes: int = 0
     ) -> list[dict]:
         """Return support matches with raw similarity separate from response ranking."""
         run_cooperative_check(cooperative_check)
@@ -964,13 +905,7 @@ class Engram:
         return result
 
     def vector_supported_proposition_match_components(
-        self,
-        rows: list[dict],
-        *,
-        limit: int,
-        artifact_filter=(),
-        cooperative_check=(),
-        max_working_memory_bytes: int = 0,
+        self, rows: list[dict], *, limit: int, artifact_filter=(), cooperative_check=(), max_working_memory_bytes: int = 0
     ) -> list[dict]:
         """Intersect discovered Proposition hits with typed response support."""
         run_cooperative_check(cooperative_check)
@@ -1297,12 +1232,7 @@ class Engram:
             return result
 
     def query_candidates(
-        self,
-        text: str,
-        limit: int = 5,
-        statement_filter=(),
-        cooperative_check=(),
-        max_working_memory_bytes: int = 0,
+        self, text: str, limit: int = 5, statement_filter=(), cooperative_check=(), max_working_memory_bytes: int = 0
     ) -> dict:
         """Discover lexical candidates without accounting or session mutation.
 
@@ -1462,14 +1392,7 @@ class Engram:
         return result
 
     def pattern_candidates(
-        self,
-        text: str,
-        *,
-        limit: int = 5,
-        that: str = "",
-        topic: str = "",
-        cooperative_check=(),
-        max_working_memory_bytes: int = 0,
+        self, text: str, *, limit: int = 5, that: str = "", topic: str = "", cooperative_check=(), max_working_memory_bytes: int = 0
     ) -> list[dict]:
         """Discover statement-backed pattern candidates without graph fallback or mutation."""
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -1496,7 +1419,7 @@ class Engram:
                 run_cooperative_check(cooperative_check)
                 if not matched:
                     continue
-                response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = matched
+                (response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that) = matched
                 selected = self.statement_for_match(matched_pattern, matched_topic, matched_that)
                 if not selected:
                     continue
@@ -1580,13 +1503,7 @@ class Engram:
         result = [retained.get(proposition_id, {}) for proposition_id in sorted(retained)]
         return result
 
-    def canonical_entity_matches(
-        self,
-        surface: str,
-        *,
-        limit: int = MAX_RELATION_CANDIDATES,
-        cooperative_check=(),
-    ) -> list[dict]:
+    def canonical_entity_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES, cooperative_check=()) -> list[dict]:
         """Resolve an entity surface through the fixed graph capability."""
         if not self.graph_client:
             result = []
@@ -1605,11 +1522,7 @@ class Engram:
         return result
 
     def canonical_predicate_matches(
-        self,
-        surface: str,
-        *,
-        limit: int = MAX_RELATION_CANDIDATES,
-        cooperative_check=(),
+        self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES, cooperative_check=()
     ) -> list[dict]:
         """Resolve a Predicate surface through the fixed graph capability."""
         if not self.graph_client:
@@ -1651,11 +1564,7 @@ class Engram:
         run_cooperative_check(cooperative_check)
         try:
             rows = search(
-                subject_entity_id,
-                predicate_id,
-                limit=row_limit,
-                include_historical=include_historical,
-                basis_window=basis_window,
+                subject_entity_id, predicate_id, limit=row_limit, include_historical=include_historical, basis_window=basis_window
             )
         except RuntimeError as err:
             result = failed_graph_read("relation_one_hop_proposition_projections", err, [])
@@ -1688,14 +1597,7 @@ class Engram:
         run_cooperative_check(cooperative_check)
         return result
 
-    def query(
-        self,
-        text: str,
-        context_id: str = "",
-        limit: int = 5,
-        statement_filter=(),
-        record_candidates: bool = True,
-    ) -> dict:
+    def query(self, text: str, context_id: str = "", limit: int = 5, statement_filter=(), record_candidates: bool = True) -> dict:
         """Retrieve matching statements.
 
         Args:
@@ -1728,19 +1630,13 @@ class Engram:
         # context tracking.
         expanded_text = text
         if self.config.get("expand_contractions", False):
-            expanded_text = expand_contractions(
-                expanded_text,
-                get_all_input_subs(self.substitution_maps),
-            )
+            expanded_text = expand_contractions(expanded_text, get_all_input_subs(self.substitution_maps))
         if context_id:
             with self.session_lock:
                 session = sessions_mod.get_session(self, context_id, create_if_missing=True)
                 if session:
                     session_touch(session, self.clock())
-                    expanded_text = expand_query(
-                        expanded_text,
-                        session.get("previous_response", ""),
-                    )
+                    expanded_text = expand_query(expanded_text, session.get("previous_response", ""))
 
         discovery = self.query_candidates(expanded_text, limit=limit, statement_filter=statement_filter)
         keywords = discovery.get("keywords", [])
@@ -1756,11 +1652,7 @@ class Engram:
                     record_statement_query(statement_value)
             # Callers receive isolated statements; the store's own records stay owned here.
             isolated_matches = [(deepcopy(statement_value), score) for statement_value, score in matches]
-        result = {
-            "matches": isolated_matches,
-            "keywords": keywords,
-            "resolved_query": discovery.get("resolved_query", ""),
-        }
+        result = {"matches": isolated_matches, "keywords": keywords, "resolved_query": discovery.get("resolved_query", "")}
         return result
 
     @property
@@ -1821,13 +1713,7 @@ class Engram:
         return result
 
     def pattern_query(
-        self,
-        text: str,
-        context_id: str = "",
-        user_id: str = "",
-        *,
-        include_graph: bool = True,
-        evaluation_time: str = "",
+        self, text: str, context_id: str = "", user_id: str = "", *, include_graph: bool = True, evaluation_time: str = ""
     ) -> tuple:
         """Query using AIML-style pattern matching.
 
@@ -1923,23 +1809,17 @@ class Engram:
             prior_topic = active_topic
             sentence_act = classify_dialogue_act(sentence, extracted_facts[0] if extracted_facts else {})
             preliminary_topic = infer_active_topic(
-                sentence,
-                fact=extracted_facts[0] if extracted_facts else {},
-                previous_topic=prior_topic,
+                sentence, fact=extracted_facts[0] if extracted_facts else {}, previous_topic=prior_topic
             )
             sentence_entities = (
-                extract_dialogue_entities(
-                    sentence,
-                    fact=admitted_facts[0] if admitted_facts else {},
-                    topic=preliminary_topic,
-                )
+                extract_dialogue_entities(sentence, fact=admitted_facts[0] if admitted_facts else {}, topic=preliminary_topic)
                 if session
                 else []
             )
             inferred_topic = infer_active_topic(
                 sentence,
                 fact=extracted_facts[0] if extracted_facts else {},
-                entities=sentence_entities if dialogue_act_clears_unreferenced_topic(sentence_act) else [],
+                entities=(sentence_entities if dialogue_act_clears_unreferenced_topic(sentence_act) else []),
                 previous_topic=prior_topic,
             )
             explicit_reference = topic_is_referenced(sentence, prior_topic)
@@ -1959,32 +1839,17 @@ class Engram:
             with self.statement_lock:
                 # ``sentence`` was already expanded before it was split. Expanding
                 # it again would apply a custom substitution twice.
-                result = self.pattern_matcher.match(
-                    sentence,
-                    that=self.expand_for_match(that),
-                    topic=self.expand_for_match(topic),
-                )
+                result = self.pattern_matcher.match(sentence, that=self.expand_for_match(that), topic=self.expand_for_match(topic))
 
             # Fact admission belongs to the observed user turn, not to the
             # availability of a scripted response. Match first so a newly
             # learned fact cannot answer the sentence that introduced it,
             # then persist every admitted fact regardless of match outcome.
             for fact in admitted_facts:
-                self.learn_fact(
-                    fact,
-                    introduced_by_user_id=attributed_user_id,
-                )
+                self.learn_fact(fact, introduced_by_user_id=attributed_user_id)
 
             if result:
-                (
-                    response_text,
-                    captured,
-                    thatstars,
-                    topicstars,
-                    matched_pattern,
-                    matched_topic,
-                    matched_that,
-                ) = result
+                (response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that) = result
                 captured = restore_capture_case(captured, sentence)
 
                 # Find the statement carrying this (pattern, topic, that).
@@ -2020,12 +1885,7 @@ class Engram:
                             final_response = polish_response(final_response)
                         responses.append(final_response)
                         candidates.append(
-                            {
-                                "statement": selected,
-                                "captured": captured,
-                                "response": final_response,
-                                "dialogue_act": sentence_act,
-                            }
+                            {"statement": selected, "captured": captured, "response": final_response, "dialogue_act": sentence_act}
                         )
 
                         that = final_response
@@ -2075,11 +1935,7 @@ class Engram:
         if session:
             with self.session_lock:
                 session_update_dialogue(
-                    session,
-                    selected_candidate.get("dialogue_act", ""),
-                    active_topic,
-                    turn_entities,
-                    turn_fact_admissions,
+                    session, selected_candidate.get("dialogue_act", ""), active_topic, turn_entities, turn_fact_admissions
                 )
                 session_update_context(session, combined_response, text, moment=turn_moment)
 
@@ -2141,20 +1997,10 @@ class Engram:
         def redirect_fn(pattern: str) -> str:
             with self.statement_lock:
                 result = self.pattern_matcher.match(
-                    self.expand_for_match(pattern),
-                    that=self.expand_for_match(that),
-                    topic=self.expand_for_match(topic),
+                    self.expand_for_match(pattern), that=self.expand_for_match(that), topic=self.expand_for_match(topic)
                 )
             if result:
-                (
-                    response_text,
-                    new_captured,
-                    new_thatstars,
-                    new_topicstars,
-                    matched_pattern,
-                    matched_topic,
-                    matched_that,
-                ) = result
+                (response_text, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that) = result
                 with self.mutation_lock, self.statement_lock:
                     redirect_stmt = self.statement_for_match(matched_pattern, matched_topic, matched_that)
                     if redirect_stmt:
@@ -2262,13 +2108,7 @@ class Engram:
                 if statement_id in self.statement_by_id:
                     record_statement_hit(self.statement_by_id.get(statement_id, {}), self.clock())
 
-    def learn_fact(
-        self,
-        fact: dict,
-        introduced_by_user_id: str = "",
-        source_label: str = "",
-        tier: Tier = Tier.DYNAMIC,
-    ) -> bool:
+    def learn_fact(self, fact: dict, introduced_by_user_id: str = "", source_label: str = "", tier: Tier = Tier.DYNAMIC) -> bool:
         """Learn a fact extracted from natural language.
 
         Creates patterns for the subject and common query forms so the fact
@@ -2357,12 +2197,7 @@ class Engram:
         result = {fact_subject_upper(fact) for fact in facts}
         return result
 
-    def add_fact(
-        self,
-        text: str,
-        source_label: object = "",
-        tier: Tier = Tier.DYNAMIC,
-    ) -> str:
+    def add_fact(self, text: str, source_label: object = "", tier: Tier = Tier.DYNAMIC) -> str:
         """Add shared knowledge without assigning it to a conversational user.
 
         The fact is indexed and, when extraction succeeds, receives the usual
@@ -2383,12 +2218,7 @@ class Engram:
         if facts:
             primary_pattern = fact_subject_upper(facts[0])
             for fact in facts:
-                self.learn_fact(
-                    fact,
-                    introduced_by_user_id="",
-                    source_label=source_label,
-                    tier=tier,
-                )
+                self.learn_fact(fact, introduced_by_user_id="", source_label=source_label, tier=tier)
             with self.statement_lock:
                 result = self.pattern_to_statement.get(primary_pattern, "")
                 return result
@@ -2400,12 +2230,7 @@ class Engram:
                     result = stmt.get("id", "")
                     return result
 
-        result = self.store(
-            text=fact_text,
-            tier=tier,
-            introduced_by_user_id="",
-            source_label=source_label,
-        )
+        result = self.store(text=fact_text, tier=tier, introduced_by_user_id="", source_label=source_label)
         return result
 
     def get_statement(self, statement_id: str) -> dict:
@@ -2587,15 +2412,7 @@ class Engram:
                 raise ValueError("static templates must be objects")
             if not text.strip() and not template:
                 raise ValueError("each static data entry requires a response or template")
-            normalized_pairs.append(
-                {
-                    "text": text,
-                    "pattern": pattern,
-                    "that": that,
-                    "topic": topic,
-                    "template": dict(template),
-                }
-            )
+            normalized_pairs.append({"text": text, "pattern": pattern, "that": that, "topic": topic, "template": dict(template)})
 
         with self.mutation_lock, self.statement_lock, self.session_lock:
             artifacts = self.response_repository.trusted_artifacts()

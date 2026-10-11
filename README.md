@@ -638,11 +638,6 @@ graph:
   username: ""
   password: ""
   enabled: true
-  visibility_scope:
-    kind: global
-    company_id: {}
-    customer_id: {}
-    engagement_id: {}
   vector_enabled: true
   vector_index_name: proposition_embeddings
   vector_model: all-MiniLM-L6-v2

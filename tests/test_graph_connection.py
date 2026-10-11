@@ -40,7 +40,7 @@ def time_out_one_query(stub: BoltStub, client: MemGraphConnection) -> None:
         client.execute("RETURN 1 AS ready")
 
 
-def test_rows_are_dicts_and_carry_visibility_parameters(stub, client) -> None:
+def test_rows_are_dicts_and_carry_only_caller_parameters(stub, client) -> None:
     stub.rows = [{"subject": "Athens", "count": 2, "score": 0.5, "labels": ["City"]}]
 
     rows = client.execute("MATCH (n) RETURN n.subject AS subject", {"limit": 3})
@@ -48,8 +48,7 @@ def test_rows_are_dicts_and_carry_visibility_parameters(stub, client) -> None:
     assert rows == [{"subject": "Athens", "count": 2, "score": 0.5, "labels": ["City"]}]
     query, params = stub.queries[-1]
     assert query == "MATCH (n) RETURN n.subject AS subject"
-    assert params.get("limit", 0) == 3
-    assert params.get("visibility_kind", "") == "global"
+    assert params == {"limit": 3}
 
 
 def test_driver_datetimes_come_back_as_python_datetimes(stub, client) -> None:

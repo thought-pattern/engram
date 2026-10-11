@@ -29,7 +29,7 @@ remain inspectable but are excluded from evidence and direct relation answers
 with `semantic_meaning_unrepresented`. Revalidation compares the semantic
 projection before evidence use. Chat surface-fact, vector surface-fact, and
 template triple reads apply the same guard; template triple reads also require
-active support, current valid time, and the configured graph visibility scope.
+active support and current valid time.
 
 ## Context and canonical identity
 

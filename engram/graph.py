@@ -39,7 +39,6 @@ from engram.constants import (
     DEFAULT_GRAPH_PORT,
     DEFAULT_GRAPH_VECTOR_LIMIT,
     DEFAULT_VECTOR_MIN_SIMILARITY,
-    EMPTY_MAPPING,
     GRAPH_TIMEOUT_SECONDS,
     MAX_ENUM_WIRE_BYTES,
     MAX_GRAPH_READ_ROWS,
@@ -79,16 +78,12 @@ from engram.constants import (
 from engram.errors import InvalidRequestError, ResourceExhaustedError, failure_origin
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
-from engram.scope import validate_visibility_scope, visibility_parameters
 from engram.validation import parse_utc_timestamp, require_bool, require_identifier, require_text, utc_datetime
 
 logger = logging_getLogger(__name__)
 
 
-FIXED_READ_PROCEDURE_QUERIES = (
-    VECTOR_PROPOSITION_PROJECTION_QUERY,
-    VECTOR_SEARCH_PROPOSITIONS_QUERY,
-)
+FIXED_READ_PROCEDURE_QUERIES = (VECTOR_PROPOSITION_PROJECTION_QUERY, VECTOR_SEARCH_PROPOSITIONS_QUERY)
 
 
 def is_connection_error(err: BaseException) -> bool:
@@ -473,9 +468,7 @@ def validate_proposition_projection(value: object) -> dict:
 
 
 def proposition_projection_from_graph_row(
-    value: object,
-    projection_id: PropositionProjectionQuery,
-    vector_index_id: str = "",
+    value: object, projection_id: PropositionProjectionQuery, vector_index_id: str = ""
 ) -> dict:
     """Decode one exact external graph row into a concrete projection."""
     if not isinstance(value, Mapping):
@@ -548,12 +541,7 @@ def proposition_projection_to_dict(value: object) -> dict[str, object]:
     return result
 
 
-def decode_projection_rows(
-    rows: object,
-    projection_id: PropositionProjectionQuery,
-    vector_index_id: str,
-    limit: int,
-) -> list[dict]:
+def decode_projection_rows(rows: object, projection_id: PropositionProjectionQuery, vector_index_id: str, limit: int) -> list[dict]:
     if not isinstance(rows, list):
         raise InvalidRequestError("Proposition projection query must return a list")
     if len(rows) > limit or len(rows) > MAX_PROPOSITION_PROJECTION_ROWS:
@@ -581,22 +569,14 @@ def relation_proposition_projection_from_graph_row(value: object) -> dict:
             value.get("object_label", ""), "relation object label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "object_type": projection_entity_object_type(value.get("object_type", ""), "relation object type"),
-        "predicate_cardinality": projection_cardinality(
-            value.get("predicate_cardinality", ""),
-            "relation Predicate cardinality",
-        ),
+        "predicate_cardinality": projection_cardinality(value.get("predicate_cardinality", ""), "relation Predicate cardinality"),
     }
     return result
 
 
 def validate_relation_proposition_projection(value: object) -> dict:
     """Validate and copy one in-memory relation result."""
-    if not isinstance(value, Mapping) or set(value) != {
-        "projection",
-        "object_label",
-        "object_type",
-        "predicate_cardinality",
-    }:
+    if not isinstance(value, Mapping) or set(value) != {"projection", "object_label", "object_type", "predicate_cardinality"}:
         raise InvalidRequestError("RelationPropositionProjection has invalid fields")
     # The exact field set is checked above; the type checks below refuse every typed default.
     object_type = value.get("object_type", "")
@@ -699,19 +679,15 @@ class MemGraphConnection:
         port: int = DEFAULT_GRAPH_PORT,
         username: str = "",
         password: str = "",
-        visibility_scope: dict = EMPTY_MAPPING,
         timeout_seconds: float = GRAPH_TIMEOUT_SECONDS,
     ):
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not timeout_seconds > 0:
             raise ValueError("graph timeout must be a positive number of seconds")
-        if not isinstance(visibility_scope, dict):
-            raise ValueError("graph visibility_scope must be an object")
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.timeout_seconds = float(timeout_seconds)
-        self.visibility_scope = validate_visibility_scope(dict(visibility_scope))
         self.schema_report = {}
         self.driver = ()
         self.available = False
@@ -923,22 +899,15 @@ class MemGraphConnection:
         if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
             raise ValueError("ENGRAM graph access is read-only")
 
-        visibility = self.visibility_parameters()
         if isinstance(parameters, Mapping):
-            caller_parameters = dict(parameters)
+            query_parameters = dict(parameters)
         elif parameters:
             raise ValueError("graph query parameters must be an object")
         else:
-            caller_parameters = {}
-        # The configured visibility scope is the owner's authority; a caller
-        # or authored template may not rebind it for a filtered read.
-        collisions = sorted(set(caller_parameters) & set(visibility))
-        if collisions:
-            raise ValueError(f"graph query parameters cannot rebind visibility bindings: {', '.join(collisions)}")
-        merged_parameters = {**caller_parameters, **visibility}
+            query_parameters = {}
         loop, driver = self.current_driver()
         try:
-            result = self.run_on(loop, driver, query, merged_parameters)
+            result = self.run_on(loop, driver, query, query_parameters)
             return result
         except (TimeoutError, Neo4jError, DriverError, OSError, ResourceExhaustedError) as err:
             # The database's rejection of a query (a missing procedure or index included)
@@ -952,11 +921,6 @@ class MemGraphConnection:
                 logger.error("Query failed (%s)", failure_origin(err))
             # Only the exception type crosses this boundary.
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
-
-    def visibility_parameters(self) -> dict:
-        """Return exact non-user visibility parameters for every graph read."""
-        result = visibility_parameters(self.visibility_scope)
-        return result
 
     def vector_search_propositions(
         self,
@@ -1119,11 +1083,7 @@ class MemGraphConnection:
         result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR, index_name, row_limit)
         return result
 
-    def proposition_projection_by_id(
-        self,
-        proposition_id: str,
-        basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
-    ) -> list[dict]:
+    def proposition_projection_by_id(self, proposition_id: str, basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS) -> list[dict]:
         """Re-read one Proposition through the fixed canonical projection for publication revalidation.
 
         The request's basis window selects the same Assertion basis discovery used.
@@ -1134,19 +1094,14 @@ class MemGraphConnection:
             maximum_bytes=MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
         )
         rows = self.execute(
-            PROPOSITION_PROJECTION_BY_ID_QUERY,
-            {"proposition_id": identifier, **assertion_basis_parameters(basis_window)},
+            PROPOSITION_PROJECTION_BY_ID_QUERY, {"proposition_id": identifier, **assertion_basis_parameters(basis_window)}
         )
         result = decode_projection_rows(rows, PropositionProjectionQuery.BY_ID, "", 1)
         return result
 
 
 def connect_graph(
-    host: str = DEFAULT_GRAPH_HOST,
-    port: int = DEFAULT_GRAPH_PORT,
-    username: str = "",
-    password: str = "",
-    visibility_scope: dict = EMPTY_MAPPING,
+    host: str = DEFAULT_GRAPH_HOST, port: int = DEFAULT_GRAPH_PORT, username: str = "", password: str = ""
 ) -> MemGraphConnection:
     """Connect to the graph database and check that its schema is compatible.
 
@@ -1154,13 +1109,7 @@ def connect_graph(
     unreachable or incompatible graph fails startup rather than presenting
     an empty query result as graph readiness.
     """
-    client = MemGraphConnection(
-        host=host,
-        port=port,
-        username=username,
-        password=password,
-        visibility_scope=visibility_scope,
-    )
+    client = MemGraphConnection(host=host, port=port, username=username, password=password)
     # Ownership passes to the caller only after validation; every unsuccessful
     # connection or preflight outcome, including a raised catalog read, stops
     # the client's loop and driver here.

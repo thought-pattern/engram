@@ -44,15 +44,7 @@ RETIREMENT_ERROR_MESSAGES = {
     "lifecycle_unavailable": "retirement is unavailable in the current lifecycle",
 }
 RETIREMENT_FIELD_BYTE_LIMITS = {"statement_id": 256, "reason": 512, "request_id": 256}
-REGULATOR_OUTCOMES = set(
-    {
-        "accepted",
-        "rejected_quality",
-        "rejected_context",
-        "rejected_stale",
-        "rejected_policy",
-    }
-)
+REGULATOR_OUTCOMES = set({"accepted", "rejected_quality", "rejected_context", "rejected_stale", "rejected_policy"})
 DEFAULT_BIND_ADDRESS = "127.0.0.1:50051"
 DEFAULT_GRACE_SECONDS = 10.0
 # Shutdown waits this long past the grace period for gRPC's own drain to finish.
@@ -138,14 +130,6 @@ GRAPH_FACT_VALID_AT_EVALUATION = (
     "AND (assertion.valid_time_end IS NULL "
     "OR datetime($evaluation_time) < assertion.valid_time_end) "
 )
-GRAPH_FACT_VISIBLE = (
-    "AND (proposition.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] "
-    "AND proposition.visibility_kind = 'company' AND proposition.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
-    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
-    "AND proposition.engagement_id = $engagement_id)) "
-)
 GRAPH_FACT_RETURN = (
     "RETURN DISTINCT proposition.id AS proposition_id, "
     "subject.primary_label AS subject, "
@@ -162,7 +146,6 @@ GRAPH_ENTITY_FACTS_QUERY = (
     + GRAPH_FACT_ACTIVE
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
-    + GRAPH_FACT_VISIBLE
     + GRAPH_FACT_RETURN
     + " LIMIT 5"
 )
@@ -175,7 +158,6 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     + GRAPH_FACT_ACTIVE
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
-    + GRAPH_FACT_VISIBLE
     + GRAPH_FACT_RETURN
     + " LIMIT 3"
 )
@@ -191,7 +173,6 @@ VECTOR_SEARCH_PROPOSITIONS_QUERY = (
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
     + "AND predicate.canonical_id <> 'generic_relation' "
-    + GRAPH_FACT_VISIBLE
     + GRAPH_FACT_RETURN
     + ", similarity ORDER BY similarity DESC, proposition.id"
 )
@@ -212,12 +193,6 @@ TRIPLE_QUERY_OBJECT = (
     + GRAPH_SPO_MEANING_GUARD
     + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
     "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
-    "AND (proposition.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
-    "AND proposition.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
-    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
-    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN o.primary_label AS result LIMIT 1"
 )
 TRIPLE_QUERY_SUBJECT = (
@@ -237,12 +212,6 @@ TRIPLE_QUERY_SUBJECT = (
     + GRAPH_SPO_MEANING_GUARD
     + "AND (assertion.valid_time_start IS NULL OR assertion.valid_time_start <= datetime($evaluation_time)) "
     "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
-    "AND (proposition.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND proposition.visibility_kind = 'company' "
-    "AND proposition.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND proposition.visibility_kind = 'engagement' "
-    "AND proposition.company_id = $company_id AND proposition.customer_id = $customer_id "
-    "AND proposition.engagement_id = $engagement_id)) "
     "RETURN s.primary_label AS result LIMIT 1"
 )
 MAX_ARTIFACT_ID_BYTES = 256
@@ -269,14 +238,7 @@ MAX_ARTIFACT_ENUM_BYTES = 16
 # A serialized enum value of the identity, frame and resolution contracts.
 MAX_ENUM_WIRE_BYTES = 32
 ARTIFACT_PROVENANCE_FIELDS = set({"source_label", "caller_id", "accepted_at"})
-ARTIFACT_STATISTICS_FIELDS = set(
-    {
-        "hit_count",
-        "query_count",
-        "last_hit",
-        "last_hit_available",
-    }
-)
+ARTIFACT_STATISTICS_FIELDS = set({"hit_count", "query_count", "last_hit", "last_hit_available"})
 # Statistics of an artifact that has not been served. Read-only: artifact
 # validation copies statistics, so no artifact aliases this mapping.
 INITIAL_ARTIFACT_STATISTICS = {"hit_count": 0, "query_count": 0, "last_hit": "", "last_hit_available": False}
@@ -317,39 +279,14 @@ MAX_RETRIEVAL_REPRESENTATION_BYTES = 4_096
 MAX_RETRIEVAL_ALIASES = 32
 SCOPE_KEY_FIELDS = set({"namespace", "context_fingerprint"})
 SCOPED_RETRIEVAL_KEY_FIELDS = set({"scope", "normalized_key"})
-EMPTY_SCOPE_KEY = {
-    "namespace": "",
-    "context_fingerprint": "",
-}
+EMPTY_SCOPE_KEY = {"namespace": "", "context_fingerprint": ""}
 ENTITY_REFERENCE_FIELDS = set({"surface", "canonical_id"})
 RELATION_REFERENCE_FIELDS = set({"surface", "canonical_id"})
 IDENTITY_QUALIFIER_FIELDS = set({"kind", "value"})
-RETRIEVAL_REPRESENTATION_FIELDS = set(
-    {
-        "canonical",
-        "aliases",
-    }
-)
-QUERY_IDENTITY_FIELDS = set(
-    {
-        "canonical_form",
-        "operator",
-        "entities",
-        "relation",
-        "qualifiers",
-        "lexical_terms",
-        "scope",
-    }
-)
+RETRIEVAL_REPRESENTATION_FIELDS = set({"canonical", "aliases"})
+QUERY_IDENTITY_FIELDS = set({"canonical_form", "operator", "entities", "relation", "qualifiers", "lexical_terms", "scope"})
 EMPTY_RELATION_REFERENCE = {"surface": "", "canonical_id": ""}
-ELIGIBILITY_CONTEXT_FIELDS = set(
-    {
-        "evaluation_time",
-        "evaluation_time_available",
-        "namespace",
-        "artifact_repository_available",
-    }
-)
+ELIGIBILITY_CONTEXT_FIELDS = set({"evaluation_time", "evaluation_time_available", "namespace", "artifact_repository_available"})
 ELIGIBILITY_DECISION_FIELDS = set(
     {
         "statement_id",
@@ -368,16 +305,7 @@ MAX_ELIGIBILITY_CONTEXT_SIGNATURE_BYTES = 4_096
 MAX_EXACT_LOOKUP_STATEMENT_ID_BYTES = 256
 MAX_EXACT_LOOKUP_OWNERS = 1_000
 EXACT_LOOKUP_RESULT_FIELDS = set(
-    {
-        "outcome",
-        "key",
-        "statement_id",
-        "generation",
-        "provenance",
-        "representation",
-        "owner_statement_ids",
-        "truncated",
-    }
+    {"outcome", "key", "statement_id", "generation", "provenance", "representation", "owner_statement_ids", "truncated"}
 )
 MAX_EXACT_LOOKUP_PROVENANCE_BYTES = 32
 MAX_EXACT_LOOKUP_REPRESENTATION_BYTES = 1_024
@@ -490,26 +418,10 @@ DEFAULT_REWRITE_MAX_EXPANSIONS = 16
 DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
 MAX_REWRITE_ELAPSED_NS = 10_000_000_000
 REWRITE_RULE_FIELDS = set(
-    {
-        "rule_id",
-        "category",
-        "input_constraints",
-        "output_template",
-        "priority",
-        "scope",
-        "max_applications",
-        "provenance",
-    }
+    {"rule_id", "category", "input_constraints", "output_template", "priority", "scope", "max_applications", "provenance"}
 )
 REWRITE_INPUT_FIELDS = set(
-    {
-        "match_mode",
-        "pattern",
-        "min_tokens",
-        "max_tokens",
-        "required_operators",
-        "requires_inherited_subject",
-    }
+    {"match_mode", "pattern", "min_tokens", "max_tokens", "required_operators", "requires_inherited_subject"}
 )
 REWRITE_PROVENANCE_FIELDS = set({"author", "origin", "license", "created_at"})
 REWRITE_CORPUS_FIELDS = set({"corpus_id", "rules"})
@@ -564,17 +476,7 @@ MAX_CONTEXTUAL_TURN_DISTANCE = 2
 MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE = 0.55
 MAX_CONTEXTUAL_TOPIC_BYTES = 256
 TEMPORAL_QUERY_FIELDS = set(
-    {
-        "operator",
-        "axis",
-        "source_text",
-        "start",
-        "start_available",
-        "end",
-        "end_available",
-        "confidence",
-        "resolved",
-    }
+    {"operator", "axis", "source_text", "start", "start_available", "end", "end_available", "confidence", "resolved"}
 )
 MAX_TEMPORAL_SOURCE_BYTES = 512
 MAX_RELATION_SURFACES = 12
@@ -583,17 +485,7 @@ MAX_RELATION_PLAN_ROWS = 10
 MAX_RELATION_LABEL_BYTES = 256
 CANONICAL_ENTITY_MATCH_FIELDS = set({"canonical_id", "primary_label", "aliases", "edge_surfaces", "entity_type"})
 CANONICAL_PREDICATE_MATCH_FIELDS = set({"canonical_id", "primary_label", "synonyms", "object_type"})
-CANONICAL_RESOLUTION_FIELDS = set(
-    {
-        "status",
-        "canonical_id",
-        "primary_label",
-        "object_type",
-        "score",
-        "candidate_ids",
-        "evidence",
-    }
-)
+CANONICAL_RESOLUTION_FIELDS = set({"status", "canonical_id", "primary_label", "object_type", "score", "candidate_ids", "evidence"})
 COMPOSITION_STEP_FIELDS = set(
     {
         "branch",
@@ -672,14 +564,7 @@ PROPOSITION_VALIDITY_INPUTS_FIELDS = set(
         "valid_to_available",
     }
 )
-PROPOSITION_TRUST_INPUTS_FIELDS = set(
-    {
-        "trust_category",
-        "trust_category_available",
-        "supplied_trust",
-        "supplied_trust_available",
-    }
-)
+PROPOSITION_TRUST_INPUTS_FIELDS = set({"trust_category", "trust_category_available", "supplied_trust", "supplied_trust_available"})
 DISCLOSURE_DECISION_FIELDS = set({"ownership", "basis", "scope", "authority", "authority_available"})
 PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
     {
@@ -696,13 +581,7 @@ PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
     }
 )
 # Closed filter vocabulary of a Proposition evidence path step, in the sorted order a step carries it.
-PROPOSITION_PATH_FILTERS = (
-    "canonical_identity",
-    "object_type",
-    "publication_revalidation",
-    "temporal_eligibility",
-    "visibility",
-)
+PROPOSITION_PATH_FILTERS = ("canonical_identity", "object_type", "publication_revalidation", "temporal_eligibility", "visibility")
 PROPOSITION_EVIDENCE_RECORD_FIELDS = set(
     {
         "proposition_id",
@@ -840,15 +719,7 @@ COMPOSITION_CANDIDATE_PROVENANCE_FIELDS = set(
         "aggregate_value_available",
     }
 )
-UTILITY_PLUGIN_NAMES = (
-    "arithmetic",
-    "boolean",
-    "set",
-    "date_time",
-    "unit_conversion",
-    "version",
-    "identifier",
-)
+UTILITY_PLUGIN_NAMES = ("arithmetic", "boolean", "set", "date_time", "unit_conversion", "version", "identifier")
 UTILITY_MAX_INPUT_BYTES = 4_096
 UTILITY_MAX_OUTPUT_BYTES = 2_048
 UTILITY_MAX_TOKENS = 128
@@ -937,14 +808,7 @@ FUSION_POLICY_FIELDS = set(
     }
 )
 CANDIDATE_ELIGIBILITY_FIELDS = set(
-    {
-        "score_eligible",
-        "evidence_eligible",
-        "answer_eligible",
-        "reason_codes",
-        "feature_values",
-        "feature_available",
-    }
+    {"score_eligible", "evidence_eligible", "answer_eligible", "reason_codes", "feature_values", "feature_available"}
 )
 FUSION_ANSWER_THRESHOLD = 0.78
 FUSION_EVIDENCE_THRESHOLD = 0.35
@@ -1002,14 +866,7 @@ FEEDBACK_OBSERVATION_FIELDS = set(
     }
 )
 FEEDBACK_STATISTICS_FIELDS = set(
-    {
-        "candidate_count",
-        "accept_count",
-        "rejected_quality",
-        "rejected_context",
-        "rejected_stale",
-        "rejected_policy",
-    }
+    {"candidate_count", "accept_count", "rejected_quality", "rejected_context", "rejected_stale", "rejected_policy"}
 )
 FEEDBACK_BUCKET_FIELDS = set({"start_at", "statistics"})
 FEEDBACK_RECORD_FIELDS = set({"key", "raw", "buckets", "last_outcome", "last_observed_at"})
@@ -1060,13 +917,7 @@ MAX_PLAN_RESOLVERS = 64
 RESOLUTION_PLAN_ENTRY_FIELDS = set({"resolver", "order", "configured", "available", "reason_code"})
 RESOLUTION_PLAN_FIELDS = set({"entries"})
 ACCOUNTING_FINALIZATION_FIELDS = set(
-    {
-        "candidate_statement_ids",
-        "accepted_statement_id",
-        "candidacy_applied",
-        "success_applied",
-        "idempotent",
-    }
+    {"candidate_statement_ids", "accepted_statement_id", "candidacy_applied", "success_applied", "idempotent"}
 )
 MAX_ACCOUNTING_VISIBLE_STATEMENT_IDS = 64
 RESOLVER_BUDGET_FIELDS = set(
@@ -1092,8 +943,7 @@ MAX_VISIBILITY_GRANTS = 4_096
 GRAPH_TIMEOUT_SECONDS = 0.5
 GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS = 30.0
 WRITE_CLAUSE = re_compile(
-    r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b",
-    IGNORECASE,
+    r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b", IGNORECASE
 )
 VECTOR_INDEX_NAME = re_compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
 MAX_PROPOSITION_PROJECTION_ROWS = 1_000
@@ -1158,17 +1008,9 @@ PROPOSITION_PROJECTION_FIELDS = set(
     }
 )
 PROPOSITION_PROJECTION_RECORD_FIELDS = PROPOSITION_PROJECTION_FIELDS | set(
-    {
-        "projection_id",
-        "vector_index_id",
-        "vector_index_id_available",
-    }
+    {"projection_id", "vector_index_id", "vector_index_id_available"}
 )
-RELATION_ONE_HOP_RESULT_FIELDS = PROPOSITION_PROJECTION_FIELDS | {
-    "object_label",
-    "object_type",
-    "predicate_cardinality",
-}
+RELATION_ONE_HOP_RESULT_FIELDS = PROPOSITION_PROJECTION_FIELDS | {"object_label", "object_type", "predicate_cardinality"}
 CANONICAL_ENTITY_MATCH_QUERY = (
     "MATCH (entity:Entity) "
     "OPTIONAL MATCH (:Proposition)-[:HAS_ARGUMENT]->(binding:SemanticBinding)-[:BINDS_ENTITY]->(entity) "
@@ -1265,10 +1107,6 @@ STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY = (
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
-    "AND (c.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
-    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
@@ -1288,10 +1126,6 @@ STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY = (
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
-    "AND (c.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
-    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
@@ -1312,10 +1146,6 @@ VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "AND support.retired_at IS NULL "
     "AND " + ASSERTION_BASIS_ELIGIBLE + " "
     "AND predicate.canonical_id <> 'generic_relation' "
-    "AND (c.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
-    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + VECTOR_PROPOSITION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "0.0 AS structured_match, false AS structured_match_available, "
@@ -1331,10 +1161,6 @@ PROPOSITION_PROJECTION_BY_ID_QUERY = (
     "AND c.id = $proposition_id AND c.lifecycle_disposition = 'active' "
     "AND c.retired_at IS NULL AND assertion.lifecycle_disposition = 'active' "
     "AND assertion.retired_at IS NULL AND support.retired_at IS NULL "
-    "AND (c.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
-    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "0.0 AS structured_match, false AS structured_match_available, "
@@ -1351,10 +1177,6 @@ RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY = (
     "AND ($include_historical = true OR (c.lifecycle_disposition = 'active' AND c.retired_at IS NULL)) "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
-    "AND (c.visibility_kind = 'global' "
-    "OR ($visibility_kind IN ['company', 'engagement'] AND c.visibility_kind = 'company' AND c.company_id = $company_id) "
-    "OR ($visibility_kind = 'engagement' AND c.visibility_kind = 'engagement' "
-    "AND c.company_id = $company_id AND c.customer_id = $customer_id AND c.engagement_id = $engagement_id)) "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
@@ -1367,24 +1189,9 @@ MAX_STRUCTURED_PROPOSITION_PROJECTION_TERMS = 3
 PROPOSITION_EVIDENCE_PRODUCERS = set({STRUCTURED_GRAPH_RESOLVER_NAME, SUPPORT_SEMANTIC_RESOLVER_NAME})
 MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
 COORDINATED_RESPONSE_STATE_FIELDS = set({"repository", "mutation_receipts"})
-COORDINATED_MUTATION_CANDIDATE_FIELDS = set(
-    {
-        "before",
-        "after",
-        "receipt",
-    }
-)
-TIER_ADMISSION_POLICY_FIELDS = set(
-    {
-        "dynamic_capacity",
-    }
-)
-REPOSITORY_STATE_FIELDS = set(
-    {
-        "state_generation",
-        "artifacts",
-    }
-)
+COORDINATED_MUTATION_CANDIDATE_FIELDS = set({"before", "after", "receipt"})
+TIER_ADMISSION_POLICY_FIELDS = set({"dynamic_capacity"})
+REPOSITORY_STATE_FIELDS = set({"state_generation", "artifacts"})
 MAX_REPOSITORY_ARTIFACTS = 100_000
 # Candidates the repository and the mutation coordinator remember between planning and
 # publication; each mutation plans and publishes one, so this only bounds abandoned plans.
@@ -1403,22 +1210,8 @@ MAX_TOMBSTONES = 100_000
 # Retention of a ledger built without explicit bounds; each stays within its MAX_ ceiling.
 DEFAULT_RECEIPT_RETENTION = 10_000
 DEFAULT_TOMBSTONE_RETENTION = 10_000
-ARTIFACT_GENERATION_CHANGE_FIELDS = set(
-    {
-        "statement_id",
-        "before_generation",
-        "after_generation",
-    }
-)
-RECEIPT_TOMBSTONE_FIELDS = set(
-    {
-        "sequence",
-        "request_id",
-        "operation",
-        "payload_signature",
-        "scope_bindings",
-    }
-)
+ARTIFACT_GENERATION_CHANGE_FIELDS = set({"statement_id", "before_generation", "after_generation"})
+RECEIPT_TOMBSTONE_FIELDS = set({"sequence", "request_id", "operation", "payload_signature", "scope_bindings"})
 MUTATION_RECEIPT_FIELDS = set(
     {
         "sequence",
@@ -1432,14 +1225,7 @@ MUTATION_RECEIPT_FIELDS = set(
         "created_at",
     }
 )
-RECEIPT_LOOKUP_FIELDS = set(
-    {
-        "outcome",
-        "request_id",
-        "receipt",
-        "receipt_available",
-    }
-)
+RECEIPT_LOOKUP_FIELDS = set({"outcome", "request_id", "receipt", "receipt_available"})
 MCP_CONFORMANCE_MESSAGES = (
     "hello",
     "How are you?",
@@ -2182,13 +1968,7 @@ LEGAL_LIFECYCLE_TRANSITIONS = {
     LifecycleState.INVALIDATED: EMPTY_MAPPING,
     LifecycleState.RETIRED: EMPTY_MAPPING,
 }
-TERMINAL_LIFECYCLE_STATES = set(
-    {
-        LifecycleState.SUPERSEDED,
-        LifecycleState.INVALIDATED,
-        LifecycleState.RETIRED,
-    }
-)
+TERMINAL_LIFECYCLE_STATES = set({LifecycleState.SUPERSEDED, LifecycleState.INVALIDATED, LifecycleState.RETIRED})
 LIFECYCLE_INELIGIBLE_REASONS = {
     LifecycleState.SUPERSEDED: LifecycleDecisionReason.SUPERSEDED,
     LifecycleState.INVALIDATED: LifecycleDecisionReason.INVALIDATED,
@@ -2777,8 +2557,7 @@ DIALOGUE_QUESTION_TOPIC_RES = (
     re_compile(r"^\s*what\b.*\bwhen\s+you\s+(?:consider|think\s+about)\s+(.+?)\s*[?!.]*$", IGNORECASE),
 )
 DIALOGUE_EMOTION_RE = re_compile(
-    r"\b(?:feel|feeling|felt|happy|sad|angry|anxious|excited|worried|wistful|afraid|upset|glad|lonely)\b",
-    IGNORECASE,
+    r"\b(?:feel|feeling|felt|happy|sad|angry|anxious|excited|worried|wistful|afraid|upset|glad|lonely)\b", IGNORECASE
 )
 DIALOGUE_OPINION_RE = re_compile(r"\b(?:i think|i believe|in my opinion|i prefer|i like|i dislike|seems to me)\b", IGNORECASE)
 DIALOGUE_ACKNOWLEDGMENT_RE = re_compile(
@@ -2788,8 +2567,7 @@ DIALOGUE_ACKNOWLEDGMENT_RE = re_compile(
     IGNORECASE,
 )
 DIALOGUE_REFERRING_RE = re_compile(
-    r"\b(?:he|her|hers|herself|him|himself|his|it|its|she|they|them|their|theirs|this|that|these|those)\b",
-    IGNORECASE,
+    r"\b(?:he|her|hers|herself|him|himself|his|it|its|she|they|them|their|theirs|this|that|these|those)\b", IGNORECASE
 )
 DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE = re_compile(
     r"^\s*(?:after\b[^:\r\n]{1,80}:|because\b|before\s+we\b|for\s+my\s+part\b|"
@@ -2798,8 +2576,7 @@ DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE = re_compile(
     IGNORECASE,
 )
 DIALOGUE_HEDGE_RE = re_compile(
-    r"\b(?:maybe|perhaps|possibly|probably|supposedly|apparently|i guess|i suppose|might|could|would)\b",
-    IGNORECASE,
+    r"\b(?:maybe|perhaps|possibly|probably|supposedly|apparently|i guess|i suppose|might|could|would)\b", IGNORECASE
 )
 DIALOGUE_TRANSIENT_RE = re_compile(
     r"\b(?:right now|at the moment|for now|today|tonight|currently|temporarily|lately|this morning|"

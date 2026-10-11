@@ -69,9 +69,6 @@ CREATE INDEX ON :Source(identity_namespace);
 CREATE INDEX ON :Source(trust_revision);
 CREATE INDEX ON :Source(lifecycle_disposition);
 CREATE INDEX ON :Source(ownership_category);
-CREATE INDEX ON :Source(visibility_kind);
-CREATE INDEX ON :Source(company_id);
-CREATE INDEX ON :Source(customer_id);
 CREATE INDEX ON :Source(engagement_id);
 CREATE INDEX ON :SourceArtifact(id);
 CREATE INDEX ON :SourceArtifact(source_id);
@@ -81,9 +78,6 @@ CREATE INDEX ON :SourceArtifact(content_digest);
 CREATE INDEX ON :SourceArtifact(lifecycle_disposition);
 CREATE INDEX ON :SourceArtifact(recorded_at);
 CREATE INDEX ON :SourceArtifact(retired_at);
-CREATE INDEX ON :SourceArtifact(visibility_kind);
-CREATE INDEX ON :SourceArtifact(company_id);
-CREATE INDEX ON :SourceArtifact(customer_id);
 CREATE INDEX ON :SourceArtifact(engagement_id);
 CREATE INDEX ON :Observation(id);
 CREATE INDEX ON :Observation(source_id);
@@ -92,15 +86,11 @@ CREATE INDEX ON :Observation(result_digest);
 CREATE INDEX ON :Observation(lifecycle_disposition);
 CREATE INDEX ON :Observation(recorded_at);
 CREATE INDEX ON :Observation(retired_at);
-CREATE INDEX ON :Observation(visibility_kind);
-CREATE INDEX ON :Observation(company_id);
-CREATE INDEX ON :Observation(customer_id);
 CREATE INDEX ON :Observation(engagement_id);
 CREATE INDEX ON :Passage(id);
 CREATE INDEX ON :Passage(basis_id);
 CREATE INDEX ON :Passage(locator_profile);
 CREATE INDEX ON :Passage(passage_digest);
-CREATE INDEX ON :Passage(visibility_kind);
 CREATE INDEX ON :ExtractionReceipt(id);
 CREATE INDEX ON :ExtractionReceipt(method_id);
 CREATE INDEX ON :AcquisitionReceipt(id);
@@ -117,9 +107,6 @@ CREATE INDEX ON :Proposition(support_revision);
 CREATE INDEX ON :Proposition(recorded_at);
 CREATE INDEX ON :Proposition(retired_at);
 CREATE INDEX ON :Proposition(ownership_category);
-CREATE INDEX ON :Proposition(visibility_kind);
-CREATE INDEX ON :Proposition(company_id);
-CREATE INDEX ON :Proposition(customer_id);
 CREATE INDEX ON :Proposition(engagement_id);
 CREATE INDEX ON :Proposition(embedded_at);
 CREATE INDEX ON :Proposition(embedding_model_id);
@@ -139,9 +126,6 @@ CREATE INDEX ON :Assertion(recorded_at);
 CREATE INDEX ON :Assertion(retired_at);
 CREATE INDEX ON :Assertion(trust_revision);
 CREATE INDEX ON :Assertion(ownership_category);
-CREATE INDEX ON :Assertion(visibility_kind);
-CREATE INDEX ON :Assertion(company_id);
-CREATE INDEX ON :Assertion(customer_id);
 CREATE INDEX ON :Assertion(engagement_id);
 
 CREATE INDEX ON :Entity(canonical_id);
@@ -186,46 +170,45 @@ WITH CONFIG {
 //
 // Source: id, source_kind, identity_namespace, authority_key,
 // trust_revision, lifecycle_disposition, state_revision, ownership_category,
-// classification_level, visibility_kind, company_id, customer_id,
-// engagement_id, recorded_at, retired_at.
+// owner_id, engagement_id, classification_level, recorded_at, retired_at.
 // SourceArtifact: id, source_id, artifact_locator_profile,
 // artifact_locator_key, source_revision, digest_algorithm, content_digest,
 // content_carrier_kind, content_inline or immutable content-reference fields,
 // byte_count, character_encoding, lifecycle/state, transaction-time,
-// classification, ownership, and visibility primitive properties.
+// classification and ownership primitive properties.
 // Observation: id, source_id, observation_kind,
 // event_namespace, event_key, result_digest, observed_at, adapter and producer
 // receipt identifiers, exactly one inline or immutable referenced result
-// carrier, lifecycle/state, transaction-time, classification, ownership, and
-// visibility primitive properties.
+// carrier, lifecycle/state, transaction-time, classification and ownership
+// primitive properties.
 // Passage: id, basis_kind, basis_id, locator_profile,
 // locator_key, digest_algorithm, passage_digest, text, character_encoding,
-// byte_count, lifecycle/state, classification, ownership, and visibility
-// primitive properties.
+// byte_count, lifecycle/state, classification and ownership primitive
+// properties.
 // ExtractionReceipt: id, method_id, candidate_output_digest, selection_count,
-// transformation_receipt_digest, classification, ownership, visibility,
-// recorded_at, and retired_at. AcquisitionReceipt records repeat acquisition
+// transformation_receipt_digest, classification, ownership, recorded_at, and
+// retired_at. AcquisitionReceipt records repeat acquisition
 // provenance by id, basis_id, method, acquired_at, and result status.
 // Proposition: id, predicate_id, predicate_identity_revision,
 // polarity, modality_family, modality_operator, canonicalization_profile,
 // lifecycle_disposition, state_revision,
 // support_revision, lifecycle_reason, superseded_by, recorded_at, retired_at,
-// ownership_category, classification_level, visibility_kind, company_id,
-// customer_id, engagement_id, rendering, embedding, embedded_at,
+// ownership_category, owner_id, engagement_id, classification_level,
+// rendering, embedding, embedded_at,
 // embedding_model_id, and reasoning_projection_member. Arguments,
 // qualifications, semantic context, and applicability scope use owned
 // SemanticBinding nodes.
 // Assertion: id, source_id, basis_kind, basis_id,
 // proposition_id, valid_time kind/bounds/instant/precision/basis,
-// transaction-time, lifecycle/state, reliability, ownership/classification,
-// and visibility primitive properties. Exact selections and extraction lineage
+// transaction-time, lifecycle/state, reliability, ownership and classification
+// primitive properties. Exact selections and extraction lineage
 // use relationships; source qualifications and assertion context use bindings.
 // Entity: canonical_id, identity_key, identity_revision, primary_label,
-// entity_type, lifecycle/state, classification, ownership, and visibility.
+// entity_type, lifecycle/state, classification and ownership.
 // Predicate: canonical_id, identity_revision, label, arity, semantic_class,
 // role-contract and lifecycle/state properties. SemanticDefinition: id,
 // definition_kind, identity_revision, definition_text, content_digest,
-// lifecycle/state, classification, ownership, and visibility.
+// lifecycle/state, classification and ownership.
 // SemanticBinding: id, owner_kind, owner_id, binding_kind, role, position,
 // value_kind, datatype, literal value, exact-decimal or rational fields,
 // dimension, and canonical_unit_id. Entity- and Proposition-valued bindings use

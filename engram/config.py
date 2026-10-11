@@ -69,7 +69,6 @@ from engram.constants import (
     RolloutMode,
     SessionOverflow,
 )
-from engram.scope import validate_visibility_scope
 from engram.utilities import utility_config
 
 # The config.yml beside the engram package: the repository root in a source checkout.
@@ -82,7 +81,6 @@ def graph_config(
     username: str = "",
     password: str = "",
     enabled: bool = False,
-    visibility_scope: dict = EMPTY_CONFIG,
     vector_enabled: bool = False,
     vector_index_name: str = PROPOSITION_VECTOR_INDEX_NAME,
     vector_model: str = DEFAULT_GRAPH_VECTOR_MODEL,
@@ -108,7 +106,6 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
-    scope = validate_visibility_scope(visibility_scope)
     if not isinstance(vector_enabled, bool):
         raise ValueError("graph vector_enabled must be a boolean")
     if vector_enabled and not enabled:
@@ -150,7 +147,6 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
-        "visibility_scope": scope,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),
         "vector_model": vector_model.strip(),
@@ -294,10 +290,7 @@ def reranker_config(
     return result
 
 
-def rollout_config(
-    default_mode=RolloutMode.REGULATED_DIRECT_ANSWER,
-    namespaces: dict = EMPTY_CONFIG,
-) -> dict:
+def rollout_config(default_mode=RolloutMode.REGULATED_DIRECT_ANSWER, namespaces: dict = EMPTY_CONFIG) -> dict:
     """Validate the small namespace rollout policy used by unified resolution.
 
     ``default_mode`` and each namespace mode accept a ``RolloutMode`` or its
@@ -318,10 +311,7 @@ def rollout_config(
             selected_namespaces[namespace] = mode if isinstance(mode, RolloutMode) else RolloutMode(mode)
         except (TypeError, ValueError) as err:
             raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from err
-    result: dict = {
-        "default_mode": default_mode,
-        "namespaces": selected_namespaces,
-    }
+    result: dict = {"default_mode": default_mode, "namespaces": selected_namespaces}
     return result
 
 
@@ -515,11 +505,7 @@ def engram_config(
 
     weights = tuple(
         require_finite_number(weight, name)
-        for name, weight in (
-            ("weight_base", weight_base),
-            ("weight_recency", weight_recency),
-            ("weight_hit_rate", weight_hit_rate),
-        )
+        for name, weight in (("weight_base", weight_base), ("weight_recency", weight_recency), ("weight_hit_rate", weight_hit_rate))
     )
     if any(weight < 0 for weight in weights):
         raise ValueError("scoring weights must be finite and non-negative")

@@ -84,16 +84,6 @@ def test_engram_config_graph_config_validation() -> None:
         graph_config(vector_enabled=True)
     with pytest_raises(ValueError, match="proposition_embeddings"):
         graph_config(vector_index_name="other_embeddings")
-    with pytest_raises(ValueError, match="invalid shape"):
-        graph_config(
-            visibility_scope={
-                "kind": "global",
-                "company_id": {},
-                "customer_id": {},
-                "engagement_id": {},
-                "user_id": "user:elias",
-            }
-        )
 
 
 @pytest_mark.parametrize("invalid", [[], (), "", 0, False])
@@ -115,12 +105,6 @@ def test_engram_config_graph_vector_config() -> None:
     )
 
     assert config.get("vector_enabled", False) is True
-    assert config.get("visibility_scope", {}) == {
-        "kind": "global",
-        "company_id": {},
-        "customer_id": {},
-        "engagement_id": {},
-    }
     assert config.get("vector_limit", 0) == 75
     assert config.get("vector_support_scan_limit", 0) == 50000
     assert config.get("vector_min_similarity", 0.0) == 0.52
@@ -136,15 +120,7 @@ def test_engram_config_custom_stopwords() -> None:
 
 def test_config_from_dict_builds_a_host_mapping() -> None:
     config = config_from_dict(
-        {
-            "session_overflow": "reject",
-            "graph": {
-                "host": "graph.internal",
-                "port": 7687,
-                "enabled": True,
-                "vector_enabled": False,
-            },
-        },
+        {"session_overflow": "reject", "graph": {"host": "graph.internal", "port": 7687, "enabled": True, "vector_enabled": False}},
         base_path="",
     )
 
@@ -184,10 +160,7 @@ def test_config_from_dict_starts_from_the_engram_file_and_applies_host_overrides
         encoding="utf-8",
     )
 
-    config = config_from_dict(
-        {"graph": {"host": "host-override", "enabled": True}},
-        base_path=str(base),
-    )
+    config = config_from_dict({"graph": {"host": "host-override", "enabled": True}}, base_path=str(base))
 
     conversation = config.get("conversation", {})
     graph = config.get("graph", {})

@@ -201,12 +201,7 @@ def test_template_graph_operations_graph_query_no_client():
     processor = TemplateProcessor()
     ctx = template_context(stars=["test"])
 
-    template = {
-        "graph_query": {
-            "query": "MATCH (n) RETURN n",
-            "on_failure": {"text": "Graph not available."},
-        }
-    }
+    template = {"graph_query": {"query": "MATCH (n) RETURN n", "on_failure": {"text": "Graph not available."}}}
 
     result = processor.process(template, ctx)
     assert result == "Graph not available."
@@ -258,12 +253,7 @@ def test_template_graph_operations_graph_query_rejects_mutation_before_callback(
 
     processor = TemplateProcessor()
     ctx = template_context(graph_fn=graph_fn)
-    template = {
-        "graph_query": {
-            "query": "MATCH (n) DETACH DELETE n",
-            "on_failure": {"text": "Read-only."},
-        }
-    }
+    template = {"graph_query": {"query": "MATCH (n) DETACH DELETE n", "on_failure": {"text": "Read-only."}}}
 
     assert processor.process(template, ctx) == "Read-only."
     assert calls == []
@@ -377,10 +367,7 @@ def test_read_only_graph_wiring_graph_read_fn_passes_reads():
     with patch("engram.core.connect_graph", return_value=client) as connect_graph:
         engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
     connect_graph.assert_called_once()
-    rows = engram.graph_read_fn(
-        "MATCH (c:Proposition) RETURN c.object AS result",
-        {"subject": "Athens", "predicate": "located in"},
-    )
+    rows = engram.graph_read_fn("MATCH (c:Proposition) RETURN c.object AS result", {"subject": "Athens", "predicate": "located in"})
     assert rows == [{"result": "Greece"}]
 
 
@@ -410,12 +397,7 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
         "vector": {"enabled": False, "ready": False},
         "sparse": {"enabled": False, "ready": False},
         "spacy": {"enabled": True, "ready": True},
-        "semantic": {
-            "enabled": False,
-            "ready": False,
-            "error": "",
-            "artifact_identity": {},
-        },
+        "semantic": {"enabled": False, "ready": False, "error": "", "artifact_identity": {}},
         "reranker": {
             "enabled": False,
             "ready": False,
@@ -464,19 +446,6 @@ def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_conn
     assert client.driver == ()
 
 
-def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
-    with pytest_raises(ValueError, match="invalid shape"):
-        MemGraphConnection(
-            visibility_scope={
-                "kind": "global",
-                "company_id": {},
-                "customer_id": {},
-                "engagement_id": {},
-                "user_id": "user:elias",
-            }
-        )
-
-
 def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call_stays_refused():
     stub = BoltStub()
     stub.rows = []
@@ -484,11 +453,7 @@ def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call
     try:
         assert client.connect()
         rows = client.vector_search_propositions(
-            [0.0, 1.0],
-            index_name="proposition_embeddings",
-            limit=25,
-            min_similarity=0.5,
-            evaluation_time="2026-08-12T16:00:00Z",
+            [0.0, 1.0], index_name="proposition_embeddings", limit=25, min_similarity=0.5, evaluation_time="2026-08-12T16:00:00Z"
         )
 
         assert rows == []
@@ -514,12 +479,7 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
             "similarity": 0.81,
         }
     ]
-    config = engram_config(
-        graph=graph_config(
-            enabled=True,
-            vector_enabled=True,
-        )
-    )
+    config = engram_config(graph=graph_config(enabled=True, vector_enabled=True))
     embedding_model = Mock()
     embedding_model.encode.side_effect = encode_fake_embeddings
     with (
@@ -547,13 +507,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
             "similarity": 0.84,
         }
     ]
-    config = engram_config(
-        graph=graph_config(
-            enabled=True,
-            vector_enabled=True,
-            vector_weight=0.75,
-        )
-    )
+    config = engram_config(graph=graph_config(enabled=True, vector_enabled=True, vector_weight=0.75))
     embedding_model = Mock()
     embedding_model.encode.side_effect = encode_fake_embeddings
     with (
@@ -573,12 +527,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
 
-    proposal = core.propose(
-        "zygomatic quasar lattice",
-        request_id="proposal-1",
-        namespace="support",
-        context_fingerprint="local",
-    )
+    proposal = core.propose("zygomatic quasar lattice", request_id="proposal-1", namespace="support", context_fingerprint="local")
 
     candidates = proposal.get("candidates", [])
     assert len(candidates) == 1
