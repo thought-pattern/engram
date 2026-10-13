@@ -24,7 +24,7 @@ from engram.errors import InvalidRequestError
 from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
 from engram.identity import extract_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
-from engram.resolution import resolution_budget, resolution_budget_to_dict
+from engram.resolution_budget import resolution_budget, resolution_budget_to_dict
 from engram.service import EngramCore
 from tests.support_fixtures import ASSERTION_REFERENCE_A
 from tests.test_relation import RelationGraph

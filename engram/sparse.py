@@ -584,6 +584,104 @@ def query_descriptors(
     return result
 
 
+def rank_sparse_matches(
+    documents: dict,
+    scores: dict,
+    matched_keys: dict,
+    query_tokens: tuple,
+    query_identifiers: tuple,
+    descriptors: dict,
+    posting_visits: int,
+    working_memory: int,
+    limit: int,
+    max_working_memory_bytes: int,
+) -> dict:
+    """Project bounded accumulated sparse scores and retain deterministic top-K matches."""
+    query_ngrams = {f"g:{ngram}" for identifier in query_identifiers for ngram in character_ngrams(identifier)}
+    retained = []
+    for statement_id, raw_fields in scores.items():
+        document_tokens = documents.get(statement_id, {}).get("tokens", {})
+        raw_total = sum(raw_fields.values())
+        normalization = 2.0 * max(1, len(query_tokens))
+        base_score = raw_total / (raw_total + normalization) if raw_total else 0.0
+        phrase_fields = tuple(name for name in SPARSE_FIELD_NAMES if phrase_present(document_tokens.get(name, ()), query_tokens))
+        proximity = {name: internal_minimum_proximity(document_tokens.get(name, ()), query_tokens) for name in SPARSE_FIELD_NAMES}
+        proximity_fields = tuple(name for name in SPARSE_FIELD_NAMES if 0 < proximity.get(name, 0) <= 8)
+        minimum_proximity = min((value for value in proximity.values() if value), default=0)
+        keys = matched_keys.get(statement_id, set())
+        prefix_count = sum(key.startswith("p:") for key in keys)
+        matched_ngrams = len(query_ngrams.intersection(keys))
+        ngram_similarity = matched_ngrams / len(query_ngrams) if query_ngrams else 0.0
+        technical_exact_count = sum(f"x:{identifier}" in keys for identifier in query_identifiers)
+        technical_exact_ratio = technical_exact_count / len(query_identifiers) if query_identifiers else 0.0
+        technical_exact = bool(technical_exact_count)
+        prefix_ratio = min(1.0, prefix_count / max(1, len(query_tokens)))
+        score = min(
+            1.0,
+            0.65 * base_score
+            + (0.10 if phrase_fields else 0.0)
+            + (0.05 if proximity_fields else 0.0)
+            + 0.05 * prefix_ratio
+            + 0.10 * ngram_similarity
+            + 0.15 * technical_exact_ratio,
+        )
+        ranking_key = (-score, statement_id)
+        worst_index = -1
+        if len(retained) >= limit:
+            worst_index = max(
+                range(len(retained)),
+                key=lambda index: (-retained[index].get("score", 0.0), retained[index].get("statement_id", "")),
+            )
+            worst = retained[worst_index]
+            if ranking_key >= (-worst.get("score", 0.0), worst.get("statement_id", "")):
+                continue
+        if worst_index < 0:
+            projected_memory = working_memory + SPARSE_MATCH_WORKING_BYTES
+            if projected_memory > max_working_memory_bytes:
+                result = {
+                    "matches": (),
+                    "complete": False,
+                    "reason": "working_memory_budget",
+                    "query_term_count": len(descriptors),
+                    "posting_visits": posting_visits,
+                    "working_memory_bytes": working_memory,
+                }
+                return result
+            working_memory = projected_memory
+        field_contributions = {}
+        for name in SPARSE_FIELD_NAMES:
+            raw_value = raw_fields.get(name, 0.0)
+            field_contributions[name] = raw_value / (raw_value + normalization) if raw_value else 0.0
+        match = {
+            "statement_id": statement_id,
+            "score": score,
+            "field_contributions": field_contributions,
+            "phrase_fields": phrase_fields,
+            "proximity_fields": proximity_fields,
+            "minimum_proximity": minimum_proximity,
+            "prefix_match_count": prefix_count,
+            "character_ngram_similarity": ngram_similarity,
+            "technical_exact_match": technical_exact,
+            "technical_exact_ratio": technical_exact_ratio,
+            "matched_term_count": len(keys),
+        }
+        if worst_index < 0:
+            retained.append(match)
+        else:
+            retained[worst_index] = match
+    retained.sort(key=lambda match: (-match.get("score", 0.0), match.get("statement_id", "")))
+    retained_values = tuple(retained)
+    result = {
+        "matches": retained_values,
+        "complete": True,
+        "reason": "sparse_candidates" if retained_values else "sparse_miss",
+        "query_term_count": len(descriptors),
+        "posting_visits": posting_visits,
+        "working_memory_bytes": working_memory,
+    }
+    return result
+
+
 def search_sparse_working_set(
     state: dict,
     text: str,
@@ -851,88 +949,18 @@ def search_sparse_working_set(
                 bm25 = inverse_frequency * (frequency * 2.2) / denominator
                 weighted = bm25 * SPARSE_FIELD_WEIGHTS.get(field_name, 0.0) * multiplier
                 contributions[field_name] = contributions.get(field_name, 0.0) + weighted
-    query_ngrams = {f"g:{ngram}" for identifier in query_identifiers for ngram in character_ngrams(identifier)}
-    retained = []
-    for statement_id, raw_fields in scores.items():
-        document_tokens = documents.get(statement_id, {}).get("tokens", {})
-        raw_total = sum(raw_fields.values())
-        normalization = 2.0 * max(1, len(query_tokens))
-        base_score = raw_total / (raw_total + normalization) if raw_total else 0.0
-        phrase_fields = tuple(name for name in SPARSE_FIELD_NAMES if phrase_present(document_tokens.get(name, ()), query_tokens))
-        proximity = {name: internal_minimum_proximity(document_tokens.get(name, ()), query_tokens) for name in SPARSE_FIELD_NAMES}
-        proximity_fields = tuple(name for name in SPARSE_FIELD_NAMES if 0 < proximity.get(name, 0) <= 8)
-        minimum_proximity = min((value for value in proximity.values() if value), default=0)
-        keys = matched_keys.get(statement_id, set())
-        prefix_count = sum(key.startswith("p:") for key in keys)
-        matched_ngrams = len(query_ngrams.intersection(keys))
-        ngram_similarity = matched_ngrams / len(query_ngrams) if query_ngrams else 0.0
-        technical_exact_count = sum(f"x:{identifier}" in keys for identifier in query_identifiers)
-        technical_exact_ratio = technical_exact_count / len(query_identifiers) if query_identifiers else 0.0
-        technical_exact = bool(technical_exact_count)
-        prefix_ratio = min(1.0, prefix_count / max(1, len(query_tokens)))
-        score = min(
-            1.0,
-            0.65 * base_score
-            + (0.10 if phrase_fields else 0.0)
-            + (0.05 if proximity_fields else 0.0)
-            + 0.05 * prefix_ratio
-            + 0.10 * ngram_similarity
-            + 0.15 * technical_exact_ratio,
-        )
-        ranking_key = (-score, statement_id)
-        worst_index = -1
-        if len(retained) >= limit:
-            worst_index = max(
-                range(len(retained)),
-                key=lambda index: (-retained[index].get("score", 0.0), retained[index].get("statement_id", "")),
-            )
-            worst = retained[worst_index]
-            if ranking_key >= (-worst.get("score", 0.0), worst.get("statement_id", "")):
-                continue
-        if worst_index < 0:
-            projected_memory = working_memory + SPARSE_MATCH_WORKING_BYTES
-            if projected_memory > max_working_memory_bytes:
-                result = {
-                    "matches": (),
-                    "complete": False,
-                    "reason": "working_memory_budget",
-                    "query_term_count": len(descriptors),
-                    "posting_visits": posting_visits,
-                    "working_memory_bytes": working_memory,
-                }
-                return result
-            working_memory = projected_memory
-        field_contributions = {}
-        for name in SPARSE_FIELD_NAMES:
-            raw_value = raw_fields.get(name, 0.0)
-            field_contributions[name] = raw_value / (raw_value + normalization) if raw_value else 0.0
-        match = {
-            "statement_id": statement_id,
-            "score": score,
-            "field_contributions": field_contributions,
-            "phrase_fields": phrase_fields,
-            "proximity_fields": proximity_fields,
-            "minimum_proximity": minimum_proximity,
-            "prefix_match_count": prefix_count,
-            "character_ngram_similarity": ngram_similarity,
-            "technical_exact_match": technical_exact,
-            "technical_exact_ratio": technical_exact_ratio,
-            "matched_term_count": len(keys),
-        }
-        if worst_index < 0:
-            retained.append(match)
-        else:
-            retained[worst_index] = match
-    retained.sort(key=lambda match: (-match.get("score", 0.0), match.get("statement_id", "")))
-    retained_values = tuple(retained)
-    result = {
-        "matches": retained_values,
-        "complete": True,
-        "reason": "sparse_candidates" if retained_values else "sparse_miss",
-        "query_term_count": len(descriptors),
-        "posting_visits": posting_visits,
-        "working_memory_bytes": working_memory,
-    }
+    result = rank_sparse_matches(
+        documents,
+        scores,
+        matched_keys,
+        query_tokens,
+        query_identifiers,
+        descriptors,
+        posting_visits,
+        working_memory,
+        limit,
+        max_working_memory_bytes,
+    )
     return result
 
 

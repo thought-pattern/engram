@@ -4,7 +4,8 @@ from copy import deepcopy
 from json import dumps as json_dumps
 
 from engram.constants import ResolutionOutcome, ResolverState
-from engram.resolution import budget_consumption, empty_candidate, resolution_result, resolver_result
+from engram.resolution import empty_candidate, resolution_result, resolver_result
+from engram.resolution_budget import budget_consumption
 from engram.service import EngramCore
 from engram.telemetry import EMPTY_OPERATIONAL_TELEMETRY, record_resolution, telemetry_snapshot
 

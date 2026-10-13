@@ -7,13 +7,13 @@ from engram.constants import RolloutMode
 from engram.errors import InvalidRequestError
 from engram.resolution import (
     ResolutionOutcome,
-    budget_consumption_with_changes,
     empty_candidate,
-    empty_evidence_package,
     resolution_result_to_json,
     resolution_result_with_changes,
     validate_resolution_result,
 )
+from engram.resolution_budget import budget_consumption_with_changes
+from engram.resolution_package import empty_evidence_package
 
 
 def select_rollout(config: dict, namespace: str) -> dict:

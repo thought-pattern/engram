@@ -27,7 +27,8 @@ from engram.relation import (
     resolve_canonical_predicate,
     resolve_canonical_subject,
 )
-from engram.resolution import QueryFrameBuilder, capture_resolution_budget, query_frame_with_changes
+from engram.resolution_budget import capture_resolution_budget
+from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 from engram.resolvers import StructuredGraphResolver, validate_resolver_budget
 from engram.service import EngramCore
 

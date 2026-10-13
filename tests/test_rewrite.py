@@ -20,12 +20,8 @@ from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import (
-    QueryFrameBuilder,
-    inheritance_provenance,
-    query_frame_with_changes,
-    resolution_budget,
-)
+from engram.resolution_budget import resolution_budget
+from engram.resolution_frame import QueryFrameBuilder, inheritance_provenance, query_frame_with_changes
 from engram.rewrite import (
     RewriteEngine,
     apply_rewrites_to_frame,

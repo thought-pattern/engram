@@ -2,6 +2,14 @@
 
 ## Status and scope
 
+The Regulator names in this standalone Engram contract describe external
+proposal/verdict handling. Tapestry's Will owns that recall relationship and
+interprets/routes Channel input under `will.yml`. Tapestry Regulator only judges
+outbound Channel soundness and alone generates IDK; Utility is its basic small
+LLM. Tapestry selects only `model.actor` and `model.regulator`, with Will, Utility
+and Regulator using the latter through separate services. Existing Engram tools,
+enum names and receipts retain their standalone meaning.
+
 Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 stateful conversational process or a Regulator-controlled response cache.
 The twelve tools expose one conversation lifecycle, inspection, explicit

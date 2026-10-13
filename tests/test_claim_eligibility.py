@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import TemporalAxis, TemporalQueryOperator
+from engram.constants import PropositionOwnership, TemporalAxis, TemporalQueryOperator
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.evidence import (
@@ -20,7 +20,7 @@ from engram.evidence import (
 )
 from engram.graph import PropositionProjectionQuery, proposition_projection_from_graph_row, validate_proposition_projection
 from engram.identity import scope_key
-from engram.resolution import PropositionOwnership, QueryFrameBuilder, query_frame_with_changes
+from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 
 EVALUATION_TIME = "2026-08-16T12:00:00Z"
 EVALUATION_INSTANT = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)

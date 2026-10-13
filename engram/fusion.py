@@ -33,6 +33,7 @@ from engram.constants import (
     RERANKER_BASE_SCORE_FEATURE,
     RERANKER_FEATURES,
     UTILITY_RESOLVER_PRODUCER,
+    ExpectedObjectType,
     FusionFeature,
     FusionPolicyReason,
     GraphCompositionOperator,
@@ -42,26 +43,30 @@ from engram.constants import (
 from engram.eligibility import evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import PropositionEligibilityEvaluator, assertion_basis_window
-from engram.feedback import FeedbackStore, canonical_fingerprint, constraint_fingerprint, internal_fingerprint
+from engram.feedback_store import FeedbackStore
+from engram.feedback_values import (
+    canonical_fingerprint,
+    constraint_fingerprint,
+    internal_fingerprint,
+)
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.relation import phrase_relation_result
 from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
-    ExpectedObjectType,
     ResolutionOutcome,
     empty_candidate,
     evidence_reference_to_json,
-    feature_set,
     trusted_candidate,
     trusted_candidate_to_dict,
     trusted_candidate_with_changes,
     trusted_evidence_reference_to_dict,
     validate_candidate,
     validate_evidence_reference,
-    validate_query_frame,
 )
+from engram.resolution_evidence import feature_set
+from engram.resolution_frame import validate_query_frame
 from engram.utilities import evaluate_named_utility, utility_statement_id
 from engram.validation import require_bool
 
@@ -1022,6 +1027,40 @@ def apply_validated_authoritative_features(
     return result
 
 
+def fusion_request_memory_limit(
+    frame: dict,
+    candidates: object,
+    evidence: object,
+    working_memory_limit: object,
+    working_memory_limit_available: object,
+    cooperative_check: object,
+) -> int:
+    """Validate fusion bounds against an already validated frame before item work."""
+    # Counts, scalar limits and the control callback are checked before any
+    # per-item validation, copy or serialization work begins.
+    if not isinstance(candidates, tuple):
+        raise InvalidRequestError("fusion candidates must be a tuple of Candidate values")
+    if len(candidates) > MAX_FUSION_CONTRIBUTIONS:
+        raise InvalidRequestError(f"fusion candidates exceed the limit of {MAX_FUSION_CONTRIBUTIONS}")
+    if not isinstance(evidence, tuple):
+        raise InvalidRequestError("fusion evidence must be a tuple of EvidenceReference values")
+    if len(evidence) > MAX_FUSION_CONTRIBUTIONS:
+        raise InvalidRequestError(f"fusion evidence exceeds the limit of {MAX_FUSION_CONTRIBUTIONS}")
+    if not isinstance(working_memory_limit_available, bool):
+        raise InvalidRequestError("fusion working_memory_limit_available must be a boolean")
+    if isinstance(working_memory_limit, bool) or not isinstance(working_memory_limit, int) or working_memory_limit < 0:
+        raise InvalidRequestError("fusion working_memory_limit must be a nonnegative integer")
+    if not working_memory_limit_available and working_memory_limit != 0:
+        raise InvalidRequestError("fusion working_memory_limit requires availability")
+    frame_working_memory_limit = frame.get("budget", {}).get("max_working_memory_bytes", 0)
+    if working_memory_limit_available and working_memory_limit > frame_working_memory_limit:
+        raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
+    if cooperative_check != () and not callable(cooperative_check):
+        raise InvalidRequestError("fusion cooperative_check must be callable")
+    result = working_memory_limit if working_memory_limit_available else frame_working_memory_limit
+    return result
+
+
 class CandidateFusionEngine:
     """Deterministic, bounded, non-generative first-generation fusion engine."""
 
@@ -1296,6 +1335,98 @@ class CandidateFusionEngine:
         }
         return result
 
+    def rerank_fused_candidates(self, fused: tuple, cooperative_check: object = ()) -> dict:
+        """Rerank validated bounded groups while retaining their calibrated release scores."""
+        # The reranker only reorders its shortlist. Thresholds, the ambiguity
+        # margin, and confidence stay on the calibrated fused score, so the
+        # reranker cannot turn EVIDENCE into ANSWER by rescaling scores.
+        reranked_scores: dict[str, float] = {}
+        reranker_report: dict = {
+            "applied": False,
+            "reason": "not_configured",
+            "elapsed_ns": 0,
+            "model_time_target_exceeded": False,
+            "input_bytes": 0,
+            "scores": [],
+        }
+        if isinstance(self.internal_reranker, TransparentLogisticReranker) and self.internal_reranker.enabled:
+            reranker_settings = self.internal_reranker.settings
+            eligible_shortlist = sorted(
+                (value for value in fused if value.get("eligibility", {}).get("score_eligible", False)),
+                key=lambda value: (-value.get("score", 0.0), value.get("candidate", {}).get("statement_id", "")),
+            )[: reranker_settings.get("shortlist_size", 0)]
+            shortlist = tuple(
+                {
+                    "statement_id": item.get("candidate", {}).get("statement_id", ""),
+                    "base_score": item.get("score", 0.0),
+                    "features": {
+                        str(name): (
+                            item.get("score", 0.0)
+                            if name == RERANKER_BASE_SCORE_FEATURE
+                            else item.get("normalized", {}).get("values", {}).get(FusionFeature(name), 0.0)
+                        )
+                        for name in RERANKER_FEATURES
+                    },
+                }
+                for item in eligible_shortlist
+            )
+            # A model, input or numeric failure falls back to the baseline order; cancellation
+            # and programming errors propagate.
+            try:
+                reranker_report = self.internal_reranker.rerank(shortlist, cooperative_check)
+            except (RuntimeError, ValueError, ArithmeticError) as err:
+                logger.warning("Reranker failed; using the baseline order (%s)", failure_origin(err))
+                self.internal_reranker.record_fallback("reranker_exception")
+                reranker_report = {
+                    "applied": False,
+                    "reason": "reranker_exception",
+                    "exception_type": type(err).__name__,
+                    "elapsed_ns": 0,
+                    "model_time_target_exceeded": False,
+                    "input_bytes": 0,
+                    "scores": [],
+                }
+            if reranker_report.get("applied", False):
+                score_values = reranker_report.get("scores", [])
+                if not isinstance(score_values, list):
+                    raise InvalidRequestError("reranker scores must be a list")
+                for value in score_values:
+                    if not isinstance(value, dict):
+                        raise InvalidRequestError("reranker scores must contain mappings")
+                    statement_id = value.get("statement_id", "")
+                    if not isinstance(statement_id, str) or not statement_id:
+                        raise InvalidRequestError("reranker score statement_id must be a non-empty string")
+                    reranked_scores[statement_id] = bounded_unit(value.get("score", 0.0))
+                updated_fused = []
+                for item in fused:
+                    item_candidate = item.get("candidate", {})
+                    statement_id = item_candidate.get("statement_id", "")
+                    if statement_id not in reranked_scores:
+                        updated_fused.append(item)
+                        continue
+                    rerank_score = reranked_scores.get(statement_id, 0.0)
+                    updated_candidate = trusted_candidate_with_changes(
+                        item_candidate,
+                        {
+                            "provenance": {
+                                **dict(item_candidate.get("provenance", {})),
+                                "reranker_implementation": reranker_settings.get("implementation", ""),
+                            },
+                            "diagnostics": {
+                                **dict(item_candidate.get("diagnostics", {})),
+                                "fusion_base_score": item.get("score", 0.0),
+                                "reranker_score": rerank_score,
+                            },
+                        },
+                    )
+                    updated_item = dict(item)
+                    updated_item["candidate"] = updated_candidate
+                    updated_item["score_contributions"] = dict(item.get("score_contributions", {}))
+                    updated_fused.append(updated_item)
+                fused = tuple(updated_fused)
+        result = {"fused": fused, "reranked_scores": reranked_scores, "reranker_report": reranker_report}
+        return result
+
     def decide(
         self,
         frame: dict,
@@ -1307,29 +1438,10 @@ class CandidateFusionEngine:
         cooperative_check: object = (),
     ) -> dict:
         frame = validate_query_frame(frame)
-        # Counts, scalar limits and the control callback are checked before any
-        # per-item validation, copy or serialization work begins.
-        if not isinstance(candidates, tuple):
-            raise InvalidRequestError("fusion candidates must be a tuple of Candidate values")
-        if len(candidates) > MAX_FUSION_CONTRIBUTIONS:
-            raise InvalidRequestError(f"fusion candidates exceed the limit of {MAX_FUSION_CONTRIBUTIONS}")
-        if not isinstance(evidence, tuple):
-            raise InvalidRequestError("fusion evidence must be a tuple of EvidenceReference values")
-        if len(evidence) > MAX_FUSION_CONTRIBUTIONS:
-            raise InvalidRequestError(f"fusion evidence exceeds the limit of {MAX_FUSION_CONTRIBUTIONS}")
-        if not isinstance(working_memory_limit_available, bool):
-            raise InvalidRequestError("fusion working_memory_limit_available must be a boolean")
-        if isinstance(working_memory_limit, bool) or not isinstance(working_memory_limit, int) or working_memory_limit < 0:
-            raise InvalidRequestError("fusion working_memory_limit must be a nonnegative integer")
-        if not working_memory_limit_available and working_memory_limit != 0:
-            raise InvalidRequestError("fusion working_memory_limit requires availability")
-        frame_working_memory_limit = frame.get("budget", {}).get("max_working_memory_bytes", 0)
-        if working_memory_limit_available and working_memory_limit > frame_working_memory_limit:
-            raise InvalidRequestError("fusion working_memory_limit exceeds the frame budget")
-        if cooperative_check != () and not callable(cooperative_check):
-            raise InvalidRequestError("fusion cooperative_check must be callable")
+        memory_limit = fusion_request_memory_limit(
+            frame, candidates, evidence, working_memory_limit, working_memory_limit_available, cooperative_check
+        )
         control_check = cooperative_check if callable(cooperative_check) else (lambda: False)
-        memory_limit = working_memory_limit if working_memory_limit_available else frame_working_memory_limit
         control_check()
         # Evidence is retained even by an exhausted decision, so all of it is
         # validated (the count is already bounded); candidates are copied one at
@@ -1419,93 +1531,10 @@ class CandidateFusionEngine:
                 )
                 return result
         fused = tuple(fused_values)
-        # The reranker only reorders its shortlist. Thresholds, the ambiguity
-        # margin, and confidence stay on the calibrated fused score, so the
-        # reranker cannot turn EVIDENCE into ANSWER by rescaling scores.
-        reranked_scores: dict[str, float] = {}
-        reranker_report: dict = {
-            "applied": False,
-            "reason": "not_configured",
-            "elapsed_ns": 0,
-            "model_time_target_exceeded": False,
-            "input_bytes": 0,
-            "scores": [],
-        }
-        if isinstance(self.internal_reranker, TransparentLogisticReranker) and self.internal_reranker.enabled:
-            reranker_settings = self.internal_reranker.settings
-            eligible_shortlist = sorted(
-                (value for value in fused if value.get("eligibility", {}).get("score_eligible", False)),
-                key=lambda value: (-value.get("score", 0.0), value.get("candidate", {}).get("statement_id", "")),
-            )[: reranker_settings.get("shortlist_size", 0)]
-            shortlist = tuple(
-                {
-                    "statement_id": item.get("candidate", {}).get("statement_id", ""),
-                    "base_score": item.get("score", 0.0),
-                    "features": {
-                        str(name): (
-                            item.get("score", 0.0)
-                            if name == RERANKER_BASE_SCORE_FEATURE
-                            else item.get("normalized", {}).get("values", {}).get(FusionFeature(name), 0.0)
-                        )
-                        for name in RERANKER_FEATURES
-                    },
-                }
-                for item in eligible_shortlist
-            )
-            # A model, input or numeric failure falls back to the baseline order; cancellation
-            # and programming errors propagate.
-            try:
-                reranker_report = self.internal_reranker.rerank(shortlist, cooperative_check)
-            except (RuntimeError, ValueError, ArithmeticError) as err:
-                logger.warning("Reranker failed; using the baseline order (%s)", failure_origin(err))
-                self.internal_reranker.record_fallback("reranker_exception")
-                reranker_report = {
-                    "applied": False,
-                    "reason": "reranker_exception",
-                    "exception_type": type(err).__name__,
-                    "elapsed_ns": 0,
-                    "model_time_target_exceeded": False,
-                    "input_bytes": 0,
-                    "scores": [],
-                }
-            if reranker_report.get("applied", False):
-                score_values = reranker_report.get("scores", [])
-                if not isinstance(score_values, list):
-                    raise InvalidRequestError("reranker scores must be a list")
-                for value in score_values:
-                    if not isinstance(value, dict):
-                        raise InvalidRequestError("reranker scores must contain mappings")
-                    statement_id = value.get("statement_id", "")
-                    if not isinstance(statement_id, str) or not statement_id:
-                        raise InvalidRequestError("reranker score statement_id must be a non-empty string")
-                    reranked_scores[statement_id] = bounded_unit(value.get("score", 0.0))
-                updated_fused = []
-                for item in fused:
-                    item_candidate = item.get("candidate", {})
-                    statement_id = item_candidate.get("statement_id", "")
-                    if statement_id not in reranked_scores:
-                        updated_fused.append(item)
-                        continue
-                    rerank_score = reranked_scores.get(statement_id, 0.0)
-                    updated_candidate = trusted_candidate_with_changes(
-                        item_candidate,
-                        {
-                            "provenance": {
-                                **dict(item_candidate.get("provenance", {})),
-                                "reranker_implementation": reranker_settings.get("implementation", ""),
-                            },
-                            "diagnostics": {
-                                **dict(item_candidate.get("diagnostics", {})),
-                                "fusion_base_score": item.get("score", 0.0),
-                                "reranker_score": rerank_score,
-                            },
-                        },
-                    )
-                    updated_item = dict(item)
-                    updated_item["candidate"] = updated_candidate
-                    updated_item["score_contributions"] = dict(item.get("score_contributions", {}))
-                    updated_fused.append(updated_item)
-                fused = tuple(updated_fused)
+        reranking = self.rerank_fused_candidates(fused, cooperative_check)
+        fused = reranking.get("fused", ())
+        reranked_scores = reranking.get("reranked_scores", {})
+        reranker_report = reranking.get("reranker_report", {})
         ranked = tuple(
             sorted(
                 (candidate for candidate in fused if candidate.get("eligibility", {}).get("score_eligible", False)),

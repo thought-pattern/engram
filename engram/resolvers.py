@@ -46,6 +46,7 @@ from engram.constants import (
     UTILITY_RESOLVER_PRODUCER,
     CanonicalResolutionStatus,
     CompositionReason,
+    CostClass,
     ExactLookupOutcome,
     ExpectedObjectType,
     PredicateCardinality,
@@ -72,7 +73,9 @@ from engram.evidence import (
     proposition_evidence_record,
     validate_evidence_usefulness_policy,
 )
-from engram.feedback import canonical_fingerprint
+from engram.feedback_values import (
+    canonical_fingerprint,
+)
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.graph import proposition_projection_to_dict
 from engram.identity import scoped_retrieval_key_from_text
@@ -86,43 +89,44 @@ from engram.relation import (
     select_relation_propositions,
 )
 from engram.resolution import (
-    BudgetLedger,
     CandidateSource,
-    CostClass,
     EvidenceKind,
     ResolutionOutcome,
     ResolverState,
     accounting_observation,
-    budget_consumption,
-    budget_consumption_from_dict,
-    budget_consumption_to_dict,
-    budget_consumption_with_changes,
-    build_evidence_package,
     candidate as resolution_candidate,
     candidate_to_dict,
     empty_candidate,
-    empty_evidence_package,
     evidence_reference,
     evidence_reference_to_dict,
-    feature_set,
-    proposition_evidence_path_step,
-    proposition_evidence_record_with_changes,
     resolver_result,
     resolver_result_to_dict,
-    trusted_budget_consumption_with_changes,
     trusted_candidate_to_dict,
     trusted_candidate_with_changes,
-    trusted_evidence_package_to_json,
     trusted_evidence_reference_to_dict,
-    trusted_proposition_evidence_record_to_dict,
     trusted_resolution_result,
     trusted_resolution_result_to_json,
     trusted_resolver_result_to_dict,
     trusted_resolver_result_with_changes,
-    validate_budget_consumption,
-    validate_query_frame,
     validate_resolver_result,
 )
+from engram.resolution_budget import (
+    BudgetLedger,
+    budget_consumption,
+    budget_consumption_from_dict,
+    budget_consumption_to_dict,
+    budget_consumption_with_changes,
+    trusted_budget_consumption_with_changes,
+    validate_budget_consumption,
+)
+from engram.resolution_evidence import (
+    feature_set,
+    proposition_evidence_path_step,
+    proposition_evidence_record_with_changes,
+    trusted_proposition_evidence_record_to_dict,
+)
+from engram.resolution_frame import validate_query_frame
+from engram.resolution_package import build_evidence_package, empty_evidence_package, trusted_evidence_package_to_json
 from engram.utilities import UtilityRegistry, utility_statement_id
 
 logger = logging_getLogger(__name__)

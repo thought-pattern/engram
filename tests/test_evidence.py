@@ -4,6 +4,7 @@ from json import dumps as json_dumps
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
+from engram.constants import DisclosureBasis, EvidencePackageTruncationReason, PropositionOwnership
 from engram.errors import InvalidRequestError
 from engram.evidence import (
     EvidenceUsefulnessReason,
@@ -16,19 +17,9 @@ from engram.evidence import (
     validate_evidence_usefulness_policy,
 )
 from engram.identity import scope_key
-from engram.resolution import (
-    DisclosureBasis,
-    EvidencePackageTruncationReason,
-    PropositionOwnership,
-    build_evidence_package,
+from engram.resolution_evidence import (
     canonical_proposition_references,
     disclosure_decision,
-    empty_evidence_package,
-    evidence_package,
-    evidence_package_from_dict,
-    evidence_package_from_json,
-    evidence_package_to_dict,
-    evidence_package_to_json,
     feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
@@ -40,10 +31,19 @@ from engram.resolution import (
     proposition_validity_inputs,
     validate_canonical_proposition_references,
     validate_disclosure_decision,
-    validate_evidence_package,
     validate_proposition_evidence_record,
     validate_proposition_trust_inputs,
     validate_proposition_validity_inputs,
+)
+from engram.resolution_package import (
+    build_evidence_package,
+    empty_evidence_package,
+    evidence_package,
+    evidence_package_from_dict,
+    evidence_package_from_json,
+    evidence_package_to_dict,
+    evidence_package_to_json,
+    validate_evidence_package,
 )
 
 # Read-only inputs: proposition_evidence_record and the *_with_changes revalidation copy every nested component.

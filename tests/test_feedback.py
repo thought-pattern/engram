@@ -7,30 +7,32 @@ from pytest import approx as pytest_approx, raises as pytest_raises
 
 from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
-from engram.core import Engram
-from engram.errors import ConflictError, InvalidRequestError
-from engram.feedback import (
+from engram.constants import (
+    INITIAL_ARTIFACT_STATISTICS,
     FeedbackObservationKind,
     FeedbackOutcome,
     FeedbackReferenceKind,
-    FeedbackStore,
     LifecycleHandoffStatus,
-    NegativeResolutionStore,
-    canonical_fingerprint,
-    constraint_fingerprint,
+    Tier,
+)
+from engram.core import Engram
+from engram.errors import ConflictError, InvalidRequestError
+from engram.feedback import (
     feedback_policy,
     feedback_state,
     feedback_statistics,
     feedback_statistics_from_dict,
     feedback_statistics_to_dict,
     validate_feedback_observation,
-    validate_negative_resolution_key,
 )
+from engram.feedback_store import FeedbackStore
+from engram.feedback_values import canonical_fingerprint, constraint_fingerprint
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.mutations import mutation_receipt_to_dict
+from engram.negative_resolution import NegativeResolutionStore, validate_negative_resolution_key
 from engram.repository import ArtifactRepository
-from engram.resolution import ResolutionOutcome, resolution_budget
+from engram.resolution import ResolutionOutcome
+from engram.resolution_budget import resolution_budget
 from engram.service import EngramCore
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)

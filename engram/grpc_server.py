@@ -52,7 +52,8 @@ from engram.errors import (
     failure_origin,
 )
 from engram.identity import query_identity_from_dict
-from engram.resolution import resolution_budget_from_dict, resolution_result_to_dict
+from engram.resolution import resolution_result_to_dict
+from engram.resolution_budget import resolution_budget_from_dict
 from engram.service import EngramCore, normalize_service_user_id
 
 LOGGER = getLogger(__name__)

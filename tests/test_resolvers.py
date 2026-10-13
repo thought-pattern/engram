@@ -43,32 +43,28 @@ from engram.graph import (
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.resolution import (
-    QueryFrameBuilder,
     accounting_observation,
-    budget_consumption,
-    build_evidence_package,
     candidate as resolution_candidate,
-    capture_resolution_budget,
-    empty_evidence_package,
-    evidence_package_to_json,
     evidence_reference,
-    feature_set,
-    proposition_evidence_record_to_dict,
-    proposition_evidence_record_with_changes,
-    query_frame_with_changes,
-    resolution_budget,
     resolution_result_to_dict,
     resolution_result_to_json,
     resolver_result,
     resolver_result_from_dict,
     resolver_result_to_dict,
     validate_candidate,
+    validate_resolver_result,
+)
+from engram.resolution_budget import budget_consumption, capture_resolution_budget, resolution_budget, validate_resolution_budget
+from engram.resolution_evidence import (
+    feature_set,
+    proposition_evidence_record_to_dict,
+    proposition_evidence_record_with_changes,
     validate_canonical_proposition_references,
     validate_disclosure_decision,
     validate_proposition_validity_inputs,
-    validate_resolution_budget,
-    validate_resolver_result,
 )
+from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
+from engram.resolution_package import build_evidence_package, empty_evidence_package, evidence_package_to_json
 from engram.resolvers import (
     ExactResolver,
     ResolutionAccountingFinalizer,

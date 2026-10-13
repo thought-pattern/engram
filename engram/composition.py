@@ -30,7 +30,7 @@ from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import validate_proposition_eligibility_decision
 from engram.graph import validate_relation_proposition_projection
 from engram.relation import canonical_resolution, validate_canonical_resolution
-from engram.resolution import validate_query_frame
+from engram.resolution_frame import validate_query_frame
 from engram.validation import require_identifier, require_text
 
 logger = logging_getLogger(__name__)
@@ -726,6 +726,35 @@ def execute_composition_plan(
     else:
         reasons.add(CompositionReason.NO_PATH)
 
+    result = evaluate_composition_result(
+        current,
+        complete,
+        partial,
+        branch_complete,
+        branch_known,
+        truncated,
+        reasons,
+        graph_rows,
+    )
+    return result
+
+
+def evaluate_composition_result(
+    current: dict,
+    complete: tuple,
+    partial: tuple,
+    branch_complete: list,
+    branch_known: list,
+    truncated: bool,
+    reason_codes: set,
+    graph_rows: int,
+) -> dict:
+    """Evaluate terminal operators over validated, bounded traversal observations.
+
+    The execution owner supplies the already validated plan and ordered paths.
+    No graph work occurs here, and caller-owned reason codes remain isolated.
+    """
+    reasons = set(reason_codes)
     terminal_propositions = tuple(path[-1].get("proposition", {}) for path in complete)
     raw_terminal_ids = tuple(item.get("projection", {}).get("object_entity_id", "") for item in terminal_propositions)
     raw_terminal_labels = tuple(item.get("object_label", "") for item in terminal_propositions)

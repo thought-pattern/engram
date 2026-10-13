@@ -21,13 +21,13 @@ from engram.identity import scope_key
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
-    QueryFrameBuilder,
     ResolutionOutcome,
     candidate as resolution_candidate,
-    capture_resolution_budget,
     evidence_reference,
-    feature_set,
 )
+from engram.resolution_budget import capture_resolution_budget
+from engram.resolution_evidence import feature_set
+from engram.resolution_frame import QueryFrameBuilder
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark.json")

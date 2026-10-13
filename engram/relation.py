@@ -22,7 +22,7 @@ from engram.constants import (
 from engram.errors import InvalidRequestError
 from engram.graph import validate_relation_proposition_projection
 from engram.identity import normalize_retrieval_key
-from engram.resolution import validate_query_frame
+from engram.resolution_frame import validate_query_frame
 from engram.spacy_setup import SPACY_PIPELINES
 from engram.temporal import validate_temporal_query
 from engram.validation import require_identifier, require_text, utc_datetime

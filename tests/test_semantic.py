@@ -12,7 +12,7 @@ from engram.core import Engram
 from engram.errors import ResolutionCancelledError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import QueryFrameBuilder
+from engram.resolution_frame import QueryFrameBuilder
 from engram.resolvers import StandaloneSemanticResolver, resolver_budget
 from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
 

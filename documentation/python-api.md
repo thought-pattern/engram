@@ -5,10 +5,23 @@
 
 ## Boundary
 
+External Regulator outcome names below belong to Engram's standalone API, not
+Tapestry's component ownership. Tapestry Will owns Channel input interpretation
+under `will.yml`, routing and recall sufficiency; Regulator only reviews outbound
+Channel soundness and alone generates IDK. Utility supplies basic small-LLM
+inference. Tapestry's only selections are `model.actor` and `model.regulator`,
+with Will/Utility/Regulator sharing the latter; this does not alter Engram's API.
+
 `EngramCore.resolve_request` is the Python entry point for unified
 resolution. It accepts concrete Python values and returns one validated
-dictionary. Callers use keyed access and may use the explicit codecs in
-`engram.resolution` when a JSON-compatible or serialized value is required.
+dictionary. Callers read dictionaries with `.get(key, concrete_default)`.
+Candidate, evidence-reference and result codecs belong to `engram.resolution`;
+frame and provenance codecs to `engram.resolution_frame`; resource limits and
+consumption to `engram.resolution_budget`; full-Proposition evidence to
+`engram.resolution_evidence`; and bounded evidence collections to
+`engram.resolution_package`. Shared native-value validation and explicit public
+JSON codecs belong to `engram.resolution_values`. Python handoffs retain native
+values; use a codec only at its documented external interchange boundary.
 
 Lower-level `Engram` statement, pattern, graph, and conversation operations are
 current first-party interfaces. MCP and the gRPC services are

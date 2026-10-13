@@ -14,23 +14,23 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import ResolutionOutcome
-from engram.core import Engram
-from engram.feedback import (
+from engram.constants import (
     FeedbackObservationKind,
     FeedbackOutcome,
     FeedbackReferenceKind,
-    FeedbackStore,
-    NegativeResolutionStore,
-    canonical_fingerprint,
-    constraint_fingerprint,
+    ResolutionOutcome,
+)
+from engram.core import Engram
+from engram.feedback import (
     feedback_observation,
     feedback_state,
     feedback_state_from_json,
     feedback_state_to_json,
-    negative_resolution_key,
 )
+from engram.feedback_store import FeedbackStore
+from engram.feedback_values import canonical_fingerprint, constraint_fingerprint
 from engram.identity import extract_standalone_identity, scope_key
+from engram.negative_resolution import NegativeResolutionStore, negative_resolution_key
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 

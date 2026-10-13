@@ -32,7 +32,7 @@ from engram.identity import (
     validate_identity_qualifier,
     validate_relation_reference,
 )
-from engram.resolution import inheritance_provenance, query_frame_with_changes, validate_query_frame
+from engram.resolution_frame import inheritance_provenance, query_frame_with_changes, validate_query_frame
 from engram.temporal import temporal_query, temporal_query_from_dict, temporal_query_to_dict, validate_temporal_query
 from engram.validation import require_text
 

@@ -7,7 +7,7 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import reranker_config
-from engram.constants import Tier
+from engram.constants import ExpectedObjectType, Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.fusion import (
@@ -29,17 +29,14 @@ from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     CandidateSource,
     EvidenceKind,
-    ExpectedObjectType,
-    QueryFrameBuilder,
     ResolutionOutcome,
-    capture_resolution_budget,
     evidence_reference,
-    feature_set,
-    query_frame_with_changes,
     validate_candidate,
     validate_evidence_reference,
-    validate_resolution_budget,
 )
+from engram.resolution_budget import capture_resolution_budget, validate_resolution_budget
+from engram.resolution_evidence import feature_set
+from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 from tests.support_fixtures import PROPOSITION_REFERENCE_A
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)

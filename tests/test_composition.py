@@ -33,18 +33,16 @@ from engram.graph import (
 )
 from engram.identity import scope_key
 from engram.relation import RelationQuestion, canonical_resolution, resolve_canonical_subject
-from engram.resolution import (
-    QueryFrameBuilder,
-    ResolutionOutcome,
-    build_evidence_package,
-    evidence_package_from_json,
-    evidence_package_to_json,
+from engram.resolution import ResolutionOutcome
+from engram.resolution_evidence import (
     proposition_evidence_path_step,
     proposition_evidence_record_from_json,
     proposition_evidence_record_to_json,
     proposition_evidence_record_with_changes,
     validate_proposition_evidence_path_step,
 )
+from engram.resolution_frame import QueryFrameBuilder
+from engram.resolution_package import build_evidence_package, evidence_package_from_json, evidence_package_to_json
 from engram.resolvers import StructuredGraphResolver, resolver_budget, resolver_budget_with_changes
 from engram.service import EngramCore
 

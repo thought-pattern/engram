@@ -15,7 +15,9 @@ from time import perf_counter as time_perf_counter
 from engram import metrics, pipeline, sessions
 from engram.constants import DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
 from engram.errors import InvalidRequestError
-from engram.feedback import canonical_utc
+from engram.feedback_values import (
+    canonical_utc,
+)
 from engram.template import TEMPLATE_RANDOM
 
 

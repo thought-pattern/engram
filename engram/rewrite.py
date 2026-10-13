@@ -45,7 +45,7 @@ from engram.constants import (
     RewriteStopReason,
 )
 from engram.errors import InvalidRequestError
-from engram.resolution import query_frame_with_changes, rewrite_trace_step, validate_query_frame
+from engram.resolution_frame import query_frame_with_changes, rewrite_trace_step, validate_query_frame
 from engram.validation import require_any_text
 
 logger = logging_getLogger(__name__)

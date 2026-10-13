@@ -13,7 +13,7 @@ from engram.contextual import (
 )
 from engram.core import Engram
 from engram.errors import InvalidRequestError
-from engram.resolution import QueryFrameBuilder
+from engram.resolution_frame import QueryFrameBuilder
 from engram.temporal import parse_temporal_query, temporal_query, temporal_query_from_dict, temporal_query_to_dict
 
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)

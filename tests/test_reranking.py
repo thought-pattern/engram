@@ -11,7 +11,10 @@ from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, permissive_candidate_authority
 from engram.identity import scope_key
 from engram.reranking import TransparentLogisticReranker
-from engram.resolution import QueryFrameBuilder, candidate, capture_resolution_budget, feature_set
+from engram.resolution import candidate
+from engram.resolution_budget import capture_resolution_budget
+from engram.resolution_evidence import feature_set
+from engram.resolution_frame import QueryFrameBuilder
 
 # Two-candidate reranker shortlist; rerank validates and copies it, so tests share this read-only constant.
 SHORTLIST = (

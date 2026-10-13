@@ -32,7 +32,8 @@ from engram.mutations import (
     mutation_receipt,
 )
 from engram.repository import ArtifactRepository
-from engram.resolution import QueryFrameBuilder, capture_resolution_budget
+from engram.resolution_budget import capture_resolution_budget
+from engram.resolution_frame import QueryFrameBuilder
 from engram.resolvers import StructuredGraphResolver, resolver_budget
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state

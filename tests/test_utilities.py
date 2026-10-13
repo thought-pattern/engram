@@ -11,7 +11,8 @@ from engram.config import engram_config, load_config
 from engram.constants import UTILITY_MAX_COLLECTION_ITEMS, CandidateSource
 from engram.core import Engram
 from engram.fusion import EngramCandidateAuthority
-from engram.resolution import ResolutionOutcome, validate_candidate, validate_query_frame
+from engram.resolution import ResolutionOutcome, validate_candidate
+from engram.resolution_frame import validate_query_frame
 from engram.service import EngramCore
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config
 

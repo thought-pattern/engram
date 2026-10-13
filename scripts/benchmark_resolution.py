@@ -15,19 +15,13 @@ if str(REPOSITORY) not in sys_path:
 
 from engram.artifacts import LifecycleState, validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
+from engram.constants import INITIAL_ARTIFACT_STATISTICS, CostClass, Tier
 from engram.core import Engram
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import (
-    CostClass,
-    QueryFrameBuilder,
-    ResolverState,
-    budget_consumption,
-    resolver_result,
-    resolver_result_from_json,
-    resolver_result_to_json,
-)
+from engram.resolution import ResolverState, resolver_result, resolver_result_from_json, resolver_result_to_json
+from engram.resolution_budget import budget_consumption
+from engram.resolution_frame import QueryFrameBuilder
 from engram.resolvers import ExactResolver, ResolverExecutor, ResolverRegistry, SparseResolver, resolver_budget
 from scripts.benchmark_metadata import benchmark_source_state
 

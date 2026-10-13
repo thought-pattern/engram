@@ -9,6 +9,8 @@ from engram.constants import (
     EMPTY_SCOPE_KEY,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
+    MAX_PROPOSITION_SELECTION_REASONS,
+    MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
     MAX_REASON_CODE_BYTES,
     MAX_RESOLVER_NAME_BYTES,
     MAX_VISIBILITY_GRANTS,
@@ -23,20 +25,18 @@ from engram.constants import (
     UNCONSTRAINED_ASSERTION_BASIS,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
+    DisclosureBasis,
     EvidenceUsefulnessReason,
     PropositionEligibilityReason,
+    PropositionOwnership,
     TemporalAxis,
     TemporalQueryOperator,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError, failure_origin
 from engram.graph import PropositionProjectionQuery, validate_proposition_projection
 from engram.identity import scope_key_signature, validate_scope_key
-from engram.resolution import (
-    MAX_PROPOSITION_SELECTION_REASONS,
-    MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
-    MAX_RESOLUTION_VALUES,
-    DisclosureBasis,
-    PropositionOwnership,
+from engram.resolution import MAX_RESOLUTION_VALUES
+from engram.resolution_evidence import (
     canonical_proposition_references,
     disclosure_decision,
     feature_set,
@@ -46,8 +46,8 @@ from engram.resolution import (
     proposition_validity_inputs,
     validate_disclosure_decision,
     validate_proposition_evidence_record,
-    validate_query_frame,
 )
+from engram.resolution_frame import validate_query_frame
 from engram.validation import require_identifier, require_utc_datetime
 
 logger = logging_getLogger(__name__)

@@ -51,6 +51,10 @@ from engram.constants import (
     CoreState,
     ExactLookupOutcome,
     ExpectedObjectType,
+    FeedbackObservationKind,
+    FeedbackOutcome,
+    FeedbackReferenceKind,
+    LifecycleHandoffStatus,
     LifecycleState,
     RolloutMode,
     SessionOverflow,
@@ -71,19 +75,8 @@ from engram.errors import (
     ResourceNotFoundError,
     WorkingMemoryExceededError,
 )
-from engram.feedback import (
-    FeedbackObservationKind,
-    FeedbackOutcome,
-    FeedbackReferenceKind,
-    LifecycleHandoffStatus,
-    NegativeResolutionStore,
-    canonical_fingerprint,
-    canonical_utc,
-    constraint_fingerprint,
-    empty_negative_resolution,
-    negative_resolution_key,
-    validate_feedback_observation,
-)
+from engram.feedback import validate_feedback_observation
+from engram.feedback_values import canonical_fingerprint, canonical_utc, constraint_fingerprint
 from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority, fusion_policy, policy_fingerprint
 from engram.identity import (
     normalize_retrieval_key,
@@ -93,21 +86,24 @@ from engram.identity import (
     validate_query_identity,
 )
 from engram.mutations import mutation_receipt_to_dict
+from engram.negative_resolution import NegativeResolutionStore, empty_negative_resolution, negative_resolution_key
 from engram.repository import tier_admission_policy
 from engram.resolution import (
-    QueryFrameBuilder,
     ResolutionOutcome,
     ResolverState,
-    budget_consumption,
-    budget_consumption_with_changes,
     empty_candidate,
-    resolution_budget,
-    resolution_budget_to_dict,
     resolution_result,
     resolution_result_to_json,
-    validate_resolution_budget,
     validate_resolution_result,
 )
+from engram.resolution_budget import (
+    budget_consumption,
+    budget_consumption_with_changes,
+    resolution_budget,
+    resolution_budget_to_dict,
+    validate_resolution_budget,
+)
+from engram.resolution_frame import QueryFrameBuilder
 from engram.resolvers import (
     ExactResolver,
     ResolutionAccountingFinalizer,

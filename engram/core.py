@@ -65,7 +65,7 @@ from engram.dialogue import (
 )
 from engram.errors import InvalidRequestError, ResourceExhaustedError, VectorSupportScanExceededError, failure_origin
 from engram.facts_spacy import extract_facts
-from engram.feedback import FeedbackStore
+from engram.feedback_store import FeedbackStore
 from engram.graph import (
     PropositionProjectionQuery,
     canonical_entity_match_from_graph_row,
