@@ -4,11 +4,12 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import repository as repository_module
 from engram.artifacts import validate_cached_response_artifact
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, LifecycleMutationReason, LifecycleState, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleMutationReason, LifecycleState, Tier
+from engram.constants_mutations import MutationResultCode
 from engram.coordination import AtomicMutationCoordinator
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import extract_standalone_identity, retrieval_representation
-from engram.mutations import MutationReceiptLedger, MutationResultCode
+from engram.mutations import MutationReceiptLedger
 from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.responses import AcceptedResponseService, response_mutation_result_to_dict
 from tests.support_fixtures import ACCEPTED_ARTIFACT_FIELDS, TENANT_SCOPE

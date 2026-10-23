@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from pytest import raises as pytest_raises
 
 from engram.config import engram_config, reranker_config
-from engram.constants import CandidateSource, LifecycleState
+from engram.constants_artifacts import LifecycleState
+from engram.constants_resolution import CandidateSource
 from engram.core import Engram
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.fusion import CandidateFusionEngine, permissive_candidate_authority

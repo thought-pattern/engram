@@ -14,12 +14,8 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import (
-    FeedbackObservationKind,
-    FeedbackOutcome,
-    FeedbackReferenceKind,
-    ResolutionOutcome,
-)
+from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
 from engram.feedback import (
     feedback_observation,

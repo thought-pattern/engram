@@ -1,6 +1,6 @@
 """Exact corrected support-reference and accepted-artifact fixtures for Engram tests."""
 
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 
 GLOBAL_VISIBILITY = {

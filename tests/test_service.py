@@ -7,16 +7,10 @@ from threading import Event as threading_Event, Thread as threading_Thread
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import metrics, sessions
-from engram.constants import (
-    ANONYMOUS_CONVERSATION_LEASE_SECONDS,
-    MAX_CACHE_REQUEST_BYTES,
-    MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES,
-    RESOLUTION_RESULT_FIELDS,
-    LifecycleState,
-    ResolutionOutcome,
-    Tier,
-)
+from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS
+from engram.constants_artifacts import MAX_RESPONSE_BYTES, LifecycleState, Tier
+from engram.constants_resolution import RESOLUTION_RESULT_FIELDS, ResolutionOutcome
+from engram.constants_service import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES
 from engram.core import Engram
 from engram.errors import (
     ConflictError,
@@ -243,7 +237,7 @@ def test_unified_resolution_cancellation_is_transient_and_not_cached() -> None:
     assert retry.get("outcome", ResolutionOutcome.MISS).value == "MISS"
 
 
-def test_core_shares_knowledge_while_isolating_user_context() -> None:
+def test_core_isolates_user_context_and_taught_facts() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     core = EngramCore(engram)
@@ -256,9 +250,13 @@ def test_core_shares_knowledge_while_isolating_user_context() -> None:
     carol_inspection = core.inspect_conversation("Carol")
 
     assert alice_context
-    assert carol_turn.get("response", "") == "Sushi is good."
+    assert carol_turn.get("response", "") == "Go on."
+    assert carol_turn.get("learned_statements", []) == []
     assert core.inspect_conversation("Alice").get("session", {}) == alice_context
-    assert carol_inspection.get("session", {}).get("previous_response", "") == "Sushi is good."
+    assert [fact.get("text", "") for fact in core.inspect_conversation("Alice").get("learned_dynamic", [])] == ["Sushi is good."]
+    assert carol_inspection.get("session", {}).get("previous_response", "") == "Go on."
+    assert carol_inspection.get("learned_dynamic", []) == []
+    assert core.chat("Alice", "What's good?").get("response", "") == "Sushi is good."
     assert carol_inspection.get("core_status", {}).get("state", "") == "running"
 
 
@@ -273,6 +271,21 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
     with pytest_raises(ValueError, match="Alice"):
         core.get_conversation("Alice")
     assert core.chat("Carol", "Hello").get("user_id", "") == "Carol"
+
+
+def test_stopping_the_anonymous_conversation_forgets_its_facts() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    core = EngramCore(engram)
+    token = core.start_conversation("").get("conversation_token", "")
+
+    taught = core.chat("0", "The sky is blue.", conversation_token=token)
+    assert [fact.get("introduced_by_user_id", "") for fact in taught.get("learned_statements", [])] == ["0"]
+    core.stop_conversation("0", conversation_token=token)
+    token = core.start_conversation("").get("conversation_token", "")
+
+    assert core.chat("0", "What is the sky?", conversation_token=token).get("response", "") == "Go on."
+    assert core.inspect_conversation("0", conversation_token=token).get("learned_dynamic", []) == []
 
 
 def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:

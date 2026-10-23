@@ -4,13 +4,12 @@ from datetime import datetime, timedelta
 from heapq import heapify as heapq_heapify, heappop as heapq_heappop, heappush as heapq_heappush
 from threading import RLock as threading_RLock
 
-from engram.constants import (
+from engram.constants_feedback import (
     DEFAULT_NEGATIVE_MAX_RECORDS,
     DEFAULT_NEGATIVE_TTL_SECONDS,
     EMPTY_FINGERPRINT,
     EMPTY_NEGATIVE_CREATED_AT,
     EMPTY_NEGATIVE_EXPIRES_AT,
-    EMPTY_SCOPE_KEY,
     MAX_INSPECTION_RECORDS,
     MAX_NEGATIVE_RECORDS,
     MAX_NEGATIVE_TTL_SECONDS,
@@ -18,6 +17,7 @@ from engram.constants import (
     NEGATIVE_RESOLUTION_KEY_FIELDS,
     NegativeResolutionReason,
 )
+from engram.constants_identity import EMPTY_SCOPE_KEY
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.feedback_values import (
     canonical_fingerprint,

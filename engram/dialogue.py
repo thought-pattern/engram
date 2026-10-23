@@ -9,8 +9,8 @@ cache, and which sentence should represent a multi-sentence turn.
 
 from re import IGNORECASE as IGNORECASE, findall as re_findall, finditer as re_finditer, search as re_search, sub as re_sub
 
-from engram.constants import (
-    ARTICLES,
+from engram.constants import EMPTY_MAPPING
+from engram.constants_dialogue import (
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_ACKNOWLEDGMENT_RE,
     DIALOGUE_CLOSING,
@@ -48,11 +48,9 @@ from engram.constants import (
     DIALOGUE_TRANSIENT_RE,
     DIALOGUE_VAGUE_FACT_SUBJECTS,
     DIALOGUE_WH_TOPIC_WORDS,
-    EMPTY_MAPPING,
-    KIND_COMMAND,
-    KIND_QUESTION,
     MAX_DIALOGUE_TOPIC_WORDS,
 )
+from engram.constants_language import ARTICLES, KIND_COMMAND, KIND_QUESTION
 from engram.nlp import input_kind, span_is_proper_noun
 
 

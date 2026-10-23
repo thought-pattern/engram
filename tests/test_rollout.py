@@ -3,7 +3,8 @@
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.config import engram_config, rollout_config
-from engram.constants import ResolutionOutcome, RolloutMode
+from engram.constants import RolloutMode
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
 from engram.errors import ConflictError
 from engram.service import EngramCore

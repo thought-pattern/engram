@@ -5,13 +5,11 @@ from json import dumps as json_dumps, loads as json_loads
 
 from pytest import approx as pytest_approx, mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import UNCONSTRAINED_ASSERTION_BASIS
+from engram.constants_graph import PROPOSITION_PROJECTION_FIELDS, UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import (
-    PROPOSITION_PROJECTION_FIELDS,
     MemGraphConnection,
-    PropositionProjectionQuery,
     proposition_projection_from_graph_row,
     proposition_projection_to_dict,
     validate_proposition_projection,
@@ -265,7 +263,7 @@ def test_transport_neutral_structured_projection_boundary_is_bounded(monkeypatch
     client = MemGraphConnection()
     monkeypatch.setattr(client, "structured_proposition_projections", structured_proposition_projections)
     engine.internal_graph_client = client
-    monkeypatch.setattr("engram.core.extract_entities", lambda internal_text: [{"text": "Alan Turing"}])
+    monkeypatch.setattr("engram.graph_recall.extract_entities", lambda internal_text: [{"text": "Alan Turing"}])
 
     result = engine.structured_proposition_projections("Who was Alan Turing?", row_limit=1)
 
@@ -288,7 +286,7 @@ def test_transport_neutral_structured_projection_caps_zero_row_query_attempts(mo
     monkeypatch.setattr(client, "structured_proposition_projections", structured_proposition_projections)
     engine.internal_graph_client = client
     monkeypatch.setattr(
-        "engram.core.extract_entities",
+        "engram.graph_recall.extract_entities",
         lambda internal_text: [{"text": f"entity-{index}"} for index in range(5)],
     )
 

@@ -254,7 +254,6 @@ def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
                 "engram_resolve",
                 "engram_learn_response",
                 "engram_retire_response",
-                "engram_retire_responses",
             ]
             contracts = {tool.name: tool.model_dump() for tool in listed.tools}
             start_schema = contracts.get("engram_start", {}).get("input_schema", {})

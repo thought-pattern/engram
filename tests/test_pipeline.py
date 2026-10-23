@@ -4,7 +4,7 @@ from pytest import raises as pytest_raises
 
 from engram import pipeline
 from engram.config import engram_config
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 
@@ -152,21 +152,24 @@ def test_user_aware_chat_missing_user_uses_default_context() -> None:
     assert "0" in engram.sessions
 
 
-def test_user_aware_chat_context_is_isolated_but_learned_facts_are_shared() -> None:
+def test_user_aware_chat_context_and_learned_facts_are_isolated() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
     alice = pipeline.chat(engram, "Sushi is good.", user_id="Alice")
     carol = pipeline.chat(engram, "What's good?", user_id="Carol")
+    carol_keywords = pipeline.chat(engram, "sushi good", user_id="Carol")
+    alice_again = pipeline.chat(engram, "What's good?", user_id="Alice")
 
     assert alice.get("source", "") == "pattern"
-    assert carol.get("source", "") == "pattern"
-    assert carol.get("response", "") == "Sushi is good."
-    learned_id = engram.pattern_to_statement.get("SUSHI", "")
-    assert learned_id
-    assert engram.get_statement(learned_id).get("introduced_by_user_id", "") == "Alice"
-    assert engram.sessions.get("Alice", {}).get("input_history", []) == ["Sushi is good."]
-    assert engram.sessions.get("Carol", {}).get("input_history", []) == ["What's good?"]
+    assert carol.get("response", "") == "Go on."
+    assert "Sushi" not in carol_keywords.get("response", "")
+    assert all(match.get("introduced_by_user_id", "") != "Alice" for match, _ in carol_keywords.get("matches", []))
+    assert alice_again.get("response", "") == "Sushi is good."
+    learned_ids = engram.pattern_statements.get("SUSHI", [])
+    assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["Alice"]
+    assert engram.sessions.get("Alice", {}).get("input_history", []) == ["What's good?", "Sushi is good."]
+    assert engram.sessions.get("Carol", {}).get("input_history", []) == ["sushi good", "What's good?"]
 
 
 def test_user_aware_chat_user_labels_are_case_sensitive_and_caller_owned() -> None:

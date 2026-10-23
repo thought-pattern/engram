@@ -7,11 +7,12 @@ from re import IGNORECASE as IGNORECASE, UNICODE as UNICODE, compile as re_compi
 from threading import Lock as threading_Lock
 from unicodedata import normalize as unicodedata_normalize
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import sparse_config
 from engram.constants import (
     DEFAULT_STOPWORDS,
 )
+from engram.constants_artifacts import LifecycleState
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes

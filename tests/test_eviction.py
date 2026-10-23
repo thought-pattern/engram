@@ -3,10 +3,11 @@
 from random import Random
 
 from engram.config import engram_config
-from engram.constants import Tier
-from engram.core import Engram, lru_entry
+from engram.constants_artifacts import Tier
+from engram.core import Engram
 from engram.metrics import get_dynamic_count
 from engram.models import record_statement_hit
+from engram.statement_store import lru_entry
 
 """Capacity holds under engine-only usage."""
 
@@ -57,7 +58,7 @@ def test_pattern_cleanup_eviction_removes_pattern_from_matcher() -> None:
     assert engram.pattern_query("first pattern") == ()
     assert engram.pattern_query("second pattern")[2] == "Second response"
     assert len(engram.pattern_matcher) == 1
-    assert "FIRST PATTERN" not in engram.pattern_to_statement
+    assert "FIRST PATTERN" not in engram.pattern_statements
 
 
 def test_pattern_cleanup_shared_pattern_survives_partial_eviction() -> None:
@@ -82,7 +83,7 @@ def test_pattern_cleanup_retire_statement_removes_pattern() -> None:
     assert engram.retire_statement(stmt_id)
 
     assert engram.pattern_query("retire me") == ()
-    assert "RETIRE ME" not in engram.pattern_to_statement
+    assert "RETIRE ME" not in engram.pattern_statements
 
 
 def test_evicting_every_carrier_of_a_shared_pattern_leaves_no_dead_entry() -> None:

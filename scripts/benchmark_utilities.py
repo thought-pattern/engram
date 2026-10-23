@@ -17,7 +17,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
+from engram.constants_resolution import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts
 from scripts.benchmark_metadata import benchmark_source_state
 

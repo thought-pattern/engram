@@ -4,7 +4,9 @@ from json import loads as json_loads
 from pathlib import Path
 
 from engram import pipeline
-from engram.constants import (
+from engram.constants import EARLIEST_UTC
+from engram.constants_artifacts import Tier
+from engram.constants_dialogue import (
     DIALOGUE_ACKNOWLEDGMENT,
     DIALOGUE_CLOSING,
     DIALOGUE_FACT,
@@ -12,8 +14,6 @@ from engram.constants import (
     DIALOGUE_QUESTION,
     DIALOGUE_STATEMENT,
     DIALOGUE_TOPIC_SHIFT,
-    EARLIEST_UTC,
-    Tier,
 )
 from engram.core import Engram
 from engram.dialogue import (

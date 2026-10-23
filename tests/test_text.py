@@ -360,6 +360,7 @@ def test_synonyms_follow_wordnet_order_rather_than_hash_order() -> None:
     synonyms = get_synonyms("happy", 3)
     expected = ["happy"]
     for synset in wordnet.synsets("happy"):
+        assert synset is not None
         for lemma in synset.lemmas():
             name = lemma.name().lower().replace("_", " ")
             if name not in expected:

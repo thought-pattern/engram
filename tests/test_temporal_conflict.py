@@ -2,7 +2,7 @@
 
 from pytest import mark as pytest_mark
 
-from engram.constants import PredicateCardinality, RelationSelectionReason
+from engram.constants_relation import PredicateCardinality, RelationSelectionReason
 from engram.graph import relation_proposition_projection_from_graph_row
 from engram.relation import select_relation_propositions
 from engram.temporal import parse_temporal_query

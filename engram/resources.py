@@ -1,4 +1,4 @@
-"""Deterministic working-memory accounting shared by request-local operations."""
+"""Deterministic working-memory accounting and cooperative checks shared by request-local operations."""
 
 from engram.errors import WorkingMemoryExceededError
 
@@ -36,3 +36,11 @@ def require_working_memory(estimated_bytes: int, maximum_bytes: int) -> None:
     """Raise ``WorkingMemoryExceededError`` before retaining work that exceeds a request's memory estimate."""
     if maximum_bytes and estimated_bytes > maximum_bytes:
         raise WorkingMemoryExceededError("resolution working-memory estimate exceeded")
+
+
+def run_cooperative_check(check=()) -> None:
+    """Run an optional resolver-owned cooperative callback."""
+    if check:
+        if not callable(check):
+            raise ValueError("cooperative_check must be callable")
+        check()

@@ -8,7 +8,7 @@ residency, indexes, or adapters.
 from json import dumps as json_dumps
 from math import isfinite as math_isfinite
 
-from engram.constants import (
+from engram.constants_artifacts import (
     ARTIFACT_PROVENANCE_FIELDS,
     ARTIFACT_STATISTICS_FIELDS,
     CACHED_RESPONSE_ARTIFACT_FIELDS,
@@ -27,7 +27,6 @@ from engram.constants import (
     MAX_METADATA_ITEMS,
     MAX_METADATA_KEY_BYTES,
     MAX_METADATA_STRING_BYTES,
-    MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_SOURCE_LABEL_BYTES,
     MAX_SUPPORT_REFERENCES,
@@ -36,9 +35,9 @@ from engram.constants import (
     LifecycleMutationReason,
     LifecycleOperation,
     LifecycleState,
-    MutationOperation,
     Tier,
 )
+from engram.constants_mutations import MAX_REQUEST_ID_BYTES, MutationOperation
 from engram.errors import IdentityValidationError, InvalidRequestError, LifecycleError
 from engram.identity import (
     query_identity_from_dict,

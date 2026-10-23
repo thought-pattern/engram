@@ -15,9 +15,9 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.sparse import SparseIndex, search_sparse_artifacts, sparse_document_from_artifact, sparse_tokens
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at

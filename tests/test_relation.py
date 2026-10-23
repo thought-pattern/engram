@@ -4,21 +4,14 @@ from datetime import UTC, datetime
 
 from pytest import fail as pytest_fail, raises as pytest_raises
 
-from engram.constants import (
-    PROPOSITION_PROJECTION_FIELDS,
-    RESOLVER_BUDGET_FIELDS,
-    UNCONSTRAINED_ASSERTION_BASIS,
-    CanonicalResolutionStatus,
-    ExpectedObjectType,
-    PropositionProjectionQuery,
-    RelationPlanTemplate,
-    ResolutionOutcome,
-    ResolverState,
-)
+from engram.constants_graph import PROPOSITION_PROJECTION_FIELDS, UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
+from engram.constants_relation import CanonicalResolutionStatus, ExpectedObjectType, RelationPlanTemplate
+from engram.constants_resolution import RESOLVER_BUDGET_FIELDS, ResolutionOutcome, ResolverState
 from engram.contextual import enrich_query_frame
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import MemGraphConnection, proposition_projection, relation_proposition_projection_from_graph_row
+from engram.graph_resolvers import StructuredGraphResolver
 from engram.identity import entity_reference, query_identity, scope_key
 from engram.relation import (
     RelationQuestion,
@@ -29,7 +22,7 @@ from engram.relation import (
 )
 from engram.resolution_budget import capture_resolution_budget
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
-from engram.resolvers import StructuredGraphResolver, validate_resolver_budget
+from engram.resolver_plan import validate_resolver_budget
 from engram.service import EngramCore
 
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)

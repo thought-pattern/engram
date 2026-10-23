@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import TemporalAxis, TemporalQueryOperator
+from engram.constants_relation import TemporalAxis, TemporalQueryOperator
 from engram.contextual import (
     compact_query_frame_from_dict,
     compact_query_frame_from_frame,

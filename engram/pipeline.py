@@ -23,15 +23,9 @@ Usage:
 from math import isfinite as math_isfinite
 
 from engram import sessions as sessions_mod
-from engram.constants import (
-    DEFAULT_PIPELINE_CONTEXT_LIMIT,
-    DEFAULT_PIPELINE_HIGH_CONFIDENCE,
-    DEFAULT_USER_ID,
-    KIND_COMMAND,
-    KIND_QUESTION,
-    MAX_RESPONSE_BYTES,
-    QUESTION_WORDS,
-)
+from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_USER_ID
+from engram.constants_artifacts import MAX_RESPONSE_BYTES
+from engram.constants_language import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
 from engram.nlp import input_kind
 from engram.validation import Characters, require_text
 
@@ -42,6 +36,10 @@ def attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
     Without a session the copy keeps the result's own discourse fields.
     """
     attached = dict(result)
+    unknown = attached.get("unknown", False)
+    if type(unknown) is not bool:
+        raise ValueError("conversation unknown must be a Boolean")
+    attached["unknown"] = unknown
     if not session_id:
         return attached
     with engram.session_lock:
@@ -95,8 +93,8 @@ def respond(
     text: str,
     context_id: str = "",
     llm_fn=(),
-    high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
-    context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
+    high_confidence: object = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    context_limit: object = DEFAULT_PIPELINE_CONTEXT_LIMIT,
     user_id: str = "",
     evaluation_time: str = "",
 ) -> dict:
@@ -126,7 +124,9 @@ def respond(
             answers without the LLM (a finite number from 0.0 to 1.0).
         context_limit: Maximum retrieved statements passed to llm_fn (a
             non-negative integer).
-        user_id: Optional caller-owned identity for learned-fact attribution.
+        user_id: The speaker; empty means the anonymous user "0". Facts the
+            turn teaches belong to the speaker, and no other person's facts
+            answer or reach llm_fn.
         evaluation_time: Optional canonical UTC timestamp used by graph
             recall for this turn.
 
@@ -141,8 +141,12 @@ def respond(
         dialogue_act, active_topic, entities and fact_admissions carry that
         session's latest discourse state ("" / [] without a session).
     """
-    confidence_is_number = isinstance(high_confidence, (int, float)) and not isinstance(high_confidence, bool)
-    if not confidence_is_number or not math_isfinite(high_confidence) or not 0 <= high_confidence <= 1:
+    if (
+        isinstance(high_confidence, bool)
+        or not isinstance(high_confidence, (int, float))
+        or not math_isfinite(high_confidence)
+        or not 0 <= high_confidence <= 1
+    ):
         raise ValueError("high_confidence must be a number between 0 and 1")
     if isinstance(context_limit, bool) or not isinstance(context_limit, int) or context_limit < 0:
         raise ValueError("context_limit must be a non-negative integer")
@@ -161,11 +165,11 @@ def respond(
     if pattern_result:
         stmt, captured, response = pattern_result
 
-    # Graph recall takes precedence for questions and commands, applied once
-    # for the complete turn with the turn's evaluation clock.
+    # Known conversational answers retain their identity and speaker context.
+    # Graph recall may replace an explicitly unknown reply, once per complete turn.
     graph_config = engram.config.get("graph", {})
     graph_enabled = isinstance(graph_config, dict) and bool(graph_config.get("enabled", False))
-    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION}
+    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION} and (not pattern_result or stmt.get("unknown", False))
     graph_response = engram.graph_lookup(text, evaluation_time=evaluation_time) if graph_enabled and graph_eligible else ""
     if graph_response:
         if response:
@@ -195,6 +199,7 @@ def respond(
             source = "pattern" if stmt else "graph"
             tier1 = {
                 "response": response,
+                "unknown": stmt.get("unknown", False),
                 "source": source,
                 "score": 1.0,
                 "matches": [],
@@ -212,8 +217,11 @@ def respond(
 
     # Tier 2: confident conversational statement via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
-    # why why") is no evidence, however perfectly it overlaps something.
-    retrieval = engram.query(text, context_id=context_id, limit=max(context_limit, 1))
+    # why why") is no evidence, however perfectly it overlaps something. Only
+    # shared statements and the speaker's own facts are candidates.
+    retrieval = engram.query(
+        text, context_id=context_id, limit=max(context_limit, 1), owner=sessions_mod.normalize_user_id(user_id)
+    )
     matches = retrieval.get("matches", [])
     keywords = retrieval.get("keywords", [])
     content_keywords = [kw for kw in keywords if kw not in QUESTION_WORDS]
@@ -225,6 +233,7 @@ def respond(
             update_session(engram, context_id, top_text)
             tier2 = {
                 "response": top_text,
+                "unknown": top_stmt.get("template", {}).get("unknown", False),
                 "source": "statement",
                 "score": top_score,
                 "matches": list(matches),
@@ -268,6 +277,7 @@ def respond(
     top_score = matches[0][1] if matches else 0.0
     tier4 = {
         "response": "",
+        "unknown": True,
         "source": "none",
         "score": top_score,
         "matches": list(matches),

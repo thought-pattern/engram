@@ -1155,8 +1155,8 @@ def test_removal_in_place_matches_a_full_rebuild():
             pm.remove_pattern(pattern, that=that, topic=topic)
         if step % 20:
             continue
-        for pm, flags in ((stemming, {"use_stemming": True, "use_lemmatization": True}), (plain, {})):
-            rebuilt = PatternMatcher(**flags)
+        for pm in (stemming, plain):
+            rebuilt = PatternMatcher(use_stemming=pm.internal_use_stemming, use_lemmatization=pm.internal_use_lemmatization)
             for category in pm.internal_patterns:
                 rebuilt.add_pattern(
                     category.get("pattern", ""),

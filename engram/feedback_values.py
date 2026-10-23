@@ -7,13 +7,9 @@ from math import isfinite as math_isfinite
 
 from msgpack import ExtType as msgpack_ExtType, packb as msgpack_packb
 
-from engram.constants import (
-    MAX_CONSTRAINT_ENCODED_BYTES,
-    MAX_ENUM_WIRE_BYTES,
-    MAX_FINGERPRINT_BYTES,
-    MAX_REQUIRED_SOURCE_LABEL_BYTES,
-    MAX_RESOURCE_COUNTER,
-)
+from engram.constants_feedback import MAX_CONSTRAINT_ENCODED_BYTES, MAX_FINGERPRINT_BYTES
+from engram.constants_identity import MAX_ENUM_WIRE_BYTES
+from engram.constants_resolution import MAX_REQUIRED_SOURCE_LABEL_BYTES, MAX_RESOURCE_COUNTER
 from engram.errors import InvalidRequestError
 from engram.validation import require_text, require_utc_datetime
 

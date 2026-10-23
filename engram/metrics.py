@@ -5,7 +5,7 @@ counters, and ``decay_statistics`` ages the hit statistics under the instance's
 own locks.
 """
 
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 
 
 def get_statement_count(engram) -> int:

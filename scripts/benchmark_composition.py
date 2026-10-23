@@ -13,10 +13,11 @@ if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
 from engram.composition import composition_plan, composition_step, execute_composition_plan
-from engram.constants import ExpectedObjectType, GraphCompositionOperator
+from engram.constants_graph import PropositionProjectionQuery
+from engram.constants_relation import ExpectedObjectType, GraphCompositionOperator
 from engram.core import Engram
 from engram.evidence import PropositionEligibilityEvaluator
-from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
+from engram.graph import proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import scope_key
 from engram.resolution_frame import QueryFrameBuilder
 from scripts.benchmark_metadata import benchmark_source_state

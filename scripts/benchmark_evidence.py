@@ -15,7 +15,8 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import CostClass, DisclosureBasis, PropositionOwnership
+from engram.constants_evidence import DisclosureBasis, PropositionOwnership
+from engram.constants_resolution import CostClass, ResolutionOutcome, ResolverState
 from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
 from engram.evidence import (
@@ -26,7 +27,8 @@ from engram.evidence import (
 )
 from engram.identity import scope_key
 from engram.repository import tier_admission_policy
-from engram.resolution import ResolutionOutcome, ResolverState, resolution_result_to_json, resolver_result
+from engram.resolution import resolution_result_to_json, resolver_result
+from engram.resolution_accounting import ResolutionAccountingFinalizer
 from engram.resolution_budget import budget_consumption_to_dict, capture_resolution_budget, resolution_budget
 from engram.resolution_evidence import (
     canonical_proposition_references,
@@ -40,8 +42,10 @@ from engram.resolution_evidence import (
     proposition_validity_inputs,
 )
 from engram.resolution_frame import QueryFrameBuilder
+from engram.resolution_orchestrator import ResolutionOrchestrator
 from engram.resolution_package import build_evidence_package, evidence_package_from_json, evidence_package_to_json
-from engram.resolvers import ResolutionAccountingFinalizer, ResolutionOrchestrator, ResolverExecutor, ResolverRegistry
+from engram.resolver_execution import ResolverExecutor
+from engram.resolver_plan import ResolverRegistry
 from engram.responses import AcceptedResponseService
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 

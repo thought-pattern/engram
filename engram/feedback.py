@@ -3,7 +3,7 @@
 from enum import Enum
 from hashlib import sha256 as hashlib_sha256
 
-from engram.constants import (
+from engram.constants_feedback import (
     EMPTY_FINGERPRINT,
     FEEDBACK_BUCKET_FIELDS,
     FEEDBACK_BUCKET_SECONDS,
@@ -28,7 +28,6 @@ from engram.constants import (
     MAX_FEEDBACK_PRIOR_MASS,
     MAX_FEEDBACK_REASON_BYTES,
     MAX_FEEDBACK_SIGNATURE_BYTES,
-    MAX_NAMESPACE_BYTES,
     MAX_REFERENCE_ID_BYTES,
     MAX_STATEMENT_ID_BYTES,
     POLICY_SUPPRESSION_FIELDS,
@@ -39,6 +38,7 @@ from engram.constants import (
     FeedbackOutcome,
     FeedbackReferenceKind,
 )
+from engram.constants_identity import MAX_NAMESPACE_BYTES
 from engram.copies import structural_copy
 from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError
 from engram.feedback_values import (

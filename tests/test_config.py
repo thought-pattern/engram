@@ -1,8 +1,12 @@
 """Tests for configuration."""
 
-from pytest import mark as pytest_mark, raises as pytest_raises
+from pathlib import Path
 
-from engram.config import config_from_dict, engram_config, graph_config
+from pytest import mark as pytest_mark, raises as pytest_raises
+from yaml import safe_dump as yaml_safe_dump
+
+from engram import config as engram_config_module
+from engram.config import DEFAULT_CONFIG_PATH, config_from_dict, engram_config, graph_config, load_config
 from engram.constants import SessionOverflow
 
 """Tests for configuration."""
@@ -120,8 +124,7 @@ def test_engram_config_custom_stopwords() -> None:
 
 def test_config_from_dict_builds_a_host_mapping() -> None:
     config = config_from_dict(
-        {"session_overflow": "reject", "graph": {"host": "graph.internal", "port": 7687, "enabled": True, "vector_enabled": False}},
-        base_path="",
+        {"session_overflow": "reject", "graph": {"host": "graph.internal", "port": 7687, "enabled": True, "vector_enabled": False}}
     )
 
     graph = config.get("graph", {})
@@ -132,42 +135,105 @@ def test_config_from_dict_builds_a_host_mapping() -> None:
 
 def test_config_from_dict_rejects_an_unknown_graph_key() -> None:
     with pytest_raises(ValueError, match="unknown graph config key"):
-        config_from_dict({"graph": {"host": "graph.internal", "deployment_mode": "tapestry_managed"}}, base_path="")
+        config_from_dict({"graph": {"host": "graph.internal", "deployment_mode": "tapestry_managed"}})
 
 
 @pytest_mark.parametrize("invalid", [[], (), "", 0, False])
 def test_config_from_dict_rejects_non_object_config_and_graph(invalid) -> None:
     with pytest_raises(ValueError, match="config must be an object"):
-        config_from_dict(invalid, base_path="")
+        config_from_dict(invalid)
     with pytest_raises(ValueError, match="graph config"):
-        config_from_dict({"graph": invalid}, base_path="")
+        config_from_dict({"graph": invalid})
 
 
-def test_config_from_dict_starts_from_the_engram_file_and_applies_host_overrides(tmp_path) -> None:
-    seed = tmp_path / "data" / "seed.json"
-    seed.parent.mkdir()
+def write_seed(directory: Path) -> Path:
+    seed = directory / "data" / "seed.json"
+    seed.parent.mkdir(parents=True)
     seed.write_text('{"pairs": [{"pattern": "*", "response": "Ready."}]}', encoding="utf-8")
-    base = tmp_path / "config.yml"
-    base.write_text(
-        "capacity: 42\n"
-        "conversation:\n"
-        "  bot_name: Elias Thorne\n"
-        "  seed_files:\n"
-        "    - data/seed.json\n"
-        "graph:\n"
-        "  host: file-host\n"
-        "  vector_limit: 125\n",
-        encoding="utf-8",
+    return seed
+
+
+def refuse_configuration_file_reads(monkeypatch) -> bool:
+    """Make any read of a YAML configuration file through engram.config fail the test."""
+
+    def refuse(*arguments, **keywords):
+        raise AssertionError("a configuration file was read")
+
+    monkeypatch.setattr(engram_config_module, "read_config_mapping", refuse)
+    monkeypatch.setattr(engram_config_module, "yaml_safe_load", refuse)
+    return True
+
+
+def test_config_from_dict_is_the_whole_configuration_and_reads_no_engram_file(tmp_path, monkeypatch) -> None:
+    # Engram's own file sits in the working directory with other values; a host mapping never reads it.
+    (tmp_path / "config.yml").write_text("capacity: 42\nconversation:\n  bot_name: From File\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    refuse_configuration_file_reads(monkeypatch)
+    host_root = tmp_path / "host"
+    seed = write_seed(host_root)
+
+    config = config_from_dict(
+        {"max_sessions": 7, "conversation": {"bot_name": "Host Persona", "seed_files": ["data/seed.json"]}},
+        base_directory=str(host_root),
     )
 
-    config = config_from_dict({"graph": {"host": "host-override", "enabled": True}}, base_path=str(base))
+    conversation = config.get("conversation", {})
+    assert config.get("capacity", 0) == engram_config().get("capacity", 0)
+    assert config.get("max_sessions", 0) == 7
+    assert conversation.get("bot_name", "") == "Host Persona"
+    assert conversation.get("seed_files", []) == [str(seed)]
+    assert config_from_dict({}) == engram_config()
+
+
+def test_config_from_dict_names_a_missing_conversation_file(tmp_path) -> None:
+    with pytest_raises(ValueError, match="listed in config mapping is missing or is not a file"):
+        config_from_dict({"conversation": {"seed_files": ["data/missing.json"]}}, base_directory=str(tmp_path))
+
+
+def test_load_config_reads_engrams_own_file_for_a_standalone_process(tmp_path) -> None:
+    seed = write_seed(tmp_path)
+    own_file = tmp_path / "config.yml"
+    own_file.write_text(
+        "capacity: 42\nconversation:\n  bot_name: Standalone\n  seed_files:\n    - data/seed.json\n", encoding="utf-8"
+    )
+
+    config = load_config(str(own_file))
 
     conversation = config.get("conversation", {})
-    graph = config.get("graph", {})
     assert config.get("capacity", 0) == 42
-    assert conversation.get("bot_name", "") == "Elias Thorne"
+    assert conversation.get("bot_name", "") == "Standalone"
     assert conversation.get("seed_files", []) == [str(seed)]
-    assert graph.get("host", "") == "host-override"
-    assert graph.get("enabled", False) is True
-    assert graph.get("vector_limit", 0) == 125
-    assert config_from_dict({}, base_path=str(tmp_path / "missing.yml")) == engram_config()
+    assert load_config.__defaults__ == (DEFAULT_CONFIG_PATH,)
+    assert Path(DEFAULT_CONFIG_PATH) == Path(engram_config_module.__file__).resolve().parents[1] / "config.yml"
+
+
+GRAPH_ON = {
+    "host": "graph.internal",
+    "port": 7687,
+    "enabled": True,
+    "vector_enabled": True,
+    "vector_model_path": "/models/minilm",
+}
+
+
+@pytest_mark.parametrize("graph", [{}, {"enabled": False}, GRAPH_ON], ids=["graph-default", "graph-off", "graph-on"])
+def test_both_sources_load_with_the_graph_off_and_on(tmp_path, graph) -> None:
+    own_file = tmp_path / "config.yml"
+    own_file.write_text(yaml_safe_dump({"graph": graph} if graph else {"capacity": 9}), encoding="utf-8")
+
+    from_file = load_config(str(own_file))
+    from_host = config_from_dict({"graph": graph})
+
+    expected_enabled = graph.get("enabled", graph_config().get("enabled", True))
+    assert from_file.get("graph", {}) == from_host.get("graph", {})
+    assert from_host.get("graph", {}).get("enabled", not expected_enabled) is expected_enabled
+    assert from_host.get("graph", {}).get("vector_enabled", False) is graph.get("vector_enabled", False)
+
+
+def test_example_config_leaves_the_graph_at_its_code_default() -> None:
+    example = Path(engram_config_module.__file__).resolve().parents[1] / "config.example.yml"
+
+    config = load_config(str(example))
+
+    assert config.get("graph", {}).get("enabled", True) is graph_config().get("enabled", True)
+    assert config.get("graph", {}).get("enabled", True) is False

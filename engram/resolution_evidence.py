@@ -4,35 +4,39 @@ This owner validates and isolates disclosed evidence. It performs no graph reads
 candidate selection, request execution, or Channel release judgment.
 """
 
-from engram.constants import (
+from engram.constants import EMPTY_MAPPING
+from engram.constants_evidence import (
     CANONICAL_PROPOSITION_REFERENCES_FIELDS,
     DISCLOSURE_DECISION_FIELDS,
-    EMPTY_MAPPING,
-    FEATURE_SET_FIELDS,
-    MAX_COMPOSITION_BINDING_BYTES,
-    MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_DISCLOSURE_AUTHORITY_BYTES,
     MAX_DISCLOSURE_ENUM_BYTES,
-    MAX_ENUM_WIRE_BYTES,
-    MAX_FEATURE_MAGNITUDE,
-    MAX_FEATURE_NAME_BYTES,
-    MAX_FEATURES,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
     MAX_PROPOSITION_TRUST_CATEGORY_BYTES,
-    MAX_REASON_CODE_BYTES,
-    MAX_RESOLVER_NAME_BYTES,
     PROPOSITION_EVIDENCE_PATH_STEP_FIELDS,
     PROPOSITION_EVIDENCE_RECORD_FIELDS,
     PROPOSITION_PATH_FILTERS,
     PROPOSITION_TRUST_INPUTS_FIELDS,
     PROPOSITION_VALIDITY_INPUTS_FIELDS,
     DisclosureBasis,
-    GraphCompositionOperator,
     PropositionOwnership,
+)
+from engram.constants_identity import MAX_ENUM_WIRE_BYTES
+from engram.constants_relation import (
+    MAX_COMPOSITION_BINDING_BYTES,
+    MAX_COMPOSITION_PATH_PROPOSITIONS,
+    GraphCompositionOperator,
     TemporalAxis,
     TemporalQueryOperator,
+)
+from engram.constants_resolution import (
+    FEATURE_SET_FIELDS,
+    MAX_FEATURE_MAGNITUDE,
+    MAX_FEATURE_NAME_BYTES,
+    MAX_FEATURES,
+    MAX_REASON_CODE_BYTES,
+    MAX_RESOLVER_NAME_BYTES,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import scope_key_from_dict, validate_scope_key

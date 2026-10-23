@@ -5,16 +5,11 @@ from datetime import UTC, datetime
 
 from pytest import approx as pytest_approx, raises as pytest_raises
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import (
-    INITIAL_ARTIFACT_STATISTICS,
-    FeedbackObservationKind,
-    FeedbackOutcome,
-    FeedbackReferenceKind,
-    LifecycleHandoffStatus,
-    Tier,
-)
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind, LifecycleHandoffStatus
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
 from engram.errors import ConflictError, InvalidRequestError
 from engram.feedback import (
@@ -31,7 +26,6 @@ from engram.identity import extract_standalone_identity, retrieval_representatio
 from engram.mutations import mutation_receipt_to_dict
 from engram.negative_resolution import NegativeResolutionStore, validate_negative_resolution_key
 from engram.repository import ArtifactRepository
-from engram.resolution import ResolutionOutcome
 from engram.resolution_budget import resolution_budget
 from engram.service import EngramCore
 

@@ -3,7 +3,7 @@
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 
-from engram.constants import (
+from engram.constants_resolution import (
     MAX_FROZEN_JSON_KEY_BYTES,
     MAX_JSON_BYTES,
     MAX_JSON_DEPTH,

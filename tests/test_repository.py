@@ -5,14 +5,8 @@ from threading import Barrier as threading_Barrier, Thread as threading_Thread
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import validate_cached_response_artifact
-from engram.constants import (
-    INITIAL_ARTIFACT_STATISTICS,
-    AdmissionOutcome,
-    ExactLookupOutcome,
-    LifecycleState,
-    RepositoryRemovalReason,
-    Tier,
-)
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, AdmissionOutcome, LifecycleState, RepositoryRemovalReason, Tier
+from engram.constants_identity import ExactLookupOutcome
 from engram.eligibility import contextual_exact_lookup, eligibility_context
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key, scoped_retrieval_key_from_text

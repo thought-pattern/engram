@@ -6,15 +6,12 @@ from heapq import nsmallest as heapq_nsmallest
 from threading import RLock as threading_RLock
 
 from engram.artifacts import lifecycle_after_capacity_eviction, validate_cached_response_artifact
-from engram.constants import (
+from engram.constants_artifacts import AdmissionOutcome, LifecycleState, RepositoryRemovalReason, Tier
+from engram.constants_mutations import (
     MAX_PLANNED_CANDIDATES,
     MAX_REPOSITORY_ARTIFACTS,
     REPOSITORY_STATE_FIELDS,
     TIER_ADMISSION_POLICY_FIELDS,
-    AdmissionOutcome,
-    LifecycleState,
-    RepositoryRemovalReason,
-    Tier,
 )
 from engram.copies import structural_copy
 from engram.eligibility import contextual_exact_lookup

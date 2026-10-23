@@ -52,7 +52,7 @@
     { "pattern": "ARE YOU HUMAN", "response": "No. I'm {bot:name}." },
     { "pattern": "ARE YOU REAL", "response": "I'm a real program. I'm not a person." },
     { "pattern": "ARE YOU ALIVE", "response": "Not the way you are. I'm here, though." },
-    { "pattern": "ARE YOU *", "response": "I'm not sure. What makes you ask?" },
+    { "pattern": "ARE YOU *", "response": "I'm not sure. What makes you ask?", "template": { "unknown": true, "text": "I'm not sure. What makes you ask?" } },
     { "pattern": "HOW OLD ARE YOU", "response": "I don't really have an age." },
     { "pattern": "WHERE ARE YOU FROM", "response": "I don't have a hometown. I'm just here." },
     { "pattern": "WHO MADE YOU", "response": "People built me. I go by {bot:name}." },
@@ -167,7 +167,7 @@
         "condition": {
           "name": "username",
           "branches": [
-            { "value": "", "then": { "text": "I don't think you've told me. What should I call you?" } },
+            { "value": "", "then": { "unknown": true, "text": "I don't think you've told me. What should I call you?" } },
             { "then": { "text": "You're {get:username}." } }
           ]
         }
@@ -261,6 +261,7 @@
       "pattern": "WHAT IS *",
       "response": "I don't know that offhand.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I don't know {clause:{star1}} offhand. What have you heard?" },
           { "text": "{clause:{star1}}. What comes to mind for you?" },
@@ -272,6 +273,7 @@
       "pattern": "WHO IS *",
       "response": "I'm not sure.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I'm not sure who {clause:{star1}} is. Do you know?" },
           { "text": "Tell me what you know about {clause:{star1}}." },
@@ -283,6 +285,7 @@
       "pattern": "WHERE IS *",
       "response": "I don't know where.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I don't know where {star1} is. Any idea?" },
           { "text": "Have you already looked for {star1}?" },
@@ -294,6 +297,7 @@
       "pattern": "WHEN IS *",
       "response": "I'm not sure when.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I'm not sure when {star1} is. Do you have a date in mind?" },
           { "text": "What time are you thinking?" },
@@ -305,6 +309,7 @@
       "pattern": "WHY IS *",
       "response": "I don't know why.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I don't know why. What do you think?" },
           { "text": "What's your theory?" },
@@ -316,6 +321,7 @@
       "pattern": "HOW IS *",
       "response": "I'm not sure.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I'm not sure how {star1} is. How does it seem to you?" },
           { "text": "What's your sense of it?" },
@@ -327,6 +333,7 @@
       "pattern": "HOW DO I *",
       "response": "I can't walk you through every step.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I can't walk you through {star1} step by step. Where are you stuck?" },
           { "text": "What have you already tried with {star1}?" }
@@ -336,12 +343,12 @@
     {
       "pattern": "HOW DO YOU *",
       "response": "I'm not sure how I would.",
-      "template": { "text": "I'm not sure how I would {star1}. How would you?" }
+      "template": { "unknown": true, "text": "I'm not sure how I would {star1}. How would you?" }
     },
     {
       "pattern": "HOW DOES *",
       "response": "I'm not sure how that works.",
-      "template": { "text": "I'm not sure how {star1} works. Which part are you looking at?" }
+      "template": { "unknown": true, "text": "I'm not sure how {star1} works. Which part are you looking at?" }
     },
     {
       "pattern": "THIS IS *",
@@ -649,7 +656,7 @@
     {
       "pattern": "TELL ME SOMETHING *",
       "response": "I don't have a stock line for that.",
-      "template": { "text": "I don't have a stock line about {star1}. What do you want to know?" }
+      "template": { "unknown": true, "text": "I don't have a stock line about {star1}. What do you want to know?" }
     },
     {
       "pattern": "SING ME A SONG",
@@ -844,6 +851,7 @@
       "pattern": "DO YOU *",
       "response": "I'm not sure.",
       "template": {
+        "unknown": true,
         "random": [
           { "text": "I'm not sure I do. What do you mean?" },
           { "text": "That's a real question. I might not. Tell me more." }
@@ -853,7 +861,7 @@
     {
       "pattern": "TELL ME *",
       "response": "I might not have that.",
-      "template": { "text": "I might not have that. What part of it matters to you?" }
+      "template": { "unknown": true, "text": "I might not have that. What part of it matters to you?" }
     },
 
     { "pattern": "WASSUP", "response": "Not much. You?" },
@@ -991,7 +999,7 @@
         "condition": {
           "name": "location",
           "exists": { "text": "You said {get:location}." },
-          "missing": { "text": "You haven't told me." }
+          "missing": { "unknown": true, "text": "You haven't told me." }
         }
       }
     },
@@ -1009,6 +1017,7 @@
                 {
                   "value": "question",
                   "then": {
+                    "unknown": true,
                     "random": [
                       { "text": "I don't know that one." },
                       { "text": "I'm not sure. What do you think?" },

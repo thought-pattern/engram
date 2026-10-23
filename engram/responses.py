@@ -4,23 +4,25 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
 from engram.artifacts import (
-    LifecycleOperation,
-    LifecycleState,
     cached_response_artifact_from_dict,
     cached_response_artifact_to_dict,
     require_lifecycle_transition,
     validate_artifact_provenance,
     validate_cached_response_artifact,
 )
-from engram.constants import (
+from engram.constants_artifacts import (
     INITIAL_ARTIFACT_STATISTICS,
     LIFECYCLE_AUDIT_KEY,
     MAX_ARTIFACT_ID_BYTES,
     MAX_CALLER_ID_BYTES,
     MAX_LIFECYCLE_AUDIT_DETAIL_BYTES,
+    AdmissionOutcome,
     LifecycleMutationReason,
+    LifecycleOperation,
+    LifecycleState,
     Tier,
 )
+from engram.constants_mutations import MutationOperation, MutationResultCode, ReceiptCompletionState, ReceiptLookupOutcome
 from engram.coordination import AtomicMutationCoordinator, validate_mutation_execution_result
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import (
@@ -31,10 +33,6 @@ from engram.identity import (
     scope_key,
 )
 from engram.mutations import (
-    MutationOperation,
-    MutationResultCode,
-    ReceiptCompletionState,
-    ReceiptLookupOutcome,
     artifact_generation_change,
     canonical_payload_signature,
     mutation_receipt,
@@ -43,7 +41,7 @@ from engram.mutations import (
     receipt_lookup_receipt,
     validate_mutation_receipt,
 )
-from engram.repository import AdmissionOutcome, repository_state_with_artifact_updates, validate_tier_admission_policy
+from engram.repository import repository_state_with_artifact_updates, validate_tier_admission_policy
 from engram.support import validate_support_reference
 from engram.validation import require_text
 

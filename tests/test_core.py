@@ -6,7 +6,8 @@ from pytest import raises as pytest_raises
 
 from engram import metrics, pipeline, sessions
 from engram.config import engram_config
-from engram.constants import SessionOverflow, Tier
+from engram.constants import SessionOverflow
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
@@ -861,11 +862,12 @@ def test_engram_redirect_reaches_a_learned_fact_alias() -> None:
     pipeline.chat(engram, "Sushi is good.", user_id="Robin")
     engram.store("", pattern="WHAT TASTES GOOD", template={"redirect": "what is good"})
 
-    assert engram.pattern_query("What is good?")[2] == "Sushi is good."
-    result = engram.pattern_query("What tastes good?")
+    assert engram.pattern_query("What is good?", user_id="Robin")[2] == "Sushi is good."
+    result = engram.pattern_query("What tastes good?", user_id="Robin")
 
     assert result
     assert result[2] == "Sushi is good."
+    assert engram.pattern_query("What tastes good?", user_id="Alex")[2] == "Go on."
 
 
 def test_engram_context_matching_set_topic_applies_to_the_next_sentence() -> None:
@@ -1367,7 +1369,7 @@ def test_soak_regressions_learned_facts_keep_the_category() -> None:
     assert len(learned) == 12
 
 
-def test_soak_regressions_user_assertions_enter_shared_knowledge() -> None:
+def test_user_assertions_answer_only_their_speaker() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
@@ -1375,14 +1377,12 @@ def test_soak_regressions_user_assertions_enter_shared_knowledge() -> None:
         "The support code is 9999.",
         user_id="user-a",
     )
-    result = engram.pattern_query(
-        "What is the support code?",
-        user_id="user-b",
-    )
 
-    assert result[2] == "The support code is 9999."
-    learned_id = engram.pattern_to_statement.get("SUPPORT CODE", "")
-    assert engram.get_statement(learned_id).get("introduced_by_user_id", "") == "user-a"
+    assert engram.pattern_query("What is the support code?", user_id="user-b")[2] == "Go on."
+    assert engram.pattern_query("What is the support code?")[2] == "Go on."
+    assert engram.pattern_query("What is the support code?", user_id="user-a")[2] == "The support code is 9999."
+    learned_ids = engram.pattern_statements.get("SUPPORT CODE", [])
+    assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["user-a"]
 
 
 """Research facts enter shared knowledge without entering a user context."""
@@ -1411,11 +1411,11 @@ def test_external_fact_ingestion_fact_aliases_remain_until_retirement() -> None:
     stmt_id = engram.add_fact("Tokyo is the capital of Japan")
 
     assert engram.pattern_query("What is Tokyo?")[2] == "Tokyo is the capital of Japan."
-    assert engram.pattern_to_statement.get("WHAT IS TOKYO", "") == stmt_id
+    assert engram.pattern_statements.get("WHAT IS TOKYO", []) == [stmt_id]
 
     engram.retire_statement(stmt_id)
     assert engram.pattern_query("What is Tokyo?") == ()
-    assert "WHAT IS TOKYO" not in engram.pattern_to_statement
+    assert "WHAT IS TOKYO" not in engram.pattern_statements
 
 
 def test_external_fact_ingestion_add_fact_retains_unstructured_text() -> None:

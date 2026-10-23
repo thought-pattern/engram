@@ -12,9 +12,11 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import UNCONSTRAINED_ASSERTION_BASIS, ExpectedObjectType, ResolutionOutcome
+from engram.constants_graph import UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
-from engram.graph import PropositionProjectionQuery, proposition_projection, relation_proposition_projection_from_graph_row
+from engram.graph import proposition_projection, relation_proposition_projection_from_graph_row
 from engram.identity import normalize_retrieval_key
 from engram.service import EngramCore
 from engram.spacy_setup import SPACY_PIPELINES

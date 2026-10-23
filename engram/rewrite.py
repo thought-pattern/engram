@@ -15,12 +15,13 @@ from re import (
 from time import perf_counter_ns as time_perf_counter_ns
 from unicodedata import normalize as unicodedata_normalize
 
-from engram.constants import (
+from engram.constants_artifacts import MAX_TIMESTAMP_BYTES
+from engram.constants_identity import MAX_ENUM_WIRE_BYTES, QueryOperator
+from engram.constants_resolution import MAX_TRACE_STEPS
+from engram.constants_rewrite import (
     DEFAULT_REWRITE_MAX_DEPTH,
     DEFAULT_REWRITE_MAX_ELAPSED_NS,
     DEFAULT_REWRITE_MAX_EXPANSIONS,
-    MAX_ENUM_WIRE_BYTES,
-    MAX_REQUEST_BYTES,
     MAX_REWRITE_APPLICATIONS_PER_RULE,
     MAX_REWRITE_CATEGORY_BYTES,
     MAX_REWRITE_CORPUS_ID_BYTES,
@@ -32,18 +33,16 @@ from engram.constants import (
     MAX_REWRITE_RULE_ID_BYTES,
     MAX_REWRITE_RULE_TOKENS,
     MAX_REWRITE_RULES,
-    MAX_TIMESTAMP_BYTES,
-    MAX_TRACE_STEPS,
     REWRITE_CORPUS_FIELDS,
     REWRITE_INPUT_FIELDS,
     REWRITE_PROVENANCE_FIELDS,
     REWRITE_RULE_FIELDS,
     REWRITE_SAFE_TEMPLATE_FIELDS,
-    QueryOperator,
     RewriteMatchMode,
     RewriteScope,
     RewriteStopReason,
 )
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.errors import InvalidRequestError
 from engram.resolution_frame import query_frame_with_changes, rewrite_trace_step, validate_query_frame
 from engram.validation import require_any_text

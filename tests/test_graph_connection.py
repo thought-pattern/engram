@@ -8,7 +8,8 @@ from unittest.mock import patch
 from pytest import fixture, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
-from engram.constants import EARLIEST_UTC, EMPTY_CONFIG, GRAPH_TIMEOUT_SECONDS
+from engram.constants import EARLIEST_UTC, EMPTY_CONFIG
+from engram.constants_graph import GRAPH_TIMEOUT_SECONDS
 from engram.core import Engram
 from engram.graph import MemGraphConnection
 from engram.service import EngramCore

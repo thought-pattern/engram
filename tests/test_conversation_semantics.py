@@ -2,7 +2,10 @@
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import MAX_FACT_SENTENCE_WORDS, MAX_PATTERN_WORDS, MAX_REQUEST_BYTES, TemporalQueryOperator, Tier
+from engram.constants_artifacts import Tier
+from engram.constants_language import MAX_FACT_SENTENCE_WORDS, MAX_PATTERN_WORDS
+from engram.constants_relation import TemporalQueryOperator
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.conversation import ConversationRuntime
 from engram.core import Engram
 from engram.errors import InvalidRequestError
@@ -51,6 +54,57 @@ def test_teaching_never_replaces_a_seed_answer() -> None:
     engram.pattern_query("Learn that zorblax is blue")
 
     assert engram.pattern_query("zorblax")[2] == "A seed answer."
+
+
+def test_teaching_belongs_to_its_speaker() -> None:
+    engram = Engram()
+    engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
+
+    engram.pattern_query("Learn that zorblax is blue", user_id="Alice")
+    engram.pattern_query("Learn that zorblax is green", user_id="Carol")
+
+    assert engram.pattern_query("zorblax", user_id="Alice")[2] == "Blue"
+    assert engram.pattern_query("zorblax", user_id="Carol")[2] == "Green"
+    assert engram.pattern_query("zorblax", user_id="Dana")[2] == "Go on."
+
+
+def test_restating_a_fact_replaces_only_the_speakers_own() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+    engram.pattern_query("The sky is blue.", user_id="Alice")
+    engram.pattern_query("The sky is green.", user_id="Carol")
+    engram.pattern_query("The sky is grey.", user_id="Carol")
+
+    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "The sky is blue."
+    assert engram.pattern_query("What is the sky?", user_id="Carol")[2] == "The sky is grey."
+    assert sorted(learned_texts(engram, "SKY")) == ["The sky is blue.", "The sky is grey."]
+
+
+def test_a_persons_matcher_goes_with_their_last_fact() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+
+    engram.pattern_query("The sky is blue.", user_id="Alice")
+    assert "Alice" in engram.person_matchers
+
+    assert engram.forget_person_facts("Alice") == 1
+    assert "Alice" not in engram.person_matchers
+    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "Go on."
+
+
+def test_anonymous_facts_end_with_the_anonymous_conversation() -> None:
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    engram.pattern_query("The sky is green.", user_id="Alice")
+    first = ConversationRuntime(engram)
+
+    first.send("The sky is blue.")
+    assert first.send("What is the sky?").get("response", "") == "The sky is blue."
+    ConversationRuntime(engram)
+
+    assert engram.pattern_query("What is the sky?")[2] == "Go on."
+    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "The sky is green."
 
 
 def test_a_learned_fact_never_replaces_a_hand_stored_statement() -> None:
@@ -103,7 +157,7 @@ def test_a_sentence_too_long_to_be_a_fact_is_not_read_for_facts(monkeypatch) -> 
     def no_extraction(sentence: str) -> dict:
         raise AssertionError("a long sentence was read for facts")
 
-    monkeypatch.setattr("engram.core.extract_fact", no_extraction)
+    monkeypatch.setattr("engram.pattern_query.extract_fact", no_extraction)
     engram = Engram()
     engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
     long_sentence = " ".join(f"w{index}" for index in range(MAX_FACT_SENTENCE_WORDS)) + " is purple."

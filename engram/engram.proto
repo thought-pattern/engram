@@ -23,7 +23,6 @@ service EngramService {
   rpc Resolve(ResolveRequest) returns (google.protobuf.Struct);
   rpc LearnResponse(LearnResponseRequest) returns (google.protobuf.Struct);
   rpc RetireResponse(RetireResponseRequest) returns (google.protobuf.Struct);
-  rpc RetireResponses(RetireResponsesRequest) returns (google.protobuf.Struct);
   rpc ResponsesBySupport(ResponsesBySupportRequest) returns (google.protobuf.Struct);
   // Trusted administrative barrier; no user/session label authorizes removal.
   rpc MaintainEngagement(google.protobuf.Struct) returns (google.protobuf.Struct);
@@ -118,10 +117,6 @@ message RetireResponseRequest {
   string request_id = 3;
 }
 
-message RetireResponsesRequest {
-  repeated RetireResponseRequest entries = 1;
-}
-
 message ResponsesBySupportRequest {
   repeated string record_ids = 1;
 }
@@ -141,8 +136,6 @@ message ResolveEvidenceRequest {
 }
 
 message EvidencePackage {
-  reserved 1;
-  reserved "wire_version";
   repeated google.protobuf.Struct records = 2;
   uint32 retained_count = 3;
   uint32 omitted_count = 4;
@@ -151,8 +144,6 @@ message EvidencePackage {
 }
 
 message ResolutionResult {
-  reserved 1;
-  reserved "schema_version";
   string outcome = 2;
   google.protobuf.Struct selected_candidate = 3;
   bool selected_candidate_available = 4;

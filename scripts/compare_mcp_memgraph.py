@@ -17,7 +17,8 @@ if str(REPOSITORY) not in sys_path:
 from mcp.client import Client
 
 from engram.config import load_config
-from engram.constants import ExpectedObjectType, ResolutionOutcome, ResolverState
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import ResolutionOutcome, ResolverState
 from engram.core import Engram
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from engram.service import EngramCore

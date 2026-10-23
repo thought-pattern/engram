@@ -7,7 +7,7 @@ from threading import Event
 
 from pytest import mark, raises
 
-from engram.constants import CoreState
+from engram.constants_service import CoreState
 from engram.coordination import MutationCoordinationError
 from engram.core import Engram
 from engram.errors import InvalidRequestError, LifecycleError

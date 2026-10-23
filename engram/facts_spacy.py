@@ -18,7 +18,7 @@ preposition; action verbs use the verb lemma so relations are normalized.
 
 from spacy.tokens import Token
 
-from engram.constants import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
+from engram.constants_language import ARTICLES, COMMAND_WORDS, OBJECT_DEPS, PRONOUNS, QUESTION_WORDS, SUBJECT_DEPS
 from engram.spacy_setup import SPACY_PIPELINES
 
 

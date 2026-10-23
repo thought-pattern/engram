@@ -8,7 +8,7 @@ the statement index is consistent, and the metrics counters saw every event.
 from threading import Thread as threading_Thread
 
 from engram import pipeline, sessions
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.nlp import extract_fact
 
@@ -159,14 +159,14 @@ def test_learn_template_takes_the_mutation_lock_before_the_statement_lock() -> N
     assert engram.pattern_query("zorp")[2].lower() == "hello"
 
 
-def test_concurrent_speakers_store_one_copy_of_the_same_fact() -> None:
+def test_concurrent_turns_store_one_copy_of_the_same_fact() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     errors: list[Exception] = []
 
     def worker(n: int) -> None:
         try:
-            pipeline.chat(engram, "Sushi is good.", user_id=f"user-{n}")
+            pipeline.chat(engram, "Sushi is good.", user_id="Robin")
         except Exception as err:
             errors.append(err)
 
@@ -180,4 +180,4 @@ def test_concurrent_speakers_store_one_copy_of_the_same_fact() -> None:
     assert all("tier" in statement for statement in engram.statements)
     learned = [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
     assert len(learned) == 1
-    assert engram.pattern_query("What's good?")[2] == "Sushi is good."
+    assert engram.pattern_query("What's good?", user_id="Robin")[2] == "Sushi is good."

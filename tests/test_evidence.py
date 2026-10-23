@@ -4,10 +4,14 @@ from json import dumps as json_dumps
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import DisclosureBasis, EvidencePackageTruncationReason, PropositionOwnership
+from engram.constants_evidence import (
+    DisclosureBasis,
+    EvidencePackageTruncationReason,
+    EvidenceUsefulnessReason,
+    PropositionOwnership,
+)
 from engram.errors import InvalidRequestError
 from engram.evidence import (
-    EvidenceUsefulnessReason,
     canonicalize_proposition_evidence,
     evaluate_evidence_usefulness,
     evidence_usefulness_decision,

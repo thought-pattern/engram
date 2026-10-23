@@ -3,31 +3,24 @@
 from datetime import datetime, timedelta
 
 from engram.artifacts import lifecycle_base_eligibility, validate_cached_response_artifact
-from engram.constants import (
+from engram.constants_artifacts import LifecycleDecisionReason, LifecycleState
+from engram.constants_evidence import LIFECYCLE_EXCLUSION_REASONS, EligibilityExclusionReason
+from engram.constants_identity import (
     ELIGIBILITY_CONTEXT_FIELDS,
     ELIGIBILITY_DECISION_FIELDS,
     EXACT_LOOKUP_RESULT_FIELDS,
-    LIFECYCLE_EXCLUSION_REASONS,
     MAX_ELIGIBILITY_CONTEXT_SIGNATURE_BYTES,
     MAX_ELIGIBILITY_STATEMENT_ID_BYTES,
     MAX_EXACT_LOOKUP_OWNERS,
     MAX_EXACT_LOOKUP_PROVENANCE_BYTES,
     MAX_EXACT_LOOKUP_REPRESENTATION_BYTES,
     MAX_EXACT_LOOKUP_STATEMENT_ID_BYTES,
-    EligibilityExclusionReason,
+    MAX_NAMESPACE_BYTES,
     ExactLookupOutcome,
-    LifecycleDecisionReason,
-    LifecycleState,
     RetrievalOrigin,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
-from engram.identity import (
-    MAX_NAMESPACE_BYTES,
-    retrieval_representation_bindings,
-    scope_key,
-    validate_scope_key,
-    validate_scoped_retrieval_key,
-)
+from engram.identity import retrieval_representation_bindings, scope_key, validate_scope_key, validate_scoped_retrieval_key
 from engram.validation import require_available_utc_timestamp, require_bool, require_text, utc_datetime
 
 

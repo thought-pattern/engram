@@ -20,7 +20,7 @@ if str(REPOSITORY) not in sys_path:
 
 from mcp.client import Client
 
-from engram.constants import (
+from engram.constants_service import (
     MCP_CONFORMANCE_MESSAGES,
     MCP_CONFORMANCE_MINIMUM_TURNS,
     MCP_TURN_EVALUATION_CHECKS,

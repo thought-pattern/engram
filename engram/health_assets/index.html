@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tapestry · Engram health</title>
+  <link rel="stylesheet" href="/health.css"><script type="module" src="/health.js"></script>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">TAPESTRY / ENGRAM</p><h1>Engram health</h1><p class="subtle">Engram's gRPC calls, its status and its components; each call is one operation.</p></div><div id="connection" class="status">Connecting</div></header>
+    <p id="scope" class="subtle">Waiting for the first observation.</p><p id="notice" class="notice" hidden></p>
+    <div id="standard-summary"></div>
+    <section class="tables">
+      <article class="panel"><h2>Engram</h2><dl id="engram-facts"></dl></article>
+      <article class="panel"><h2>Components</h2><div class="table-scroll"><table><thead><tr><th>Component</th><th>Enabled</th><th>Ready</th><th>Note</th></tr></thead><tbody id="component-rows"></tbody></table></div></article>
+    </section>
+    <section class="tables">
+      <article class="panel"><h2>Recall and resolution</h2><dl id="recall-facts"></dl></article>
+      <article class="panel"><h2>Resolvers</h2><div class="table-scroll"><table><thead><tr><th>Resolver</th><th>Invocations</th><th>States</th><th>Selected</th></tr></thead><tbody id="resolver-rows"></tbody></table></div></article>
+    </section>
+    <div id="standard-detail"></div>
+    <footer>Read-only observation of this process only · no conversation text, user names or IDs, facts or controls <span id="observed"></span></footer>
+  </main>
+</body>
+</html>

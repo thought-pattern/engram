@@ -5,11 +5,6 @@ from json import loads as json_loads
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import (
-    MAX_METADATA_DEPTH,
-    TERMINAL_LIFECYCLE_STATES,
-    LifecycleDecisionReason,
-    LifecycleOperation,
-    LifecycleState,
     artifact_provenance_from_dict,
     artifact_provenance_to_dict,
     artifact_statistics_from_dict,
@@ -25,6 +20,13 @@ from engram.artifacts import (
     validate_cached_response_artifact,
     validate_lifecycle_base_decision,
     validate_lifecycle_transition_decision,
+)
+from engram.constants_artifacts import (
+    MAX_METADATA_DEPTH,
+    TERMINAL_LIFECYCLE_STATES,
+    LifecycleDecisionReason,
+    LifecycleOperation,
+    LifecycleState,
 )
 from engram.errors import InvalidRequestError, LifecycleError
 from engram.identity import extract_standalone_identity, scope_key

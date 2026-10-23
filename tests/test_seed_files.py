@@ -10,8 +10,9 @@ from pathlib import Path
 from pytest import raises as pytest_raises
 
 from engram.config import conversation_config, engram_config, load_config
-from engram.core import Engram, load_seed_files
+from engram.core import Engram
 from engram.pattern import normalize_pattern
+from engram.startup_data import load_seed_files
 
 
 def write_seed(path: Path, pairs: list) -> str:

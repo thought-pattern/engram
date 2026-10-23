@@ -13,16 +13,19 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, CostClass, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_resolution import CostClass, ResolverState
 from engram.core import Engram
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import ResolverState, resolver_result, resolver_result_from_json, resolver_result_to_json
+from engram.resolution import resolver_result, resolver_result_from_json, resolver_result_to_json
 from engram.resolution_budget import budget_consumption
 from engram.resolution_frame import QueryFrameBuilder
-from engram.resolvers import ExactResolver, ResolverExecutor, ResolverRegistry, SparseResolver, resolver_budget
+from engram.resolver_execution import ResolverExecutor
+from engram.resolver_plan import ResolverRegistry, resolver_budget
+from engram.resolvers import ExactResolver, SparseResolver
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/artifacts/section4-benchmark.json")

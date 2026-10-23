@@ -9,7 +9,7 @@ punctuation -- templates author their own punctuation, and anything beyond
 casing risks rewriting content.
 """
 
-from engram.constants import STANDALONE_I_FORMS
+from engram.constants_language import STANDALONE_I_FORMS
 from engram.substitutions import apply_substitutions, split_sentences
 
 

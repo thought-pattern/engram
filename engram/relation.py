@@ -4,13 +4,12 @@ from math import isfinite as math_isfinite
 
 from spacy.tokens import Doc
 
-from engram.constants import (
+from engram.constants_relation import (
     CANONICAL_RESOLUTION_FIELDS,
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_LABEL_BYTES,
     MAX_RELATION_PLAN_ROWS,
     MAX_RELATION_SURFACES,
-    MAX_REQUEST_BYTES,
     CanonicalResolutionStatus,
     ExpectedObjectType,
     PredicateCardinality,
@@ -19,6 +18,7 @@ from engram.constants import (
     TemporalAxis,
     TemporalQueryOperator,
 )
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.errors import InvalidRequestError
 from engram.graph import validate_relation_proposition_projection
 from engram.identity import normalize_retrieval_key

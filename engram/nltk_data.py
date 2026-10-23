@@ -26,7 +26,7 @@ from nltk import data as nltk_data, download as nltk_download
 from nltk.corpus import wordnet, words
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-from engram.constants import REQUIRED_PACKAGES
+from engram.constants_language import REQUIRED_PACKAGES
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 

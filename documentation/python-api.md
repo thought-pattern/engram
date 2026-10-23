@@ -49,6 +49,10 @@ discards tokens, activity, cached resolutions, retry accounting, negative result
 and proposal state. A core that built its own `Engram` also clears its sessions;
 the named sessions of a supplied `Engram` remain its caller's.
 
+## Clock and graph encoder boundaries
+
+`Engram` accepts an injected callable clock. Its `clock()` method validates that each result is an aware UTC datetime before timestamp consumers use it. The configured graph encoder is an optional capability: encoding requires a callable `encode` operation whose NumPy result contains one row, then checks that row against the configured vector dimension. Invalid clock results and malformed or absent encoders fail at their owning boundary. Matcher tables and conversational confidence/context limits retain their existing shape, type and finite-value validation before work begins.
+
 ## Process lifetime and static startup data
 
 Each new process loads only the STATIC data provided for that startup. Structured
@@ -66,7 +70,7 @@ counters are not copied or recovered.
 
 `engram.phrasing.phrase_fact` and `phrase_facts` render canonical triples for
 recall without changing their identity. The idiomatic frames come from the
-packaged `engram/data/fact-phrasing.toml` resource through `engram.constants`.
+packaged `engram/data/fact-phrasing.toml` resource through `engram.constants_language`.
 There is one inventory, also read as data by Tapestry's independent Research
 process. Engram does not import Tapestry. Startup validates the resource's
 bounded mapping and strictly bare subject/object placeholders; missing or
@@ -182,24 +186,6 @@ explicit replacement, while `retire_response` removes an artifact established as
 globally stale. Generated conversational or pipeline responses are not admitted by
 any implicit learning hook.
 
-### Ordered retirement
-
-`retire_responses(entries)` accepts one native list of one through ten mappings,
-each containing exactly `statement_id`, `reason`, and `request_id`. Fields must
-be nonblank strings within 256, 512, and 256 UTF-8 bytes respectively. The core
-validates the entire list before cleanup or mutation, then processes entries in
-order under its service lock using the existing scalar retirement owner.
-
-The result contains exactly `results`, an ordered list of envelopes containing
-the three original request fields plus `response`, `error_code`, and `error`.
-Successful `response` values retain `retired`, the three request fields,
-`idempotent`, and `generation`, with empty error strings. Expected failures
-carry `response={}` and fixed `not_found`, `conflict`, `invalid_request`, or
-`lifecycle_unavailable` diagnostics; later entries still run. Unexpected failures
-propagate. Earlier successful mutations are not rolled back, and retry uses the
-same per-entry request IDs and scalar replay state. No batch replay record is
-created. Python, gRPC and MCP use this same core operation.
-
 ## Operational telemetry
 
 `EngramCore.operational_telemetry()` returns the fixed-cardinality process
@@ -215,8 +201,15 @@ consultation/hit/miss/failure counters through fixed aggregate keys.
   malformed boundary values, and the shared core's restart and close lifecycle.
 - `tests/test_resolution_contracts.py` covers deterministic codecs, exact
   fields, schema rejection, concrete absence, and outcome invariants.
-- `tests/test_resolvers.py` covers response candidates, full Proposition packages,
-  accounting, bounded execution, cancellation, and fail-soft dependency behavior.
+- `tests/test_resolvers.py` covers the exact, structured graph, and support-linked
+  semantic resolver adapters and their full Proposition evidence.
+- `tests/test_resolver_execution.py` covers registry plans, bounded fail-soft
+  execution, lease and reservation codecs, cancellation, and accounting.
+- `tests/test_orchestrator_proposition_evidence.py` and
+  `tests/test_resolution_orchestrator.py` cover full Proposition packages, fused
+  outcomes, cancellation, and the complete output budget.
+- `tests/test_service_resolution.py` covers exact answers, transient accounting,
+  and receipts through `EngramCore`.
 - `tests/test_grpc_server.py` and `tests/test_mcp_server.py` cover the public
   transport adapters and their process lifecycle.
 - `tests/test_service.py` proves transient cancellation and identical request-ID retry.

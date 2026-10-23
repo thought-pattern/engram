@@ -8,14 +8,7 @@ The VADER lexicon is a required NLTK package: the process's analyzer belongs to
 ``nltk_data.NLTK_RESOURCES``, and a missing lexicon raises ``RuntimeError``.
 """
 
-from engram.constants import (
-    NEGATIVE,
-    NEGATIVE_THRESHOLD,
-    NEUTRAL,
-    NEUTRAL_SCORES,
-    POSITIVE,
-    POSITIVE_THRESHOLD,
-)
+from engram.constants_language import NEGATIVE, NEGATIVE_THRESHOLD, NEUTRAL, NEUTRAL_SCORES, POSITIVE, POSITIVE_THRESHOLD
 from engram.nltk_data import NLTK_RESOURCES
 
 

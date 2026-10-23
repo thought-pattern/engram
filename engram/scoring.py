@@ -21,7 +21,8 @@ portable across queries:
 from datetime import datetime
 from math import log as math_log
 
-from engram.constants import EARLIEST_UTC, NEUTRAL_HIT_RATE, SYNONYM_OVERLAP_WEIGHT
+from engram.constants import EARLIEST_UTC
+from engram.constants_language import NEUTRAL_HIT_RATE, SYNONYM_OVERLAP_WEIGHT
 from engram.models import keyword_entry_hit_rate
 
 

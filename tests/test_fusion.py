@@ -5,16 +5,17 @@ from json import dumps as json_dumps
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import reranker_config
-from engram.constants import ExpectedObjectType, Tier
+from engram.constants_artifacts import LifecycleState, Tier
+from engram.constants_fusion import FusionFeature, FusionPolicyReason
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import CandidateSource, EvidenceKind, ResolutionOutcome
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.fusion import (
     CandidateFusionEngine,
     EngramCandidateAuthority,
-    FusionFeature,
-    FusionPolicyReason,
     fusion_policy,
     fusion_policy_from_dict,
     fusion_policy_to_dict,
@@ -26,14 +27,7 @@ from engram.fusion import (
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.reranking import TransparentLogisticReranker
-from engram.resolution import (
-    CandidateSource,
-    EvidenceKind,
-    ResolutionOutcome,
-    evidence_reference,
-    validate_candidate,
-    validate_evidence_reference,
-)
+from engram.resolution import evidence_reference, validate_candidate, validate_evidence_reference
 from engram.resolution_budget import capture_resolution_budget, validate_resolution_budget
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes

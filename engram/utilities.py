@@ -13,8 +13,8 @@ from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from engram.constants import (
-    EMPTY_MAPPING,
+from engram.constants import EMPTY_MAPPING
+from engram.constants_resolution import (
     UTILITY_MAX_ABSOLUTE_EXPONENT,
     UTILITY_MAX_COLLECTION_ITEM_BYTES,
     UTILITY_MAX_COLLECTION_ITEMS,

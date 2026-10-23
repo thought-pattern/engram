@@ -4,7 +4,7 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import nlp
 from engram.config import engram_config
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.nlp import extract_entities, extract_fact, fact_query_patterns, input_kind, is_question
 

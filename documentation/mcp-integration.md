@@ -12,11 +12,11 @@ enum names and receipts retain their standalone meaning.
 
 Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 stateful conversational process or a Regulator-controlled response cache.
-The twelve tools expose one conversation lifecycle, inspection, explicit
+The eleven tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, in-memory reporting, unified evidence resolution, and a
 two-phase propose/resolve cache interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the gRPC adapter.
-The twelve names, input schemas, defaults, and descriptions are the current MCP
+The eleven names, input schemas, defaults, and descriptions are the current MCP
 interface. Output schemas remain unspecified. `engram_query`, the Python
 `resolve_request` operation, the CLI `query` command, and gRPC `ResolveEvidence`
 all invoke the same unified Proposition-evidence pipeline.
@@ -144,10 +144,10 @@ The returned turn event includes:
 - conversational fact-admission decisions;
 - elapsed time;
 - previous-response and predicate changes;
-- statements learned during that turn.
+- the facts this user taught during that turn.
 
-The call mutates conversation state and learns facts whose admission decision is
-`admitted`, regardless of whether a scripted pattern matched that turn, when
+The call mutates conversation state and learns, for this user only, the facts whose
+admission decision is `admitted`, regardless of whether a scripted pattern matched that turn, when
 `learn_user_facts` is enabled. Cache proposals use `engram_propose`.
 When graph access is enabled, graph-eligible turns consult it before accepting a
 scripted factual response. The shared runtime clock supplies the graph evaluation
@@ -437,16 +437,6 @@ authorize retirement.
 Only dynamic, patternless entries can be retired through this tool. The result
 is retry-safe by `request_id`; conflicting request reuse is an error.
 
-### `engram_retire_responses`
-
-Accepts `entries`, an ordered list of one through ten native retirement mappings,
-using the same explicit staleness authority as `engram_retire_response`. Whole
-input validation precedes mutation; expected per-entry failures do not prevent
-later entries. Each success retains the scalar receipt and request-ID replay
-semantics. See the shared [ordered-retirement contract](python-api.md#ordered-retirement)
-for fields, byte bounds, outcomes, and failure behavior. The tool requires an
-active conversation and delegates to the same core operation as gRPC and Python.
-
 ### Process state
 
 Proposals and idempotency records are process-local, retained for five minutes,
@@ -475,7 +465,7 @@ log.
 
 ## Verification checklist
 
-- The host can list all twelve tools after startup.
+- The host can list all eleven tools after startup.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
 - `user_id` defaults to `"0"` and preserves explicit case.

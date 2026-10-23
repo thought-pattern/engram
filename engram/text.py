@@ -18,7 +18,7 @@ from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from engram.constants import (
+from engram.constants_language import (
     CLAUSE_BOUNDARY_TRAILERS,
     CLAUSE_QUESTION_BOUNDARIES,
     CONTENT_POS_TAGS,

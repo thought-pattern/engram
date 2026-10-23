@@ -5,16 +5,15 @@ from json import loads as json_loads
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import (
+from engram.constants_artifacts import LifecycleState
+from engram.constants_evidence import DisclosureBasis, PropositionOwnership
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import (
     BUDGET_CONSUMPTION_FIELDS,
     EVIDENCE_REFERENCE_FIELDS,
     QUERY_FRAME_FIELDS,
     CandidateSource,
-    DisclosureBasis,
     EvidenceKind,
-    ExpectedObjectType,
-    LifecycleState,
-    PropositionOwnership,
     ResolutionOutcome,
     ResolverState,
 )

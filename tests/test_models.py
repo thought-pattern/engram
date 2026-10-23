@@ -2,7 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
-from engram.constants import EARLIEST_UTC, Tier
+from engram.constants import EARLIEST_UTC
+from engram.constants_artifacts import Tier
 from engram.models import (
     keyword_entry_hit_rate,
     record_statement_hit,

@@ -5,20 +5,21 @@ from unittest.mock import Mock
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants import PropositionOwnership, TemporalAxis, TemporalQueryOperator
+from engram.constants_evidence import PropositionEligibilityReason, PropositionOwnership
+from engram.constants_graph import PropositionProjectionQuery
+from engram.constants_relation import TemporalAxis, TemporalQueryOperator
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.evidence import (
     ExactScopeVisibilityAuthority,
     PropositionEligibilityEvaluator,
-    PropositionEligibilityReason,
     proposition_evidence_record,
     proposition_validity_inputs_from_eligibility,
     validate_proposition_eligibility_decision,
     visibility_authorization,
     visibility_grant,
 )
-from engram.graph import PropositionProjectionQuery, proposition_projection_from_graph_row, validate_proposition_projection
+from engram.graph import proposition_projection_from_graph_row, validate_proposition_projection
 from engram.identity import scope_key
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 

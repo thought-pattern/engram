@@ -71,6 +71,13 @@ The server accepts these options:
 | `--tls-cert`, `--tls-key` | empty | PEM certificate/key pair for server TLS. |
 | `--log-level` | `INFO` | Server log level. |
 
+Without `--config-path` the server runs on the built-in defaults: no seed files
+and no graph database. `--config-path config.yml` reads Engram's own file, which
+can enable a graph database with `graph.enabled: true`. A host that runs Engram
+as one of its parts, such as Tapestry, starts the server from its own code with
+the complete configuration it passes to `engram.config.config_from_dict`, and
+Engram reads no file.
+
 ## Process model
 
 ```text
@@ -143,7 +150,6 @@ pinned in `pyproject.toml`.
 | `Resolve` | Commit one typed Regulator verdict for one concrete candidate. |
 | `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata; preserve admitted multiline response text exactly. |
 | `RetireResponse` | Remove one dynamic cached response after its owner establishes staleness. |
-| `RetireResponses` | Retire one bounded ordered group, retaining scalar receipts and per-entry failures. |
 | `ResponsesBySupport` | List ACTIVE accepted-response statement IDs whose support references any given durable record ID. |
 | `MaintainEngagement` | Plan, prepare, physically purge, or resume an exactly scoped administrative operation. |
 | `GetStatus` | Return lifecycle, readiness, component, rollout, and telemetry status. |
@@ -173,15 +179,6 @@ characters, so the normalized form must fit too; a request close to the limit
 can exceed it once normalized. Both checks run before any other work and return
 `INVALID_ARGUMENT` with a message naming the limit. A request that normalizes
 to nothing, such as punctuation only, is rejected the same way.
-
-## Ordered retirement
-
-`RetireResponsesRequest.entries` contains one through ten `RetireResponseRequest`
-messages. The adapter rejects an invalid count before constructing native entry
-mappings. The response is a `Struct` carrying the shared
-[ordered-retirement envelope](python-api.md#ordered-retirement). Request IDs
-remain per-entry idempotency identities; no batch transaction or replay store is
-added.
 
 ## Engagement maintenance
 
@@ -273,7 +270,59 @@ The server registers `grpc.health.v1.Health` for the aggregate empty service
 name, `engram.EngramService`, and `engram.EngramEvidenceService`. It reports
 `SERVING` only while the shared core is ready and healthy. `GetStatus` reports
 process state, readiness, `memory_only`, active conversation count, component
-readiness, rollout state, and bounded telemetry.
+readiness, rollout state, and bounded telemetry, plus `health`: the same
+snapshot the HTTP health page's API serves.
+
+## HTTP health page
+
+The gRPC server also serves a read-only health page and API for developers and
+operators on its own standard-library threaded HTTP listener, set by the `http`
+section of Engram's configuration (`127.0.0.1:8101` by default; loopback or a
+private LAN unicast address; the listener binds exactly that port). Engram's
+gRPC server is threaded, so the page needs no event loop. The server's
+`--config-path` and Tapestry's managed server pass that section; a server built
+in code without `http` serves no page, and GetStatus still carries the snapshot.
+
+| Route | Answer |
+| --- | --- |
+| `GET /` | The page; it polls `/api/health` |
+| `GET /health.js`, `/health-common.js`, `/health.css` | The page's renderer, the shared polling and drawing code, and the stylesheet |
+| `GET /api/health` | The snapshot as JSON; GetStatus's `health` member holds the same snapshot |
+| `GET /health/live` | 200 while the listener answers |
+| `GET /health/ready` | 200 while the core is ready and healthy and shutdown has not begun, otherwise 503 |
+
+Every answer carries `Cache-Control: no-store`, `X-Content-Type-Options:
+nosniff` and a same-origin content security policy, and the listener writes no
+access log. `health_assets/` holds the page, its renderer, and copies of
+Tapestry's shared health page script and stylesheet, because Engram runs without
+the tapestry package.
+
+The snapshot has the same shape as every Tapestry component's. A server
+interceptor counts every Engram call (the standard gRPC health checks are not
+counted) from arrival to answer, by call name and outcome: `OK`, the gRPC status
+the call ended with, or the exception class when no status was set. The page
+shows:
+
+| Panel | Figures |
+| --- | --- |
+| Service | Readiness, start time, uptime, process ID and incarnation, with a notice when the server restarts and its counters reset |
+| Requests | Calls received and answered by call and outcome, the last call received and the last answer sent, and the average time to answer with its sample count |
+| Queue | Always empty: calls wait for a gRPC worker inside the gRPC library, where they cannot be seen |
+| Active work | Each call in progress with its elapsed time |
+| Tokens | "Engram makes no model calls" |
+| Errors | Failed calls by outcome, and the last one with its call and time |
+| Recent activity | Items waiting, items finished per second and tokens per second from five-second samples kept for ten minutes |
+| Recent outcomes | The latest 32 finished calls with outcome and run time |
+| Engram | State, healthy, memory only, active conversations, rollout default mode and namespace overrides |
+| Components | Each component's enabled and ready state, with its implementation, error or plugins |
+| Recall and resolution | Pattern matcher, regulated cache, regulator outcomes, graph recall and resolution counts and times |
+| Resolvers | Each resolver's invocations, states and selected contributions |
+
+Only call names, outcomes, times and counts are kept: never conversation text,
+user names or IDs, facts or responses. The page has no controls and never
+contacts another service. A listener that cannot bind is logged and reported in
+the snapshot's `http` state (`available` false, with the error type and code)
+while Engram keeps serving gRPC.
 
 SIGINT and SIGTERM mark health not serving, stop admission, allow in-flight
 calls to drain for `--grace-period`, and close the core. Closing discards all
@@ -297,4 +346,7 @@ Network tests cover the complete service descriptors, multi-conversation
 isolation, anonymous cleanup, shared process-memory facts, predicates,
 in-memory reports, health, proposal and verdict operations, evidence
 resolution, typed errors, cancellation, empty-memory restart, graceful
-shutdown, TLS validation, and generated-code reproducibility.
+shutdown, TLS validation, and generated-code reproducibility. `tests/test_health.py`
+covers the health page's routes and headers, GetStatus and `/api/health`
+returning the same snapshot, figures that move with real calls and hold no
+conversation content, and a port in use reported while Engram keeps serving.

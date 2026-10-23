@@ -4,7 +4,7 @@ Engram validates structure for safe storage and transport. It does not
 interpret epistemic state; the producer performs current-state validation.
 """
 
-from engram.constants import MAX_METADATA_BYTES, MAX_SUPPORT_REVISION
+from engram.constants_artifacts import MAX_METADATA_BYTES, MAX_SUPPORT_REVISION
 from engram.validation import require_any_text
 
 SUPPORT_REFERENCE_FIELDS = {

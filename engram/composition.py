@@ -5,7 +5,8 @@ from decimal import Decimal, InvalidOperation
 from logging import getLogger as logging_getLogger
 from re import compile as re_compile
 
-from engram.constants import (
+from engram.constants_identity import QueryOperator
+from engram.constants_relation import (
     COMPOSITION_DATE_SECONDS_FRACTION,
     COMPOSITION_PLAN_FIELDS,
     COMPOSITION_PREDICATE_ROW_FIELDS,
@@ -18,14 +19,13 @@ from engram.constants import (
     MAX_COMPOSITION_PATH_PROPOSITIONS,
     MAX_COMPOSITION_ROWS,
     MAX_COMPOSITION_TEXT_BYTES,
-    MAX_REQUEST_BYTES,
     CanonicalResolutionStatus,
     CompositionReason,
     ExpectedObjectType,
     GraphCompositionOperator,
     PredicateCardinality,
-    QueryOperator,
 )
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import validate_proposition_eligibility_decision
 from engram.graph import validate_relation_proposition_projection

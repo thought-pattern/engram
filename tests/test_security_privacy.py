@@ -4,27 +4,24 @@ from logging import DEBUG, ERROR
 
 from pytest import raises as pytest_raises
 
-from engram.constants import (
+from engram.constants_artifacts import (
     MAX_ARTIFACT_ID_BYTES,
-    MAX_CACHE_REQUEST_BYTES,
-    MAX_CONTEXT_FINGERPRINT_BYTES,
-    MAX_FEEDBACK_REASON_BYTES,
     MAX_METADATA_KEY_BYTES,
     MAX_METADATA_STRING_BYTES,
-    MAX_NAMESPACE_BYTES,
-    MAX_REQUEST_BYTES,
-    MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
-    MAX_SIGNATURE_INPUT_BYTES,
     MAX_SOURCE_LABEL_BYTES,
-    ResolutionOutcome,
-    ResolverState,
 )
+from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES
+from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES
+from engram.constants_mutations import MAX_REQUEST_ID_BYTES, MAX_SIGNATURE_INPUT_BYTES
+from engram.constants_resolution import ResolutionOutcome, ResolverState
+from engram.constants_service import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import MemGraphConnection
 from engram.mcp_server import MCPConversationService
-from engram.service import EngramCore, service_request_signature
+from engram.service import EngramCore
+from engram.service_requests import service_request_signature
 from tests.bolt_stub import BoltStub
 
 

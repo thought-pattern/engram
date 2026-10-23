@@ -5,7 +5,7 @@ from threading import Lock as threading_Lock
 from time import monotonic_ns as time_monotonic_ns
 
 from engram.config import reranker_config
-from engram.constants import RERANKER_COEFFICIENTS, RERANKER_FEATURES, RERANKER_INTERCEPT
+from engram.constants_fusion import RERANKER_COEFFICIENTS, RERANKER_FEATURES, RERANKER_INTERCEPT
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 
 

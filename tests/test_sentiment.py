@@ -1,6 +1,6 @@
 """Tests for VADER sentiment analysis and its template integration."""
 
-from engram.constants import NEGATIVE, NEUTRAL, POSITIVE
+from engram.constants_language import NEGATIVE, NEUTRAL, POSITIVE
 from engram.core import Engram
 from engram.sentiment import sentiment_label, sentiment_scores
 from engram.template import TemplateProcessor, template_context

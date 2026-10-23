@@ -9,7 +9,7 @@ splits text into sentences with NLTK's punkt tokenizer, whose data
 
 from nltk.tokenize import sent_tokenize
 
-from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
+from engram.constants_language import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
 from engram.nltk_data import NLTK_RESOURCES
 
 

@@ -4,17 +4,17 @@ This owner preserves complete records and reports duplicate, count, and byte
 truncation. Individual evidence contracts are owned below it.
 """
 
-from engram.constants import (
+from engram.constants_evidence import (
     EVIDENCE_PACKAGE_FIELDS,
     MAX_EVIDENCE_PACKAGE_BYTES,
     MAX_EVIDENCE_PACKAGE_INPUT_RECORDS,
     MAX_EVIDENCE_PACKAGE_RECORD_COUNT,
     MAX_EVIDENCE_PACKAGE_RECORDS,
     MAX_EVIDENCE_PACKAGE_TRUNCATION_REASONS,
-    MAX_REASON_CODE_BYTES,
     MIN_EVIDENCE_PACKAGE_BYTES,
     EvidencePackageTruncationReason,
 )
+from engram.constants_resolution import MAX_REASON_CODE_BYTES
 from engram.errors import InvalidRequestError
 from engram.resolution_evidence import (
     proposition_evidence_record_from_dict,

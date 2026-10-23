@@ -4,14 +4,9 @@ from collections import Counter
 
 from engram.config import rollout_config
 from engram.constants import RolloutMode
+from engram.constants_resolution import ResolutionOutcome
 from engram.errors import InvalidRequestError
-from engram.resolution import (
-    ResolutionOutcome,
-    empty_candidate,
-    resolution_result_to_json,
-    resolution_result_with_changes,
-    validate_resolution_result,
-)
+from engram.resolution import empty_candidate, resolution_result_to_json, resolution_result_with_changes, validate_resolution_result
 from engram.resolution_budget import budget_consumption_with_changes
 from engram.resolution_package import empty_evidence_package
 

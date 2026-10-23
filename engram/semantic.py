@@ -10,7 +10,7 @@ from threading import Lock as threading_Lock
 
 from sentence_transformers import SentenceTransformer
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import semantic_config
 from engram.constants import (
     APPROVED_SEMANTIC_ARTIFACT_SHA256,
@@ -20,6 +20,7 @@ from engram.constants import (
     APPROVED_SEMANTIC_MODEL_ID,
     APPROVED_SEMANTIC_MODEL_REVISION,
 )
+from engram.constants_artifacts import LifecycleState
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes

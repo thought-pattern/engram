@@ -5,8 +5,7 @@ from pathlib import Path
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.errors import IdentityValidationError
-from engram.identity import (
+from engram.constants_identity import (
     MAX_CANONICAL_FORM_BYTES,
     MAX_CONTEXT_FINGERPRINT_BYTES,
     MAX_RETRIEVAL_ALIASES,
@@ -14,6 +13,9 @@ from engram.identity import (
     QualifierKind,
     QueryOperator,
     RetrievalOrigin,
+)
+from engram.errors import IdentityValidationError
+from engram.identity import (
     entity_reference,
     extract_entities_and_identifiers,
     extract_lexical_terms,

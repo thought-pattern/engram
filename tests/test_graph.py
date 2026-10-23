@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from pytest import approx as pytest_approx, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.service import EngramCore
@@ -484,7 +484,7 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
     embedding_model.encode.side_effect = encode_fake_embeddings
     with (
         patch("engram.core.connect_graph", return_value=client),
-        patch("engram.core.SentenceTransformer", return_value=embedding_model) as load_model,
+        patch("engram.graph_recall.SentenceTransformer", return_value=embedding_model) as load_model,
     ):
         engram = Engram(config=config)
     load_model.assert_called_once()
@@ -512,7 +512,7 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
     embedding_model.encode.side_effect = encode_fake_embeddings
     with (
         patch("engram.core.connect_graph", return_value=client),
-        patch("engram.core.SentenceTransformer", return_value=embedding_model) as load_model,
+        patch("engram.graph_recall.SentenceTransformer", return_value=embedding_model) as load_model,
     ):
         engram = Engram(config=config)
     load_model.assert_called_once()

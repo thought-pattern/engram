@@ -1,23 +1,21 @@
 """Transport-neutral contracts for the bounded unified resolution pipeline."""
 
-from engram.artifacts import LifecycleState
-from engram.constants import (
+from engram.constants import EMPTY_MAPPING
+from engram.constants_artifacts import MAX_RESPONSE_BYTES, LifecycleState
+from engram.constants_feedback import MAX_STATEMENT_ID_BYTES
+from engram.constants_identity import EMPTY_SCOPE_KEY, MAX_ENUM_WIRE_BYTES
+from engram.constants_resolution import (
     ACCOUNTING_OBSERVATION_FIELDS,
     CANDIDATE_FIELDS,
-    EMPTY_MAPPING,
-    EMPTY_SCOPE_KEY,
     EVIDENCE_REFERENCE_FIELDS,
     MAX_ACCOUNTING_KEYWORD_BYTES,
     MAX_ACCOUNTING_KEYWORDS,
     MAX_CANDIDATE_ID_BYTES,
-    MAX_ENUM_WIRE_BYTES,
     MAX_EVIDENCE_ID_BYTES,
     MAX_REASON_CODE_BYTES,
     MAX_RESOLUTION_REASON_CODES,
     MAX_RESOLUTION_VALUES,
     MAX_RESOLVER_NAME_BYTES,
-    MAX_RESPONSE_BYTES,
-    MAX_STATEMENT_ID_BYTES,
     RESOLUTION_RESULT_FIELDS,
     RESOLVER_RESULT_FIELDS,
     CandidateSource,

@@ -9,13 +9,10 @@ the records' behavior.
 from datetime import datetime
 from uuid import uuid4
 
-from engram.constants import (
-    DIALOGUE_ENTITY_LABEL_PRIORITY,
-    EARLIEST_UTC,
-    MAX_SESSION_ENTITIES,
-    NEUTRAL_HIT_RATE,
-    Tier,
-)
+from engram.constants import EARLIEST_UTC
+from engram.constants_artifacts import Tier
+from engram.constants_dialogue import DIALOGUE_ENTITY_LABEL_PRIORITY, MAX_SESSION_ENTITIES
+from engram.constants_language import NEUTRAL_HIT_RATE
 from engram.substitutions import split_sentences
 
 

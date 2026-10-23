@@ -15,25 +15,23 @@ from engram.composition import (
     resolve_composition_predicates,
     typed_order_value,
 )
-from engram.constants import (
+from engram.constants_graph import PropositionProjectionQuery
+from engram.constants_relation import (
     CanonicalResolutionStatus,
     CompositionReason,
     ExpectedObjectType,
     GraphCompositionOperator,
     PredicateCardinality,
 )
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
 from engram.errors import InvalidRequestError, ResolutionCancelledError
 from engram.evidence import PropositionEligibilityEvaluator, proposition_evidence_record
 from engram.fusion import EngramCandidateAuthority
-from engram.graph import (
-    PropositionProjectionQuery,
-    relation_proposition_projection_from_graph_row,
-    validate_proposition_projection,
-)
+from engram.graph import relation_proposition_projection_from_graph_row, validate_proposition_projection
+from engram.graph_resolvers import StructuredGraphResolver
 from engram.identity import scope_key
 from engram.relation import RelationQuestion, canonical_resolution, resolve_canonical_subject
-from engram.resolution import ResolutionOutcome
 from engram.resolution_evidence import (
     proposition_evidence_path_step,
     proposition_evidence_record_from_json,
@@ -43,7 +41,7 @@ from engram.resolution_evidence import (
 )
 from engram.resolution_frame import QueryFrameBuilder
 from engram.resolution_package import build_evidence_package, evidence_package_from_json, evidence_package_to_json
-from engram.resolvers import StructuredGraphResolver, resolver_budget, resolver_budget_with_changes
+from engram.resolver_plan import resolver_budget, resolver_budget_with_changes
 from engram.service import EngramCore
 
 NOW = datetime(2026, 8, 20, 16, 0, tzinfo=UTC)

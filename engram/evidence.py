@@ -4,38 +4,38 @@ from datetime import datetime
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
-from engram.constants import (
+from engram.constants_evidence import (
     CANONICAL_COMPLETENESS_FLOOR,
-    EMPTY_SCOPE_KEY,
     EVIDENCE_USEFULNESS_POLICY_FIELDS,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
-    MAX_REASON_CODE_BYTES,
-    MAX_RESOLVER_NAME_BYTES,
     MAX_VISIBILITY_GRANTS,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
-    PROPOSITION_EVIDENCE_PRODUCERS,
-    PROPOSITION_SEMANTIC_PROJECTION_FIELDS,
     SEMANTIC_SIMILARITY_FLOOR,
     SOURCE_AGREEMENT_FLOOR,
-    STRUCTURED_GRAPH_RESOLVER_NAME,
     STRUCTURED_MATCH_FLOOR,
-    SUPPORT_SEMANTIC_RESOLVER_NAME,
-    UNCONSTRAINED_ASSERTION_BASIS,
     VISIBILITY_AUTHORIZATION_FIELDS,
     VISIBILITY_GRANT_FIELDS,
     DisclosureBasis,
     EvidenceUsefulnessReason,
     PropositionEligibilityReason,
     PropositionOwnership,
-    TemporalAxis,
-    TemporalQueryOperator,
+)
+from engram.constants_graph import PROPOSITION_SEMANTIC_PROJECTION_FIELDS, UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
+from engram.constants_identity import EMPTY_SCOPE_KEY
+from engram.constants_relation import TemporalAxis, TemporalQueryOperator
+from engram.constants_resolution import (
+    MAX_REASON_CODE_BYTES,
+    MAX_RESOLUTION_VALUES,
+    MAX_RESOLVER_NAME_BYTES,
+    PROPOSITION_EVIDENCE_PRODUCERS,
+    STRUCTURED_GRAPH_RESOLVER_NAME,
+    SUPPORT_SEMANTIC_RESOLVER_NAME,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError, failure_origin
-from engram.graph import PropositionProjectionQuery, validate_proposition_projection
+from engram.graph import validate_proposition_projection
 from engram.identity import scope_key_signature, validate_scope_key
-from engram.resolution import MAX_RESOLUTION_VALUES
 from engram.resolution_evidence import (
     canonical_proposition_references,
     disclosure_decision,

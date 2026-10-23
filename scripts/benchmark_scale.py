@@ -18,23 +18,20 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_graph import UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
+from engram.constants_mutations import MutationOperation, MutationResultCode, ReceiptCompletionState
 from engram.core import Engram
 from engram.graph import proposition_projection, proposition_projection_from_graph_row
+from engram.graph_resolvers import StructuredGraphResolver
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
-from engram.mutations import (
-    MutationOperation,
-    MutationResultCode,
-    ReceiptCompletionState,
-    canonical_payload_signature,
-    mutation_receipt,
-)
+from engram.mutations import canonical_payload_signature, mutation_receipt
 from engram.repository import ArtifactRepository
 from engram.resolution_budget import capture_resolution_budget
 from engram.resolution_frame import QueryFrameBuilder
-from engram.resolvers import StructuredGraphResolver, resolver_budget
+from engram.resolver_plan import resolver_budget
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 from scripts.benchmark_runtime import internal_measure, reported

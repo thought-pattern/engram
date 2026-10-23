@@ -29,7 +29,8 @@ misses or finds only a pure wildcard. Their captures are the original words.
 from functools import lru_cache
 from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compile, sub as re_sub
 
-from engram.constants import EMPTY_MAPPING, MAX_PATTERN_WORDS, WILDCARD_TOKENS
+from engram.constants import EMPTY_MAPPING
+from engram.constants_language import MAX_PATTERN_WORDS, WILDCARD_TOKENS
 from engram.substitutions import split_sentences
 from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
 
@@ -217,6 +218,63 @@ def specific_pattern_result(result: tuple) -> tuple:
     return result
 
 
+def match_first(matchers: tuple, text: str, that: str = "", topic: str = "") -> tuple:
+    """Match input through several matchers; return (position, match) for the winner, or ().
+
+    ``that`` is the previous reply. Only its last sentence is matched, and it
+    is prepared with the same hyphen and punctuation rules as the input. Each
+    stage runs over every matcher in order before the next stage starts: exact,
+    then lemma, then stem. Within a stage the earlier matcher wins, so a later
+    matcher's exact match still beats an earlier one's lemma match. A
+    pure-wildcard match must not block the flexible fallbacks: the first one
+    found is set aside and answers only when nothing more specific matches.
+
+    Returns:
+        Tuple of (matcher position, (response, captured, thatstars, topicstars,
+        pattern, topic, that)), or ().
+    """
+    words = prepare_pattern_text(text).split()
+    if not words:
+        result = ()
+        return result
+
+    that_text = last_sentence(that)
+    that_words = prepare_pattern_text(that_text).split() if that_text else []
+    topic_words = prepare_pattern_text(topic).split() if topic else []
+    # Captures always come from the prepared words, including in the lemma
+    # and stem walks, whose words line up with these by position.
+    sources = (words, that_words, topic_words)
+    catchall = ()
+    for position, matcher in enumerate(matchers):
+        found = matcher.match_words(words, that_words, topic_words, "exact", sources)
+        if found and not is_pure_wildcard(found[4]):
+            result = (position, found)
+            return result
+        if found and not catchall:
+            catchall = (position, found)
+
+    for mode in ("lemma", "stem"):
+        for position, matcher in enumerate(matchers):
+            enabled = matcher.internal_use_lemmatization if mode == "lemma" else matcher.internal_use_stemming
+            if not enabled:
+                continue
+            found = specific_pattern_result(
+                matcher.match_words(
+                    matcher.flexible_words(words, mode),
+                    matcher.flexible_words(that_words, mode),
+                    matcher.flexible_words(topic_words, mode),
+                    mode,
+                    sources,
+                )
+            )
+            if found:
+                result = (position, found)
+                return result
+
+    result = catchall
+    return result
+
+
 class GraphNode:
     """One node in a pattern, that, or topic graphmaster.
 
@@ -256,8 +314,8 @@ class PatternMatcher:
 
     def __init__(
         self,
-        sets: dict = EMPTY_MAPPING,
-        bot_properties: dict = EMPTY_MAPPING,
+        sets: object = EMPTY_MAPPING,
+        bot_properties: object = EMPTY_MAPPING,
         use_stemming: bool = False,
         use_lemmatization: bool = False,
         use_spacy_lemmatization: bool = False,
@@ -580,6 +638,11 @@ class PatternMatcher:
         for entry_id, entry in self.internal_entries.items():
             self.index_entry(entry_id, entry)
 
+    def holds_category(self, pattern: str, that: str = "", topic: str = "") -> bool:
+        """Return whether a category is filed on exactly this pattern, that, and topic path."""
+        result = self.path_key({"pattern": pattern, "that": that, "topic": topic}) in self.internal_path_claims
+        return result
+
     def remove_pattern(self, pattern: str, that: str = "", topic: str = "") -> bool:
         """Remove the first entry matching (pattern, that, topic).
 
@@ -628,50 +691,9 @@ class PatternMatcher:
         Returns:
             Tuple of (response, captured, thatstars, topicstars, pattern, topic, that), or ().
         """
-        words = prepare_pattern_text(text).split()
-        if not words:
-            result = ()
-            return result
-
-        that_text = last_sentence(that)
-        that_words = prepare_pattern_text(that_text).split() if that_text else []
-        topic_words = prepare_pattern_text(topic).split() if topic else []
-        # Captures always come from the prepared words, including in the lemma
-        # and stem walks, whose words line up with these by position.
-        sources = (words, that_words, topic_words)
-        result = self.match_words(words, that_words, topic_words, "exact", sources)
-
-        # A pure-wildcard match must not block the flexible fallbacks. Set it
-        # aside and try for something more specific. The fallback stages ignore
-        # pure-wildcard results so they do not simply re-return the catch-all.
-        catchall = ()
-        if result and is_pure_wildcard(result[4]):
-            catchall, result = result, ()
-
-        if not result and self.internal_use_lemmatization:
-            result = specific_pattern_result(
-                self.match_words(
-                    self.flexible_words(words, "lemma"),
-                    self.flexible_words(that_words, "lemma"),
-                    self.flexible_words(topic_words, "lemma"),
-                    "lemma",
-                    sources,
-                )
-            )
-
-        if not result and self.internal_use_stemming:
-            result = specific_pattern_result(
-                self.match_words(
-                    self.flexible_words(words, "stem"),
-                    self.flexible_words(that_words, "stem"),
-                    self.flexible_words(topic_words, "stem"),
-                    "stem",
-                    sources,
-                )
-            )
-
-        final = result if result else catchall
-        return final
+        found = match_first((self,), text, that=that, topic=topic)
+        result = found[1] if found else ()
+        return result
 
     def flexible_words(self, words: list[str], mode: str) -> list[str]:
         """Lemmatize or stem prepared words, one output word per input word.

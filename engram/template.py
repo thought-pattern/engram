@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 from random import choice as random_choice
 from re import compile as re_compile, match as re_match
 
-from engram.constants import (
+from engram.constants_graph import TRIPLE_QUERY_OBJECT, TRIPLE_QUERY_SUBJECT
+from engram.constants_language import (
     TEMPLATE_BOT_EXPRESSION,
     TEMPLATE_DATE_FORMAT_EXPRESSION,
     TEMPLATE_ESCAPABLE_CHARACTERS,
@@ -27,8 +28,6 @@ from engram.constants import (
     TEMPLATE_THATSTAR_EXPRESSION,
     TEMPLATE_TOPICSTAR_EXPRESSION,
     TEMPLATE_TRANSFORM_EXPRESSION,
-    TRIPLE_QUERY_OBJECT,
-    TRIPLE_QUERY_SUBJECT,
 )
 from engram.graph import graph_is_empty, graph_single, is_write_cypher, projection_timestamp
 from engram.nlp import input_kind
@@ -113,6 +112,7 @@ def template_context(
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
         "evaluation_time": selected_evaluation_time,
+        "response_state": {"unknown": False},
         "redirect_fn": redirect_fn,
         "learn_fn": learn_fn,
         "graph_fn": graph_fn,
@@ -314,6 +314,20 @@ class TemplateProcessor:
 
     def process_dict_template(self, template: dict, context: dict) -> str:
         """Process a dictionary template."""
+
+        if "unknown" in template:
+            unknown = template.get("unknown", False)
+            if type(unknown) is not bool:
+                raise ValueError("template unknown must be a Boolean")
+            if "response_state" not in context:
+                context["response_state"] = {"unknown": False}
+            response_state = context.get("response_state", {})
+            if type(response_state) is not dict or set(response_state) != {"unknown"}:
+                raise ValueError("template response state requires its unknown Boolean")
+            if type(response_state.get("unknown", False)) is not bool:
+                raise ValueError("template response state unknown must be a Boolean")
+            if unknown:
+                response_state["unknown"] = True
 
         if "text" in template:
             result = self.substitute_variables(str(template.get("text", "")), context)

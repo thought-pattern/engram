@@ -6,7 +6,8 @@ value validation below the frame, result, and resolver orchestration layers.
 
 from threading import RLock as threading_RLock
 
-from engram.constants import (
+from engram.constants_identity import MAX_ENUM_WIRE_BYTES
+from engram.constants_resolution import (
     BUDGET_CONSUMPTION_FIELDS,
     DEFAULT_RESOLUTION_ALLOWED_COST_CLASSES,
     DEFAULT_RESOLUTION_MAX_CANDIDATES,
@@ -18,7 +19,6 @@ from engram.constants import (
     DEFAULT_RESOLUTION_MAX_RESOLVERS,
     DEFAULT_RESOLUTION_MAX_VECTOR_RESULTS,
     DEFAULT_RESOLUTION_MAX_WORKING_MEMORY_BYTES,
-    MAX_ENUM_WIRE_BYTES,
     MAX_EXHAUSTED_DIMENSION_BYTES,
     MAX_EXHAUSTED_DIMENSIONS,
     MAX_RESOLUTION_CANDIDATES,

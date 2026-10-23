@@ -5,12 +5,11 @@ from json import dumps as json_dumps
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
-from engram.artifacts import LifecycleState
-from engram.constants import (
+from engram.constants import EARLIEST_UTC
+from engram.constants_artifacts import LifecycleState
+from engram.constants_fusion import (
     CANDIDATE_ELIGIBILITY_FIELDS,
-    COMPOSITION_CANDIDATE_PROVENANCE_FIELDS,
     DEFAULT_FUSION_WEIGHTS,
-    EARLIEST_UTC,
     FUSION_AMBIGUITY_MARGIN,
     FUSION_ANSWER_THRESHOLD,
     FUSION_CONSERVATIVE_MINIMUM,
@@ -20,26 +19,30 @@ from engram.constants import (
     FUSION_REQUIRE_SUPPORT_FOR_NON_EXACT,
     FUSION_SOURCE_FAMILY,
     FUSION_SOURCE_ORDER,
-    GRAPH_COMPOSITION_PRODUCER,
-    MAX_COMPOSITION_HOPS,
     MAX_FUSION_CONTRIBUTIONS,
     MAX_FUSION_INDEPENDENT_SOURCES,
     MAX_FUSION_REPORT_BYTES,
     MAX_FUSION_REPORT_CANDIDATES,
     MAX_FUSION_REPORT_CONTRIBUTIONS,
     MIN_FUSION_INDEPENDENT_SOURCES,
-    RELATION_CANDIDATE_PROVENANCE_FIELDS,
-    RELATION_ONE_HOP_PRODUCER,
     RERANKER_BASE_SCORE_FEATURE,
     RERANKER_FEATURES,
-    UTILITY_RESOLVER_PRODUCER,
-    ExpectedObjectType,
     FusionFeature,
     FusionPolicyReason,
+)
+from engram.constants_graph import PropositionProjectionQuery
+from engram.constants_relation import (
+    COMPOSITION_CANDIDATE_PROVENANCE_FIELDS,
+    GRAPH_COMPOSITION_PRODUCER,
+    MAX_COMPOSITION_HOPS,
+    RELATION_CANDIDATE_PROVENANCE_FIELDS,
+    RELATION_ONE_HOP_PRODUCER,
+    ExpectedObjectType,
     GraphCompositionOperator,
     PredicateCardinality,
     RelationSelectionReason,
 )
+from engram.constants_resolution import UTILITY_RESOLVER_PRODUCER, CandidateSource, EvidenceKind, ResolutionOutcome
 from engram.eligibility import evaluate_artifact_eligibility
 from engram.errors import InvalidRequestError, failure_origin
 from engram.evidence import PropositionEligibilityEvaluator, assertion_basis_window
@@ -49,13 +52,10 @@ from engram.feedback_values import (
     constraint_fingerprint,
     internal_fingerprint,
 )
-from engram.graph import PropositionProjectionQuery, validate_proposition_projection
+from engram.graph import validate_proposition_projection
 from engram.relation import phrase_relation_result
 from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
-    CandidateSource,
-    EvidenceKind,
-    ResolutionOutcome,
     empty_candidate,
     evidence_reference_to_json,
     trusted_candidate,

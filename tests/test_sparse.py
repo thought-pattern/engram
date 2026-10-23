@@ -5,7 +5,7 @@ from random import Random
 from engram import sparse as sparse_module
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.core import Engram
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository

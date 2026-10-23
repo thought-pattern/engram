@@ -2,7 +2,7 @@
 
 from pytest import raises as pytest_raises
 
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.conversation import ConversationRuntime
 from engram.core import Engram
 

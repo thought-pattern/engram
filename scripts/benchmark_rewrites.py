@@ -12,7 +12,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.constants import QueryOperator
+from engram.constants_identity import QueryOperator
 from engram.identity import scope_key, scoped_retrieval_key_from_text, trusted_scoped_retrieval_key_signature
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at

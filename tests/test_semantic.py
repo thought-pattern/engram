@@ -7,13 +7,15 @@ from pytest import raises as pytest_raises
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, semantic_config
-from engram.constants import INITIAL_ARTIFACT_STATISTICS, CandidateSource, LifecycleState, Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.constants_resolution import CandidateSource
 from engram.core import Engram
 from engram.errors import ResolutionCancelledError
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.resolution_frame import QueryFrameBuilder
-from engram.resolvers import StandaloneSemanticResolver, resolver_budget
+from engram.resolver_plan import resolver_budget
+from engram.resolvers import StandaloneSemanticResolver
 from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)

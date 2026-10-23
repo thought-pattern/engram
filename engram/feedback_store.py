@@ -3,16 +3,17 @@
 from datetime import timedelta
 from threading import RLock as threading_RLock
 
-from engram.constants import (
+from engram.constants_feedback import (
     FEEDBACK_OUTCOME_COUNTER_FIELDS,
     MAX_FEEDBACK_OBSERVATIONS,
     MAX_INSPECTION_RECORDS,
-    MAX_NAMESPACE_BYTES,
     MAX_REFERENCE_ID_BYTES,
     MAX_STATEMENT_ID_BYTES,
     FeedbackOutcome,
     LifecycleHandoffStatus,
 )
+from engram.constants_identity import MAX_NAMESPACE_BYTES
+from engram.constants_mutations import MutationOperation, MutationResultCode, ReceiptCompletionState, ReceiptLookupOutcome
 from engram.errors import ConflictError, IdentityValidationError, InvalidRequestError
 from engram.feedback import (
     feedback_bucket,
@@ -40,16 +41,7 @@ from engram.feedback import (
 )
 from engram.feedback_values import bucket_start, internal_diagnostic_id, internal_fingerprint, internal_integer
 from engram.identity import validate_query_identity
-from engram.mutations import (
-    MutationOperation,
-    MutationReceiptLedger,
-    MutationResultCode,
-    ReceiptCompletionState,
-    ReceiptLookupOutcome,
-    mutation_receipt,
-    receipt_lookup_receipt,
-    validate_mutation_receipt,
-)
+from engram.mutations import MutationReceiptLedger, mutation_receipt, receipt_lookup_receipt, validate_mutation_receipt
 from engram.validation import require_bool, require_text, require_utc_datetime, utc_datetime
 
 

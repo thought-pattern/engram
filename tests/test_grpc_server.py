@@ -17,7 +17,8 @@ from pytest import raises as pytest_raises
 
 from engram import engram_pb2, grpc_server as grpc_server_module
 from engram.config import engram_config, graph_config
-from engram.constants import MAX_CACHE_REQUEST_BYTES, SessionOverflow
+from engram.constants import SessionOverflow
+from engram.constants_service import MAX_CACHE_REQUEST_BYTES
 from engram.core import Engram
 from engram.engram_pb2_grpc import EngramEvidenceServiceStub, EngramServiceStub
 from engram.errors import InvalidRequestError
@@ -127,6 +128,7 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         carol = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Carol")))
         first = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Sushi is good.")))
         recalled = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Carol", text="What's good?")))
+        own_recall = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="What's good?")))
 
         predicate = stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="Alice", name="mood", value="curious"))
         read_predicate = stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="Alice", name="mood"))
@@ -138,15 +140,17 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert alice.get("user_id", "") == "Alice"
         assert carol.get("user_id", "") == "Carol"
         assert first.get("turn", 0) == 1
-        assert recalled.get("response", "") == "Sushi is good."
+        assert recalled.get("response", "") != "Sushi is good."
+        assert own_recall.get("response", "") == "Sushi is good."
         assert predicate.value == "curious"
         assert read_predicate.value == "curious"
         assert "introduced_by_user_id" in fact
         assert fact.get("introduced_by_user_id", "") == ""
         assert fact.get("source_label", "") == "research"
-        assert inspected.get("session", {}).get("previous_response", "") == "Sushi is good."
+        assert inspected.get("session", {}).get("previous_response", "") == recalled.get("response", "")
+        assert inspected.get("learned_dynamic", []) == []
         assert inspected.get("core_status", {}).get("active_conversations", 0) == 2
-        assert report.get("summary", {}).get("exchanges", 0) == 1
+        assert report.get("summary", {}).get("exchanges", 0) == 2
         assert "turns" not in report
         assert status.get("healthy", False) is True
         assert health_status(channel) == health_pb2.HealthCheckResponse.SERVING

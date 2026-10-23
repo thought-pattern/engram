@@ -6,22 +6,20 @@ interpretation. It performs no resolver execution or release judgment.
 
 from hashlib import sha256 as hashlib_sha256
 
-from engram.constants import (
-    EMPTY_MAPPING,
-    EMPTY_SCOPE_KEY,
+from engram.constants import EMPTY_MAPPING
+from engram.constants_identity import EMPTY_SCOPE_KEY, MAX_ENUM_WIRE_BYTES
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import (
     INHERITANCE_PROVENANCE_FIELDS,
     MAX_DIAGNOSTIC_ID_BYTES,
-    MAX_ENUM_WIRE_BYTES,
     MAX_INHERITANCE_FIELD_NAME_BYTES,
     MAX_INHERITANCE_SOURCE_TURN,
-    MAX_REQUEST_BYTES,
     MAX_REQUIRED_SOURCE_LABEL_BYTES,
-    MAX_REWRITE_RULE_ID_BYTES,
     MAX_TRACE_STEPS,
     QUERY_FRAME_FIELDS,
-    REWRITE_TRACE_STEP_FIELDS,
-    ExpectedObjectType,
 )
+from engram.constants_rewrite import MAX_REWRITE_RULE_ID_BYTES, REWRITE_TRACE_STEP_FIELDS
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.eligibility import (
     capture_standalone_eligibility_context,
     eligibility_context_from_dict,

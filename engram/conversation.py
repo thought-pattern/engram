@@ -13,7 +13,9 @@ from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import DEFAULT_USER_ID, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Tier
+from engram.constants import DEFAULT_USER_ID
+from engram.constants_artifacts import MAX_RESPONSE_BYTES, Tier
+from engram.constants_service import MAX_REQUEST_BYTES
 from engram.errors import InvalidRequestError
 from engram.feedback_values import (
     canonical_utc,
@@ -71,7 +73,8 @@ class ConversationRuntime:
 
     Constructing a runtime for ``DEFAULT_USER_ID`` deletes that user's existing
     session so the anonymous conversation starts clean; if construction fails,
-    the prior session is restored.
+    the prior session is restored. Once it succeeds, the facts an earlier
+    anonymous conversation taught are forgotten.
     """
 
     def __init__(
@@ -131,6 +134,8 @@ class ConversationRuntime:
                     if prior_session:
                         sessions.restore_session(engram, prior_session)
                 raise
+        if self.user_id == DEFAULT_USER_ID:
+            engram.forget_person_facts(DEFAULT_USER_ID)
 
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
@@ -184,6 +189,7 @@ class ConversationRuntime:
                     statement_view(statement)
                     for statement in self.engram.statements[first_new:]
                     if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
+                    and statement.get("introduced_by_user_id", "") == self.user_id
                 ]
             source = result.get("source", "")
             pattern = result.get("pattern", "")
@@ -191,6 +197,7 @@ class ConversationRuntime:
                 "turn": turn_number,
                 "input": text,
                 "response": result.get("response", ""),
+                "unknown": result.get("unknown", False),
                 "user_id": self.user_id,
                 "source": source,
                 "score": round(result.get("score", 0.0), 3),
@@ -219,12 +226,12 @@ class ConversationRuntime:
             return event
 
     def inspect(self) -> dict:
-        """Return conversation context, learned knowledge, and current metrics."""
+        """Return conversation context, the facts this user taught, and current metrics."""
         with self.lock, self.engram.statement_lock:
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
+                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC and statement.get("introduced_by_user_id", "") == self.user_id
             ]
             with self.engram.session_lock:
                 current_session = session_view(sessions.get_session(self.engram, self.session_id, create_if_missing=False))

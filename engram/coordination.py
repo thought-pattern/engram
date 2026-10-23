@@ -5,17 +5,14 @@ from copy import deepcopy
 from logging import getLogger as logging_getLogger
 from threading import RLock as threading_RLock
 
-from engram.constants import (
+from engram.constants_mutations import (
     COORDINATED_MUTATION_CANDIDATE_FIELDS,
     COORDINATED_RESPONSE_STATE_FIELDS,
     MAX_PLANNED_CANDIDATES,
+    MutationOperation,
 )
 from engram.errors import ConflictError, EngramCoreError, InvalidRequestError
-from engram.mutations import (
-    MutationOperation,
-    MutationReceiptLedger,
-    validate_mutation_receipt,
-)
+from engram.mutations import MutationReceiptLedger, validate_mutation_receipt
 from engram.repository import ArtifactRepository, validate_repository_state
 from engram.support import validate_statement_scope_bindings, validate_support_visibility
 

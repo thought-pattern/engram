@@ -2,21 +2,19 @@
 
 from math import isfinite as math_isfinite
 
-from engram.constants import (
+from engram.constants import EMPTY_MAPPING
+from engram.constants_identity import MAX_ENUM_WIRE_BYTES, QualifierKind, QueryOperator
+from engram.constants_relation import (
     COMPACT_QUERY_FRAME_FIELDS,
-    EMPTY_MAPPING,
-    MAX_CACHE_REQUEST_BYTES,
     MAX_CONTEXTUAL_SUBJECTS,
     MAX_CONTEXTUAL_TOPIC_BYTES,
     MAX_CONTEXTUAL_TURN,
     MAX_CONTEXTUAL_TURN_DISTANCE,
-    MAX_ENUM_WIRE_BYTES,
     MIN_CONTEXTUAL_INHERITANCE_CONFIDENCE,
     ExpectedObjectType,
-    QualifierKind,
-    QueryOperator,
     TemporalQueryOperator,
 )
+from engram.constants_service import MAX_CACHE_REQUEST_BYTES
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import (
     entity_reference_from_dict,

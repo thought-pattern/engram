@@ -4,9 +4,15 @@ This module owns validation of Engram's configuration: each section normalizer
 returns a plain dictionary with a fixed field set, and unknown keys are refused.
 Defaults and limits come from ``engram.constants``; the module sits just above
 the constants, scope and utility contracts and below every runtime component.
+
+A configuration has one source, chosen by the caller: ``load_config`` reads
+Engram's own YAML file, and ``config_from_dict`` takes the complete mapping a
+host such as Tapestry passes and reads no file. Either one may enable the
+graph database or leave it off; no setting selects between the two sources.
 """
 
 from datetime import timedelta
+from ipaddress import ip_address, ip_network
 from math import isfinite as math_isfinite
 from os import path as os_path
 
@@ -28,6 +34,10 @@ from engram.constants import (
     DEFAULT_GRAPH_VECTOR_MODEL,
     DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
     DEFAULT_GRAPH_VECTOR_WEIGHT,
+    DEFAULT_HTTP_ENABLED,
+    DEFAULT_HTTP_HOST,
+    DEFAULT_HTTP_PORT,
+    DEFAULT_HTTP_REFRESH_SECONDS,
     DEFAULT_MAX_SESSIONS,
     DEFAULT_MAX_SYNONYMS_PER_WORD,
     DEFAULT_RECENCY_HALF_LIFE_SECONDS,
@@ -49,6 +59,7 @@ from engram.constants import (
     DEFAULT_WEIGHT_HIT_RATE,
     DEFAULT_WEIGHT_RECENCY,
     EMPTY_CONFIG,
+    HTTP_LAN_NETWORKS,
     MAX_GRAPH_VECTOR_LIMIT,
     MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
     MAX_RERANKER_INPUT_BYTES,
@@ -350,8 +361,8 @@ def conversation_config(
     ``seed_files``, ``set_files`` and ``map_files`` accept a list or tuple of
     non-empty strings and normalize to a list of stripped paths. An empty
     ``seed_files`` list loads no categories. Paths stored here are
-    used as given; ``load_config`` resolves paths from a YAML file before this
-    runs. Set, map, property, predicate, and substitution files load before
+    used as given; ``load_config`` and ``config_from_dict`` resolve them before
+    this runs. Set, map, property, predicate, and substitution files load before
     the categories. This function does not require the files to exist.
 
     ``duplicate_policy`` is ``error``, ``last``, or ``first``. ``error`` rejects
@@ -375,39 +386,84 @@ def conversation_config(
     return config
 
 
-def resolve_conversation_path_list(entries, config_path: str, key: str, kind: str) -> list:
-    """Resolve a list of conversation files against the YAML file's directory.
+def resolve_conversation_path_list(entries, base_directory: str, source: str, key: str, kind: str) -> list:
+    """Resolve a list of conversation files against ``base_directory``.
 
     Absolute entries stay absolute. A missing file, a directory, or any other
-    non-file raises an error that names the path and the config file.
+    non-file raises an error that names the path and ``source``, the
+    configuration that listed it.
     """
     if isinstance(entries, str) or not isinstance(entries, (list, tuple)):
-        raise ValueError(f"conversation {key} in {config_path} must be a list of strings")
-    config_directory = os_path.dirname(os_path.abspath(config_path))
+        raise ValueError(f"conversation {key} in {source} must be a list of strings")
     resolved = []
     for entry in entries:
         if not isinstance(entry, str) or not entry.strip():
-            raise ValueError(f"conversation {key} in {config_path} must contain non-empty strings")
+            raise ValueError(f"conversation {key} in {source} must contain non-empty strings")
         raw_path = entry.strip()
         if os_path.isabs(raw_path):
             candidate = os_path.abspath(raw_path)
         else:
-            candidate = os_path.abspath(os_path.join(config_directory, raw_path))
+            candidate = os_path.abspath(os_path.join(base_directory, raw_path))
         if not os_path.isfile(candidate):
-            raise ValueError(f"conversation {kind} {candidate} listed in {config_path} is missing or is not a file")
+            raise ValueError(f"conversation {kind} {candidate} listed in {source} is missing or is not a file")
         resolved.append(candidate)
     return resolved
 
 
-def resolve_conversation_optional_file(entry, config_path: str, key: str, kind: str) -> str:
+def resolve_conversation_optional_file(entry, base_directory: str, source: str, key: str, kind: str) -> str:
     """Resolve one optional conversation file. A blank entry stays blank."""
     if not isinstance(entry, str):
-        raise ValueError(f"conversation {key} in {config_path} must be a string")
+        raise ValueError(f"conversation {key} in {source} must be a string")
     if not entry.strip():
         result = ""
         return result
-    resolved = resolve_conversation_path_list([entry], config_path, key, kind)
+    resolved = resolve_conversation_path_list([entry], base_directory, source, key, kind)
     result = resolved[0]
+    return result
+
+
+def http_listen_address_allowed(host: str) -> bool:
+    """Whether ``host`` is localhost, a loopback address, or a private unicast address in ``HTTP_LAN_NETWORKS``.
+
+    Unspecified, multicast, link-local, reserved and public addresses are refused, and so is any other name.
+    """
+    if host == "localhost":
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    networks = [ip_network(network) for network in HTTP_LAN_NETWORKS]
+    lan = any(address.version == network.version and address in network for network in networks)
+    allowed = (
+        lan and not address.is_unspecified and not address.is_multicast and not address.is_link_local and not address.is_reserved
+    )
+    return allowed
+
+
+def http_config(
+    enabled: bool = DEFAULT_HTTP_ENABLED,
+    host: str = DEFAULT_HTTP_HOST,
+    port: int = DEFAULT_HTTP_PORT,
+    refresh_seconds: float = DEFAULT_HTTP_REFRESH_SECONDS,
+) -> dict:
+    """Validate the health page and API listener: its switch, address, exact port and page refresh interval."""
+    if not isinstance(enabled, bool):
+        raise ValueError("http enabled must be a boolean")
+    if not isinstance(host, str) or not http_listen_address_allowed(host):
+        raise ValueError("http host must be a loopback or private LAN unicast address")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ValueError("http port must be an integer from 1 through 65535")
+    if (
+        not isinstance(refresh_seconds, (int, float))
+        or isinstance(refresh_seconds, bool)
+        or not math_isfinite(refresh_seconds)
+        or refresh_seconds <= 0
+    ):
+        raise ValueError("http refresh_seconds must be a finite positive number")
+    result: dict = {"enabled": enabled, "host": host, "port": port, "refresh_seconds": refresh_seconds}
     return result
 
 
@@ -419,6 +475,7 @@ SECTION_BUILDERS = (
     ("rollout", rollout_config),
     ("utility", utility_config),
     ("conversation", conversation_config),
+    ("http", http_config),
 )
 
 
@@ -469,6 +526,7 @@ def engram_config(
     rollout: dict = EMPTY_CONFIG,
     utility: dict = EMPTY_CONFIG,
     conversation: dict = EMPTY_CONFIG,
+    http: dict = EMPTY_CONFIG,
 ) -> dict:
     """Validate and normalize the configuration dict for an ENGRAM instance.
 
@@ -476,56 +534,23 @@ def engram_config(
     complete shape whether a section was supplied or left at its defaults.
     ``fallback_response`` is the reply when nothing matches; empty means none.
     """
-    if not isinstance(graph, dict):
-        raise ValueError("graph config must be an object")
-    if not isinstance(sparse, dict):
-        raise ValueError("sparse config must be an object")
-    if not isinstance(semantic, dict):
-        raise ValueError("semantic config must be an object")
-    if not isinstance(reranker, dict):
-        raise ValueError("reranker config must be an object")
-    if not isinstance(rollout, dict):
-        raise ValueError("rollout config must be an object")
-    if not isinstance(utility, dict):
-        raise ValueError("utility config must be an object")
-    if not isinstance(conversation, dict):
-        raise ValueError("conversation config must be an object")
-    # Store and session counts compare against these limits on every admission,
-    # so only a native positive integer bounds them; NaN and infinity never trip.
-    if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
-        raise ValueError("capacity must be an integer of at least 1")
-    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
-        raise ValueError("max_sessions must be an integer of at least 1")
-    if type(session_ttl_seconds) not in {int, float} or not math_isfinite(session_ttl_seconds) or session_ttl_seconds <= 0:
-        raise ValueError("session_ttl_seconds must be a finite positive number")
-    try:
-        timedelta(seconds=session_ttl_seconds)
-    except OverflowError as err:
-        raise ValueError("session_ttl_seconds exceeds the representable session interval") from err
-
-    weights = tuple(
-        require_finite_number(weight, name)
-        for name, weight in (("weight_base", weight_base), ("weight_recency", weight_recency), ("weight_hit_rate", weight_hit_rate))
-    )
-    if any(weight < 0 for weight in weights):
-        raise ValueError("scoring weights must be finite and non-negative")
-    if sum(weights) <= 0:
-        raise ValueError("scoring weights must sum to a positive value")
+    sections = {
+        "graph": graph,
+        "sparse": sparse,
+        "semantic": semantic,
+        "reranker": reranker,
+        "rollout": rollout,
+        "utility": utility,
+        "conversation": conversation,
+        "http": http,
+    }
+    require_section_objects(sections)
+    require_store_limits(capacity, max_sessions, session_ttl_seconds)
+    weights = scoring_weights(weight_base, weight_recency, weight_hit_rate)
     half_life = require_finite_number(recency_half_life_seconds, "recency_half_life_seconds")
     if half_life <= 0:
         raise ValueError("recency_half_life_seconds must be finite and positive")
-    if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
-        raise ValueError("srai_depth_limit must be an integer")
-    if srai_depth_limit < 1:
-        raise ValueError("srai_depth_limit must be at least 1")
-    if not isinstance(max_synonyms_per_word, int) or isinstance(max_synonyms_per_word, bool):
-        raise ValueError("max_synonyms_per_word must be an integer")
-    if max_synonyms_per_word < 0:
-        raise ValueError("max_synonyms_per_word must be non-negative")
-    if not isinstance(session_overflow, SessionOverflow):
-        raise ValueError("session_overflow must be a SessionOverflow")
-    if not isinstance(fallback_response, str):
-        raise ValueError("fallback_response must be a string")
+    require_matching_limits(srai_depth_limit, max_synonyms_per_word, session_overflow, fallback_response)
     flags = {
         "expand_contractions": expand_contractions,
         "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
@@ -542,20 +567,10 @@ def engram_config(
     for name, flag in flags.items():
         if not isinstance(flag, bool):
             raise ValueError(f"{name} must be a boolean")
-    sections = {
-        "graph": graph,
-        "sparse": sparse,
-        "semantic": semantic,
-        "reranker": reranker,
-        "rollout": rollout,
-        "utility": utility,
-        "conversation": conversation,
-    }
     built_sections = {
         name: builder(**require_known_keys(sections.get(name, {}), set(builder()), name, "engram_config"))
         for name, builder in SECTION_BUILDERS
     }
-
     config = {
         "capacity": capacity,
         "max_sessions": max_sessions,
@@ -566,23 +581,76 @@ def engram_config(
         "recency_half_life_seconds": half_life,
         "session_overflow": session_overflow,
         "stopwords": require_stopwords(stopwords),
-        "expand_contractions": expand_contractions,
-        "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
-        "learn_user_facts": learn_user_facts,
         "srai_depth_limit": srai_depth_limit,
-        "use_stemming": use_stemming,
-        "use_lemmatization": use_lemmatization,
-        "use_synonyms": use_synonyms,
         "max_synonyms_per_word": max_synonyms_per_word,
-        "use_spell_correction": use_spell_correction,
-        "use_spacy_facts": use_spacy_facts,
-        "use_spacy_lemmatization": use_spacy_lemmatization,
-        "use_phrase_keywords": use_phrase_keywords,
-        "polish_responses": polish_responses,
+        **flags,
         "fallback_response": fallback_response,
         **built_sections,
     }
     return config
+
+
+def require_section_objects(sections: dict) -> bool:
+    """Refuse a section given as anything but an object, in section order."""
+    for name, section in sections.items():
+        if not isinstance(section, dict):
+            raise ValueError(f"{name} config must be an object")
+    return True
+
+
+def require_store_limits(capacity: object, max_sessions: object, session_ttl_seconds: object) -> bool:
+    """Refuse store and session limits that could not bound admission.
+
+    Store and session counts compare against these limits on every admission,
+    so only a native positive integer bounds them; NaN and infinity never trip.
+    """
+    if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
+        raise ValueError("capacity must be an integer of at least 1")
+    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
+        raise ValueError("max_sessions must be an integer of at least 1")
+    if (
+        (type(session_ttl_seconds) is not int and type(session_ttl_seconds) is not float)
+        or not math_isfinite(session_ttl_seconds)
+        or session_ttl_seconds <= 0
+    ):
+        raise ValueError("session_ttl_seconds must be a finite positive number")
+    try:
+        timedelta(seconds=session_ttl_seconds)
+    except OverflowError as err:
+        raise ValueError("session_ttl_seconds exceeds the representable session interval") from err
+    return True
+
+
+def scoring_weights(weight_base: object, weight_recency: object, weight_hit_rate: object) -> tuple:
+    """Return the base, recency and hit-rate weights as floats; each is finite and non-negative and their sum positive."""
+    weights = tuple(
+        require_finite_number(weight, name)
+        for name, weight in (("weight_base", weight_base), ("weight_recency", weight_recency), ("weight_hit_rate", weight_hit_rate))
+    )
+    if any(weight < 0 for weight in weights):
+        raise ValueError("scoring weights must be finite and non-negative")
+    if sum(weights) <= 0:
+        raise ValueError("scoring weights must sum to a positive value")
+    return weights
+
+
+def require_matching_limits(
+    srai_depth_limit: object, max_synonyms_per_word: object, session_overflow: object, fallback_response: object
+) -> bool:
+    """Refuse a recursion depth below one, a negative synonym limit, an unknown overflow policy or a non-text fallback."""
+    if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
+        raise ValueError("srai_depth_limit must be an integer")
+    if srai_depth_limit < 1:
+        raise ValueError("srai_depth_limit must be at least 1")
+    if not isinstance(max_synonyms_per_word, int) or isinstance(max_synonyms_per_word, bool):
+        raise ValueError("max_synonyms_per_word must be an integer")
+    if max_synonyms_per_word < 0:
+        raise ValueError("max_synonyms_per_word must be non-negative")
+    if not isinstance(session_overflow, SessionOverflow):
+        raise ValueError("session_overflow must be a SessionOverflow")
+    if not isinstance(fallback_response, str):
+        raise ValueError("fallback_response must be a string")
+    return True
 
 
 def require_known_keys(values: object, allowed: set, section: str, source: str) -> dict:
@@ -595,6 +663,34 @@ def require_known_keys(values: object, allowed: set, section: str, source: str) 
         raise ValueError(f"unknown {label} key(s) in {source}: {', '.join(unknown)}")
     result = dict(values)
     return result
+
+
+def admitted_config_mapping(values: object, base_directory: str, source: str) -> dict:
+    """Return a copy of a config.yml-shaped mapping that holds only keys this release reads.
+
+    An unknown top-level or section key raises ``ValueError`` naming the key and
+    ``source``. Conversation file paths are resolved against ``base_directory``
+    and stored absolute, so the mapping no longer depends on where it came from.
+    Values are not yet validated.
+    """
+    data = require_known_keys(values, set(engram_config()), "", source)
+    for name, builder in SECTION_BUILDERS:
+        section_values = data.get(name, {})
+        if section_values:
+            data[name] = require_known_keys(section_values, set(builder()), name, source)
+    section = data.get("conversation", {})
+    if section:
+        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
+            if key in section:
+                section[key] = resolve_conversation_path_list(section.get(key, []), base_directory, source, key, kind)
+        for key, kind in (
+            ("properties_file", "properties file"),
+            ("predicate_file", "predicate file"),
+            ("substitution_file", "substitution file"),
+        ):
+            if key in section:
+                section[key] = resolve_conversation_optional_file(section.get(key, ""), base_directory, source, key, kind)
+    return data
 
 
 def read_config_mapping(path: str) -> dict:
@@ -613,23 +709,7 @@ def read_config_mapping(path: str) -> dict:
     if not loaded:
         result = {}
         return result
-    data = require_known_keys(loaded, set(engram_config()), "", path)
-    for name, builder in SECTION_BUILDERS:
-        section_values = data.get(name, {})
-        if section_values:
-            data[name] = require_known_keys(section_values, set(builder()), name, path)
-    section = data.get("conversation", {})
-    if section:
-        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
-            if key in section:
-                section[key] = resolve_conversation_path_list(section.get(key, []), path, key, kind)
-        for key, kind in (
-            ("properties_file", "properties file"),
-            ("predicate_file", "predicate file"),
-            ("substitution_file", "substitution file"),
-        ):
-            if key in section:
-                section[key] = resolve_conversation_optional_file(section.get(key, ""), path, key, kind)
+    data = admitted_config_mapping(loaded, os_path.dirname(os_path.abspath(path)), path)
     return data
 
 
@@ -655,32 +735,22 @@ def validated_config(data: dict, source: str) -> dict:
     return config
 
 
-def config_from_dict(data: dict, base_path: str = DEFAULT_CONFIG_PATH) -> dict:
-    """Build a validated config from Engram's config.yml overridden by a host mapping.
+def config_from_dict(data: dict, base_directory: str = "") -> dict:
+    """Build a validated config from the complete configuration a host passes in memory.
 
-    For a host, such as Tapestry, that supplies Engram's settings in memory.
-    The configuration file at ``base_path`` (by default the ``config.yml``
-    beside the ``engram`` package) is read first, with its conversation paths
-    resolved against that file. ``data`` then overrides it: a top-level value
-    replaces the file's value, and a section such as ``graph`` or
-    ``conversation`` overrides the file's section key by key. Paths in ``data``
-    are used as given. A missing file, or an empty ``base_path``, leaves only
-    the ``engram_config`` defaults underneath. An unknown key raises
-    ``ValueError`` naming it.
+    For a host, such as Tapestry, that keeps Engram's settings in its own
+    configuration. ``data`` is the whole configuration, with the same keys as
+    Engram's ``config.yml``: no configuration file is read, and a setting
+    ``data`` leaves out keeps its ``engram_config`` default. Relative
+    conversation file paths resolve against ``base_directory``, or against the
+    working directory when it is empty, and must name existing files. An
+    unknown key raises ``ValueError`` naming it.
     """
     if not isinstance(data, dict):
         raise ValueError("config must be an object")
     source = "config mapping"
-    merged = read_config_mapping(base_path) if base_path else {}
-    overrides = require_known_keys(data, set(engram_config()), "", source)
-    sections = {name for name, _ in SECTION_BUILDERS}
-    for key, value in overrides.items():
-        current = merged.get(key, {})
-        if key in sections and isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = {**current, **value}
-        else:
-            merged[key] = value
-    config = validated_config(merged, source)
+    mapping = admitted_config_mapping(data, os_path.abspath(base_directory), source)
+    config = validated_config(mapping, source)
     return config
 
 

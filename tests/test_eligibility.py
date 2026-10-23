@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.artifacts import validate_cached_response_artifact
-from engram.constants import EligibilityExclusionReason, ExactLookupOutcome, LifecycleState
+from engram.constants_artifacts import LifecycleState
+from engram.constants_evidence import EligibilityExclusionReason
+from engram.constants_identity import ExactLookupOutcome
 from engram.eligibility import (
     capture_standalone_eligibility_context,
     contextual_exact_lookup,

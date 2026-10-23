@@ -18,7 +18,7 @@ from threading import Lock
 from spacy import load as spacy_load
 from spacy.language import Language
 
-from engram.constants import MODEL_NAME
+from engram.constants_language import MODEL_NAME
 
 # Distinct disable-sets kept loaded at once. Callers use the full pipeline and
 # the parser/NER-free phrasing variant, so the bound is never reached in use.

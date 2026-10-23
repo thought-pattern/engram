@@ -4,6 +4,7 @@ from logging import ERROR
 
 from pytest import raises as pytest_raises
 
+from engram.constants_mutations import MutationOperation, MutationResultCode, ReceiptCompletionState, ReceiptLookupOutcome
 from engram.coordination import (
     AtomicMutationCoordinator,
     MutationCoordinationError,
@@ -12,14 +13,7 @@ from engram.coordination import (
 )
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import extract_standalone_identity, retrieval_representation
-from engram.mutations import (
-    MutationOperation,
-    MutationReceiptLedger,
-    MutationResultCode,
-    ReceiptCompletionState,
-    ReceiptLookupOutcome,
-    canonical_payload_signature,
-)
+from engram.mutations import MutationReceiptLedger, canonical_payload_signature
 from engram.repository import ArtifactRepository
 from tests.support_fixtures import ACCEPTED_ARTIFACT_FIELDS, TENANT_SCOPE
 

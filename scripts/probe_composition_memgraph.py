@@ -11,7 +11,8 @@ if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
 from engram.config import load_config
-from engram.constants import ExpectedObjectType, ResolutionOutcome
+from engram.constants_relation import ExpectedObjectType
+from engram.constants_resolution import ResolutionOutcome
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.resolution import resolver_result_to_dict, validate_resolution_result

@@ -31,7 +31,7 @@ depend on Tapestry. Dynamic labels are literal text, never extra format fields.
 from nltk.corpus import wordnet
 from spacy.language import Language
 
-from engram.constants import FRAME_OVERRIDES, VOWELS
+from engram.constants_language import FRAME_OVERRIDES, VOWELS
 from engram.nltk_data import NLTK_RESOURCES
 from engram.spacy_setup import SPACY_PIPELINES
 

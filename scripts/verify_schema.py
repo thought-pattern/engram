@@ -9,7 +9,7 @@ if str(REPO_ROOT) not in sys_path:
     sys_path.insert(0, str(REPO_ROOT))
 
 from engram.config import load_config
-from engram.constants import GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS
+from engram.constants_graph import GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema

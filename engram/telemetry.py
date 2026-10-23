@@ -2,14 +2,14 @@
 
 from copy import deepcopy
 
-from engram.constants import (
+from engram.constants import REGULATOR_OUTCOMES
+from engram.constants_resolution import (
     OPERATIONAL_EXHAUSTION_DIMENSIONS,
     OPERATIONAL_LATENCY_BUCKETS,
     OPERATIONAL_RESOLUTION_OUTCOMES,
     OPERATIONAL_RESOLVER_NAMES,
     OPERATIONAL_RESOLVER_STATES,
     OPERATIONAL_RESOURCE_DIMENSIONS,
-    REGULATOR_OUTCOMES,
     ResolutionOutcome,
     ResolverState,
 )

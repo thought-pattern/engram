@@ -139,21 +139,29 @@ from engram import pipeline
 engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
 pipeline.chat(engram, "Sushi is good.", user_id="Alice")
-result = pipeline.chat(engram, "What's good?", user_id="Carol")
-print(result["response"])  # "Sushi is good."
+print(pipeline.chat(engram, "What's good?", user_id="Alice")["response"])  # "Sushi is good."
+print(pipeline.chat(engram, "What's good?", user_id="Carol")["response"])  # "Go on."
 ```
 
 Alice and Carol have separate histories, predicates, active topics, referenced
-entities, dialogue-act histories, and pronoun context. Facts learned from either
-conversation enter the shared statement store with `introduced_by_user_id` and
-remain globally retrievable. Each learned fact occupies
+entities, dialogue-act histories, and pronoun context. A fact a person states in
+chat, or teaches through a `learn` template, belongs to that person
+(`introduced_by_user_id`) and is relayed back only to that person, only in their
+chat. It is filed in the person's own matcher, which only their chat consults,
+before the shared categories at each matching stage; keyword retrieval, the
+`llm_fn` context, spelling correction, the turn's `learned_statements`, and
+`inspect` see only the speaker's own facts beside shared statements. Proposal and
+evidence resolution never read conversational statements. A person's fact never
+takes a pattern a shared category already answers. Each learned fact occupies
 one statement, with alternate question phrasings stored as matcher aliases.
-A newer fact about the same subject replaces the learned one, so re-teaching
-changes the answer; seed statements and hand-stored statements are never
-replaced. Patterns are limited to 64 words (`MAX_PATTERN_WORDS`), and a fact
+A newer fact about the same subject replaces the one the same person taught, so
+re-teaching changes their answer and never another person's; seed statements and
+hand-stored statements are never replaced. Facts taught in the reserved unknown
+user's conversation (`"0"`) are forgotten when that conversation stops or a new
+one starts. Patterns are limited to 64 words (`MAX_PATTERN_WORDS`), and a fact
 whose subject is longer is not learned.
 
-Research and tool output enter the same shared store with source provenance:
+Research and tool output enter the shared store with source provenance:
 
 ```python
 statement_id = engram.add_fact(
@@ -163,9 +171,9 @@ statement_id = engram.add_fact(
 ```
 
 `add_fact` ingests one fact, optionally records an opaque source label, and
-leaves user context unchanged. Conversational facts and external
-facts are both globally retrievable. The API accepts one fact per call and has no
-batch-ingestion operation.
+leaves user context unchanged. External facts are shared and answer every
+conversation. The API accepts one fact per call and has no batch-ingestion
+operation.
 
 ## Sessions
 
@@ -212,7 +220,7 @@ config = engram_config(
     semantic=semantic_config(enabled=False),  # Requires an explicitly provisioned artifact when enabled
     reranker=reranker_config(enabled=False),  # Optional bounded shortlist scorer
     utility=utility_config(enabled=False),  # Optional deterministic operations
-    learn_user_facts=True,       # Learn shared facts with user attribution
+    learn_user_facts=True,       # Learn facts a person states, for that person only
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
@@ -237,6 +245,22 @@ Retrieval rewrites, sparse and semantic retrieval, reranking, and deterministic
 utilities are optional and disabled by default. Their configuration, artifact
 provisioning, readiness, and result behavior are documented in the
 [local resolver guide](documentation/local-resolvers.md).
+
+### Configuration sources
+
+Engram runs on its own or as part of a host, and in either case with or without
+a graph database. Which configuration it uses depends only on what the caller
+passes; no setting or environment variable selects a mode.
+
+| Mode | Configuration |
+| --- | --- |
+| Standalone, no graph | Engram's own `config.yml` (copy `config.example.yml`), read by `load_config(path)`, the gRPC server's `--config-path` and the CLI's `--config`. `graph.enabled` is `false` by default. |
+| Standalone with a graph database | The same file with `graph.enabled: true` and the database's `host`, `port`, `username` and `password`. |
+| Part of a host, such as Tapestry | The host passes its complete configuration, with the same keys as `config.yml`, to `config_from_dict(mapping, base_directory)`. Engram reads no configuration file; a key the mapping leaves out keeps its built-in default, and relative conversation paths resolve against `base_directory`. |
+
+Tapestry keeps these settings in its root `config.yml` under `engram.runtime`,
+supplies the `graph` section from its own graph database connection and
+`conversation.bot_name` from its persona. Engram imports nothing from its host.
 
 ## Scoring Algorithm
 
@@ -302,7 +326,7 @@ primary operations are:
 - `start_conversation`, `chat`, `inspect_conversation`,
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
-- `propose`, `resolve`, `learn_response`, `supersede_response`, `retire_response`, and `retire_responses`;
+- `propose`, `resolve`, `learn_response`, `supersede_response`, and `retire_response`;
 - `maintain_engagement` for an explicitly owned, drained administrative pause,
   physical response removal and resumption;
 - `status` for transport-neutral readiness information; and
@@ -312,11 +336,8 @@ The regulated-cache lifecycle is explicit: `resolve(...,
 outcome="rejected_stale")` records the verdict and excludes that observed
 generation without mutating the response artifact. The caller that established
 global staleness then uses `retire_response` as the separate, auditable
-lifecycle operation. Contextual rejection never retires a response.
-`retire_responses` processes bounded ordered groups through that same scalar
-owner, retaining per-entry failures and replay receipts. It is also exposed as
-gRPC `RetireResponses` and MCP `engram_retire_responses`; see the
-[shared contract](documentation/python-api.md#ordered-retirement).
+lifecycle operation. Contextual rejection never retires a response. Each
+retirement is its own call.
 
 Engagement removal instead deletes matching artifacts, affected mutation receipts
 and feedback together, with rollback on publication failure. Selection includes
@@ -325,7 +346,7 @@ and scope bindings retained after capacity eviction and receipt pruning. Peer
 artifacts and their statistics and replay state are preserved. The administrative
 RPC contract is documented in [gRPC integration](documentation/grpc-integration.md).
 
-One core retains multiple isolated user conversations and shared knowledge.
+One core retains multiple isolated user conversations, each person's own facts, and shared knowledge.
 Named conversation identifiers retain their exact spelling and user context.
 Omitted or empty labels use the reserved unknown user `"0"` across the core,
 gRPC and MCP. Unknown conversations start with fresh session context and delete
@@ -343,12 +364,13 @@ feedback, lifecycle, and error behavior.
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; `replace_learned` retires DYNAMIC statements on the same pattern, that, and topic |
-| `query(text, context_id, limit, statement_filter, record_candidates)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting              |
-| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, learned-fact attribution, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
+| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; a non-empty `introduced_by_user_id` makes it that person's own; `replace_learned` retires the same owner's DYNAMIC statements on the same pattern, that, and topic |
+| `query(text, context_id, limit, statement_filter, record_candidates, owner)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting; candidates are shared statements plus `owner`'s own facts |
+| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, the speaker's own facts tried first, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
-| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact with optional provenance; replaces the learned fact already stored for its subject           |
+| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact for the person who stated it (shared when empty); replaces the fact that owner already taught for its subject |
+| `forget_person_facts(owner)`                                     | Remove every statement one person taught in chat                                                                     |
 | `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve user context                                                  |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
@@ -466,11 +488,10 @@ MCP owns one active conversation. An omitted or empty `user_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
 and report the same canonical identifier.
 
-The twelve tools cover conversation lifecycle (`engram_start`, `engram_send`,
+The eleven tools cover conversation lifecycle (`engram_start`, `engram_send`,
 `engram_inspect`, `engram_finish`, `engram_stop`), shared facts
 (`engram_add_fact`), unified resolution (`engram_query`), and regulated-cache use (`engram_propose`,
-`engram_resolve`, `engram_learn_response`, `engram_retire_response`,
-`engram_retire_responses`). See
+`engram_resolve`, `engram_learn_response`, `engram_retire_response`). See
 [MCP integration](documentation/mcp-integration.md) for host configuration,
 tool schemas, process-memory ownership, and retry behavior.
 
@@ -488,17 +509,16 @@ engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
 python -m engram.grpc_server --bind 127.0.0.1:50051
 ```
 
-A host that builds the configuration in memory calls
-`engram.config.config_from_dict(mapping)`. It starts from the repository-root
-`config.yml`, with its seed and table paths resolved against that file, and
-applies the mapping on top: top-level values replace the file's, and sections
-such as `graph` override the file's section key by key. Tapestry's managed
-server starts this way, so the seed files named in `config.yml` load under it.
+A host that runs Engram as one of its parts builds the whole configuration
+itself and calls `engram.config.config_from_dict(mapping, base_directory)`; see
+[Configuration sources](#configuration-sources). Tapestry's managed server
+starts this way.
 
 One `engram` protobuf package supplies conversation, cache, and
 unified evidence-resolution services from the same library contract. See
 [gRPC integration](documentation/grpc-integration.md) for RPCs, client examples,
-health, TLS, cancellation, process-memory behavior, and shutdown.
+health, the HTTP health page (`http`, `127.0.0.1:8101` by default), TLS,
+cancellation, process-memory behavior, and shutdown.
 
 ## NLP Features
 
@@ -629,7 +649,9 @@ only external comments and layout are normalized. Catalog parsing and live
 comparison use that same statement sequence, and invalid input rejects before
 installation accesses the graph.
 
-Configure the connection in `config.yml`:
+`graph.enabled` is `false` by default. To run standalone with a graph database,
+configure the connection in Engram's `config.yml`; a host passes the same
+`graph` section in its configuration mapping instead:
 
 ```yaml
 graph:

@@ -6,7 +6,7 @@ from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, l
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
 
-from engram.constants import (
+from engram.constants_mutations import (
     ARTIFACT_GENERATION_CHANGE_FIELDS,
     DEFAULT_RECEIPT_RETENTION,
     DEFAULT_TOMBSTONE_RETENTION,
@@ -14,7 +14,6 @@ from engram.constants import (
     MAX_RECEIPT_STATEMENT_ID_BYTES,
     MAX_RECEIPTS,
     MAX_REQUEST_ID_BYTES,
-    MAX_RESOURCE_COUNTER,
     MAX_RESULT_BYTES,
     MAX_RESULT_DEPTH,
     MAX_RESULT_ITEMS,
@@ -30,6 +29,7 @@ from engram.constants import (
     ReceiptCompletionState,
     ReceiptLookupOutcome,
 )
+from engram.constants_resolution import MAX_RESOURCE_COUNTER
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.support import validate_statement_scope_bindings
 from engram.validation import Characters, require_text, require_utc_timestamp

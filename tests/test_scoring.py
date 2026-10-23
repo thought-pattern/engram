@@ -5,7 +5,7 @@ from math import log as math_log
 
 from pytest import approx as pytest_approx
 
-from engram.constants import SYNONYM_OVERLAP_WEIGHT
+from engram.constants_language import SYNONYM_OVERLAP_WEIGHT
 from engram.models import record_statement_hit, statement as model_statement
 from engram.scoring import (
     calculate_average_hit_rate,

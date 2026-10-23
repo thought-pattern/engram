@@ -9,7 +9,7 @@ from enum import StrEnum
 from functools import lru_cache
 from re import compile as re_compile
 
-from engram.constants import MAX_TIMESTAMP_BYTES
+from engram.constants_artifacts import MAX_TIMESTAMP_BYTES
 from engram.errors import InvalidRequestError
 
 CONTROL_CHARACTERS = re_compile("[\x00-\x1f\x7f]")

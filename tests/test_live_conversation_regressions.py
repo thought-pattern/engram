@@ -1,7 +1,7 @@
 """Regressions taken directly from the adaptive MCP conversation."""
 
 from engram import pipeline
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.conversation_seed import load_bundled_conversation_pairs
 from engram.core import Engram
 

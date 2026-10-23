@@ -5,7 +5,9 @@ from datetime import timedelta
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import sessions
-from engram.constants import EARLIEST_UTC, ExpectedObjectType, QualifierKind, QueryOperator
+from engram.constants import EARLIEST_UTC
+from engram.constants_identity import QualifierKind, QueryOperator
+from engram.constants_relation import ExpectedObjectType
 from engram.contextual import (
     classify_query_frame_operator,
     compact_query_frame,

@@ -3,10 +3,12 @@
 # Copy this file to config.yml and edit it:  cp config.example.yml config.yml
 # config.yml is gitignored (local config); this template is tracked. Any setting
 # you omit falls back to its built-in default (shown below).
-# A host that supplies settings in memory through engram.config.config_from_dict,
-# such as Tapestry's managed server, starts from the config.yml at the repository
-# root and overrides it: its top-level values replace this file's, and its
-# sections (graph, conversation, ...) override this file's sections key by key.
+#
+# This file configures Engram when it runs on its own, with or without a graph
+# database: the gRPC server (--config-path config.yml), the CLI (--config) and
+# engram.config.load_config read it. A host that runs Engram as one of its parts,
+# such as Tapestry, passes its complete configuration to
+# engram.config.config_from_dict instead, and Engram does not read this file.
 
 # --- Capacity ---
 capacity: 10000 # Maximum DYNAMIC statements
@@ -140,16 +142,19 @@ conversation:
 # it may have more. The graph's owner creates them; Engram only reads the graph.
 # Check a graph with: python scripts/verify_schema.py The password is never saved with cache state;
 # supply it through this external runtime configuration.
-# The graph database is optional: set enabled: false to run without it. When
-# enabled, it must be reachable and have a compatible schema at startup, or
-# startup fails. A graph read that fails later returns no rows and is logged, while
-# Engram's local retrieval and conversation paths continue.
+# The graph database is optional and off by default, so Engram runs without one.
+# To run with a graph database, set enabled: true and set host, port, username
+# and password for it; set vector_enabled: true and vector_model_path as well to
+# add vector recall over its Proposition index. When enabled, the graph must be
+# reachable and have a compatible schema at startup, or startup fails. A graph
+# read that fails later returns no rows and is logged, while Engram's local
+# retrieval and conversation paths continue.
 graph:
-  host: 192.168.100.13
+  host: localhost
   port: 7687
   username: ""
   password: ""
-  enabled: true
+  enabled: false # true runs with the graph database above
   vector_enabled: false
   vector_index_name: proposition_embeddings
   vector_model: all-MiniLM-L6-v2
@@ -159,3 +164,14 @@ graph:
   vector_support_scan_limit: 100000 # Bound matched Proposition-support fan-out
   vector_min_similarity: 0.45
   vector_weight: 0.75
+
+# --- Health page ---
+# Serves the Engram health page and API at http://127.0.0.1:8101/ (/api/health,
+# /health/live, /health/ready). Loopback by default; a private LAN unicast
+# address is allowed. The listener binds exactly this port; a port in use is
+# reported on the health snapshot while Engram keeps serving.
+http:
+  enabled: true
+  host: 127.0.0.1
+  port: 8101
+  refresh_seconds: 5.0

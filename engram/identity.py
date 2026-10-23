@@ -9,9 +9,8 @@ from json import dumps as json_dumps
 from re import Match, fullmatch as re_fullmatch, search as re_search
 from unicodedata import normalize as unicodedata_normalize
 
-from engram.constants import (
-    DEFAULT_CONTRACTIONS,
-    DEFAULT_STOPWORDS,
+from engram.constants import DEFAULT_STOPWORDS
+from engram.constants_identity import (
     EMPTY_RELATION_REFERENCE,
     EMPTY_SCOPE_KEY,
     ENTITY_REFERENCE_FIELDS,
@@ -56,6 +55,7 @@ from engram.constants import (
     QueryOperator,
     RetrievalOrigin,
 )
+from engram.constants_language import DEFAULT_CONTRACTIONS
 from engram.errors import IdentityValidationError
 from engram.lexical import select_lexical_terms
 from engram.temporal import parse_temporal_query

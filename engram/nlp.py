@@ -12,7 +12,7 @@ from nltk.metrics.distance import edit_distance
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from engram.constants import (
+from engram.constants_language import (
     ARTICLES,
     COMMAND_WORDS,
     COPULAS,

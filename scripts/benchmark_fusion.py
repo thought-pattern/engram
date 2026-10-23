@@ -14,17 +14,12 @@ REPOSITORY = Path(__file__).resolve().parent.parent
 if str(REPOSITORY) not in sys_path:
     sys_path.insert(0, str(REPOSITORY))
 
-from engram.artifacts import LifecycleState
+from engram.constants_artifacts import LifecycleState
+from engram.constants_resolution import CandidateSource, EvidenceKind, ResolutionOutcome
 from engram.core import Engram
 from engram.fusion import CandidateFusionEngine, fusion_policy, fusion_policy_to_dict, permissive_candidate_authority
 from engram.identity import scope_key
-from engram.resolution import (
-    CandidateSource,
-    EvidenceKind,
-    ResolutionOutcome,
-    candidate as resolution_candidate,
-    evidence_reference,
-)
+from engram.resolution import candidate as resolution_candidate, evidence_reference
 from engram.resolution_budget import capture_resolution_budget
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import QueryFrameBuilder
