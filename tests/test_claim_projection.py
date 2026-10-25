@@ -306,6 +306,7 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_only_the_failur
 
     def broken_vector_search(*internal_args, **internal_kwargs):
         nonlocal calls
+        del internal_args, internal_kwargs
         calls += 1
         raise InvalidRequestError(f"malformed graph row for {sensitive_proposition_id}")
 
@@ -338,6 +339,7 @@ def test_transport_neutral_vector_projection_fails_soft_and_logs_only_the_failur
     )
 
     def over_returning_vector_search(*internal_args, **internal_kwargs):
+        del internal_args, internal_kwargs
         result = [projection, projection, projection, projection]
         return result
 

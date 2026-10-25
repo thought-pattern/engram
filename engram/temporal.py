@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from math import isfinite as math_isfinite
-from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compile, fullmatch as re_fullmatch
+from re import IGNORECASE, Match as re_Match, compile as re_compile, fullmatch as re_fullmatch
 
 from engram.constants_relation import MAX_TEMPORAL_SOURCE_BYTES, TEMPORAL_QUERY_FIELDS, TemporalAxis, TemporalQueryOperator
 from engram.errors import InvalidRequestError

@@ -3,7 +3,7 @@
 from collections import Counter
 from itertools import islice
 from math import log as math_log
-from re import IGNORECASE as IGNORECASE, UNICODE as UNICODE, compile as re_compile
+from re import IGNORECASE, UNICODE, compile as re_compile
 from threading import Lock as threading_Lock
 from unicodedata import normalize as unicodedata_normalize
 

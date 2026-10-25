@@ -184,7 +184,7 @@ def proposition_validity_inputs(
     valid_time_match_available: object = True,
 ) -> dict:
     """Build inspectable temporal inputs for one eligible Proposition."""
-    evaluation, evaluation_available = require_available_utc_timestamp(evaluation_time, True, "Proposition evaluation_time")
+    evaluation, _ = require_available_utc_timestamp(evaluation_time, True, "Proposition evaluation_time")
     normalized_active = require_bool(active, "Proposition active")
     normalized_system_current = require_bool(system_current, "Proposition system_current")
     normalized_valid_time_current = require_bool(valid_time_current, "Proposition valid_time_current")

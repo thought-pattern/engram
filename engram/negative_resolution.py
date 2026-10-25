@@ -27,7 +27,13 @@ from engram.feedback_values import (
     internal_fingerprint,
     internal_integer,
 )
-from engram.identity import query_identity, query_identity_to_dict, scope_key_to_dict, validate_query_identity, validate_scope_key
+from engram.identity import (
+    query_identity as build_query_identity,
+    query_identity_to_dict,
+    scope_key_to_dict,
+    validate_query_identity,
+    validate_scope_key,
+)
 from engram.validation import require_bool, require_utc_datetime, utc_datetime
 
 
@@ -145,7 +151,7 @@ def empty_negative_resolution() -> dict:
     instead of an absent value; each call returns an isolated record.
     """
     key = negative_resolution_key(
-        query_identity=query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
+        query_identity=build_query_identity("unavailable", scope=EMPTY_SCOPE_KEY),
         scope=EMPTY_SCOPE_KEY,
         constraint_fingerprint=EMPTY_FINGERPRINT,
         resolver_plan_fingerprint=EMPTY_FINGERPRINT,

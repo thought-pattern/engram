@@ -9,8 +9,6 @@ from engram import config as engram_config_module
 from engram.config import DEFAULT_CONFIG_PATH, config_from_dict, engram_config, graph_config, load_config
 from engram.constants import SessionOverflow
 
-"""Tests for configuration."""
-
 
 def test_engram_config_custom_values() -> None:
     config = engram_config(

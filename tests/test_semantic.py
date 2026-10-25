@@ -40,6 +40,8 @@ SEMANTIC_ARTIFACT_FIELDS = {
 
 
 class FakeSemanticModel:
+    """A deterministic sentence encoder double that records the texts it encodes."""
+
     def __init__(self, dimension: int = 4) -> None:
         self.dimension = dimension
         self.encoded_texts: list[str] = []

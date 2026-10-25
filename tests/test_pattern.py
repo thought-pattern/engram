@@ -15,7 +15,7 @@ def trie_match(pattern: str, text: str) -> tuple:
     return result
 
 
-"""Tests for normalize_pattern function."""
+# Tests for normalize_pattern function.
 
 
 def test_normalize_pattern_lowercase():
@@ -66,7 +66,7 @@ def test_matching_hyphenated_input_matches_spaced_pattern():
     assert result
 
 
-"""Exact words and wildcards."""
+# Exact words and wildcards.
 
 
 def test_pattern_exact_word():
@@ -80,7 +80,7 @@ def test_pattern_wildcard_star():
     assert not trie_match("HELLO *", "hello")  # * needs at least one word
 
 
-"""Matches and captures."""
+# Matches and captures.
 
 
 def test_matching_exact_match():
@@ -134,7 +134,7 @@ def test_matching_wildcard_in_middle():
     assert list(result[1]) == ["beautiful"]
 
 
-"""Tests for # and ^ wildcards (zero or more words)."""
+# Tests for # and ^ wildcards (zero or more words).
 
 
 def test_zero_or_more_wildcards_hash_matches_zero_words():
@@ -308,7 +308,7 @@ def test_zero_or_more_wildcards_underscore_requires_one_word():
     assert not result  # _ needs at least one word
 
 
-"""Tests for PatternMatcher with # and ^ wildcards."""
+# Tests for PatternMatcher with # and ^ wildcards.
 
 
 def test_pattern_matcher_zero_wildcards_hash_pattern_match():
@@ -375,7 +375,7 @@ def test_pattern_matcher_zero_wildcards_hash_has_priority_over_star():
     assert result[0] == "Zero match"
 
 
-"""Tests for PatternMatcher class."""
+# Tests for PatternMatcher class.
 
 
 def test_pattern_matcher_add_and_match():
@@ -515,7 +515,7 @@ def test_pattern_matcher_get_patterns():
     assert ("WORLD", "response2") in patterns
 
 
-"""Tests for pattern matching with user input containing punctuation."""
+# Tests for pattern matching with user input containing punctuation.
 
 
 def test_pattern_matcher_with_punctuation_input_with_exclamation():
@@ -539,7 +539,7 @@ def test_pattern_matcher_with_punctuation_input_with_multiple_punctuation():
     assert result == ("I am a bot", [], [], [], "WHAT IS YOUR NAME", "", "")
 
 
-"""Tests for context-aware pattern matching (that/topic)."""
+# Tests for context-aware pattern matching (that/topic).
 
 
 def test_pattern_matcher_context_matching_topic_filter_matches():
@@ -691,7 +691,7 @@ def test_pattern_matcher_context_matching_get_patterns_with_context():
     assert ("WORLD", "response2", "", "") in patterns
 
 
-"""Tests for {set:name} pattern matching."""
+# Tests for {set:name} pattern matching.
 
 
 def test_set_pattern_matching_set_match_basic():
@@ -796,7 +796,7 @@ def test_set_pattern_matching_multiple_sets_in_pattern():
     assert result[1] == ["big", "red"]
 
 
-"""Tests for {bot:name} pattern matching."""
+# Tests for {bot:name} pattern matching.
 
 
 def test_bot_pattern_matching_bot_match_basic():
@@ -876,7 +876,7 @@ def test_matcher_rejects_malformed_tables():
             PatternMatcher(sets=sets, bot_properties=bot)
 
 
-"""Tests for normalize_pattern with set/bot references."""
+# Tests for normalize_pattern with set/bot references.
 
 
 def test_normalize_pattern_with_refs_preserve_set_reference():
@@ -903,7 +903,7 @@ def test_normalize_pattern_with_refs_refs_with_wildcards():
     assert result == "* is {set:color} and *"
 
 
-"""Tests for $ priority operator."""
+# Tests for $ priority operator.
 
 
 def test_priority_operator_normalize_preserves_dollar():
@@ -960,7 +960,7 @@ def test_priority_operator_multiple_dollar_words():
     assert not trie_match("$HELLO $WORLD", "hello there")
 
 
-"""Tests for stemming support in pattern matching."""
+# Tests for stemming support in pattern matching.
 
 
 def test_stemming_support_stemming_disabled_by_default():
@@ -1032,7 +1032,7 @@ def test_stemming_support_stemming_cats_mammals():
     assert result[0] == "Cats are mammals."
 
 
-"""Tests for WordNet lemmatization support in pattern matching."""
+# Tests for WordNet lemmatization support in pattern matching.
 
 
 def test_lemmatization_support_lemmatization_disabled_by_default():
@@ -1092,7 +1092,7 @@ def test_lemmatization_support_lemmatization_with_wildcard():
     assert result
 
 
-"""Short tokens are not stemmed: 'his' must not become the greeting 'hi'."""
+# Short tokens are not stemmed: 'his' must not become the greeting 'hi'.
 
 
 def test_stemming_false_positives_possessive_does_not_match_greeting():

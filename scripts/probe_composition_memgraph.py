@@ -3,12 +3,7 @@
 from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps
 from pathlib import Path
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.config import load_config
 from engram.constants_relation import ExpectedObjectType

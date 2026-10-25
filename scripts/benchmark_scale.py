@@ -11,12 +11,8 @@ from gc import collect as gc_collect, freeze as gc_freeze, unfreeze as gc_unfree
 from itertools import count as itertools_count
 from json import dumps as json_dumps
 from pathlib import Path
-from sys import argv as sys_argv, path as sys_path, stderr as sys_stderr
+from sys import argv as sys_argv, stderr as sys_stderr
 from time import perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config

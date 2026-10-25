@@ -369,7 +369,8 @@ def test_visibility_evaluator_rejects_falsey_invalid_authority() -> None:
 
 
 def test_visibility_authority_result_must_match_exact_input() -> None:
-    def wrong_scope(scope_value, ownership):
+    def wrong_scope(internal_scope, ownership):
+        del internal_scope
         result = visibility_authorization(
             True,
             OTHER_TENANT_SCOPE,

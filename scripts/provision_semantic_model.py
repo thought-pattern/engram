@@ -4,10 +4,7 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from shutil import rmtree as shutil_rmtree
-from sys import path as sys_path
 from tempfile import TemporaryDirectory
-
-sys_path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from huggingface_hub import snapshot_download
 

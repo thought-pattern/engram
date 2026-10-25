@@ -7,13 +7,8 @@ from json import dumps as json_dumps
 from pathlib import Path
 from platform import machine as platform_machine
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
-
-REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants_evidence import DisclosureBasis, PropositionOwnership
 from engram.constants_resolution import CostClass, ResolutionOutcome, ResolverState
@@ -80,7 +75,8 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-class SyntheticResolver:
+# Benchmark double of the resolver protocol: it accepts the frame and budget every resolver receives and uses neither.
+class SyntheticResolver:  # pylint: disable=unused-argument
     """Bounded synthetic resolver used only by the offline benchmark."""
 
     cost_class = next(iter(resolution_budget().get("allowed_cost_classes", tuple(CostClass))))

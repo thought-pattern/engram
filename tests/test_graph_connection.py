@@ -20,15 +20,15 @@ SLACK_SECONDS = 0.25
 FAIL_FAST_SECONDS = 0.05
 
 
-@fixture
-def stub():
+@fixture(name="stub")
+def stub_fixture():
     server = BoltStub()
     yield server
     server.close()
 
 
-@fixture
-def client(stub):
+@fixture(name="client")
+def client_fixture(stub):
     connection = MemGraphConnection(host="127.0.0.1", port=stub.port)
     assert connection.connect()
     yield connection

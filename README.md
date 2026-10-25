@@ -460,7 +460,7 @@ the factor (see Eviction and Hit Tracking above).
 The one-shot CLI query uses the same unified resolver as Python, MCP, and gRPC:
 
 ```bash
-python scripts/cli.py --config config.yml query "What evidence is available?" \
+PYTHONPATH=. python3 scripts/cli.py --config config.yml query "What evidence is available?" \
   --request-id cli-query-1
 ```
 
@@ -636,7 +636,7 @@ Engram only reads the graph. The graph's owner creates its schema, and Engram
 checks it:
 
 ```bash
-python scripts/verify_schema.py           # check a graph is compatible
+PYTHONPATH=. python3 scripts/verify_schema.py   # check a graph is compatible
 ```
 
 Engram's graph-facing queries, decoders, and accepted-response support values

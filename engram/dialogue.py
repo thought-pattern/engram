@@ -7,7 +7,7 @@ references, whether a conversationally extracted fact is durable enough to
 cache, and which sentence should represent a multi-sentence turn.
 """
 
-from re import IGNORECASE as IGNORECASE, findall as re_findall, finditer as re_finditer, search as re_search, sub as re_sub
+from re import IGNORECASE, findall as re_findall, finditer as re_finditer, search as re_search, sub as re_sub
 
 from engram.constants import EMPTY_MAPPING
 from engram.constants_dialogue import (

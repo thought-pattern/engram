@@ -65,7 +65,7 @@ def test_normalize_spec_example() -> None:
     assert normalize("What's the S&P 500 price?") == "whats the sp 500 price"
 
 
-"""Tests for keyword extraction."""
+# Tests for keyword extraction.
 
 
 def test_extract_keywords_basic_extraction() -> None:
@@ -119,7 +119,7 @@ def test_required_nltk_failure_is_not_silently_degraded(monkeypatch) -> None:
         extract_keywords("required tokenizer", DEFAULT_STOPWORDS)
 
 
-"""Tests for query expansion."""
+# Tests for query expansion.
 
 
 def test_expand_query_expands_with_nouns_only() -> None:
@@ -171,7 +171,7 @@ def test_expand_query_spec_example() -> None:
     assert "France" in result
 
 
-"""Tests for stemming functions."""
+# Tests for stemming functions.
 
 
 def test_stemming_stem_text() -> None:
@@ -181,7 +181,7 @@ def test_stemming_stem_text() -> None:
     assert "run" in result
 
 
-"""Tests for lemmatization functions."""
+# Tests for lemmatization functions.
 
 
 def test_lemmatization_lemmatize_noun() -> None:
@@ -208,7 +208,7 @@ def test_lemmatization_lemmatize_default_noun() -> None:
     assert lemmatize_word("cats") == "cat"
 
 
-"""Tests for store-vocabulary spelling correction."""
+# Tests for store-vocabulary spelling correction.
 
 
 def test_correct_spelling_corrects_transposition_typo() -> None:
@@ -248,7 +248,7 @@ def test_correct_spelling_empty_vocabulary_is_no_op() -> None:
     assert correct_spelling("abotu anything", set()) == "abotu anything"
 
 
-"""Tests for clause trimming."""
+# Tests for clause trimming.
 
 
 def test_first_clause_cuts_new_subject_verb_clause() -> None:
@@ -272,7 +272,7 @@ def test_first_clause_short_capture_unchanged() -> None:
     assert first_clause("") == ""
 
 
-"""A pronoun right after a noun is a relative clause, not a new sentence."""
+# A pronoun right after a noun is a relative clause, not a new sentence.
 
 
 def test_first_clause_relative_clauses_keeps_relative_clause_after_noun() -> None:
@@ -296,7 +296,7 @@ def test_stem_short_tokens_longer_tokens_still_stem() -> None:
     assert "cat" in stem_text("cats everywhere")
 
 
-"""The English-word gate must recognize inflections the words corpus lacks."""
+# The English-word gate must recognize inflections the words corpus lacks.
 
 
 def test_spell_correction_inflections_inflected_real_words_never_corrected() -> None:
@@ -324,7 +324,7 @@ def test_spell_correction_inflections_is_known_word_covers_lemmas() -> None:
     assert not is_known_word("gravty")
 
 
-"""Tests for name extraction from self-introduction captures."""
+# Tests for name extraction from self-introduction captures.
 
 
 def test_extract_name_strips_filler_and_trailing_markers() -> None:

@@ -164,13 +164,13 @@ def test_concurrent_turns_store_one_copy_of_the_same_fact() -> None:
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     errors: list[Exception] = []
 
-    def worker(n: int) -> None:
+    def worker() -> None:
         try:
             pipeline.chat(engram, "Sushi is good.", user_id="Robin")
         except Exception as err:
             errors.append(err)
 
-    threads = [threading_Thread(target=worker, args=(n,)) for n in range(THREADS)]
+    threads = [threading_Thread(target=worker) for _ in range(THREADS)]
     for thread in threads:
         thread.start()
     for thread in threads:

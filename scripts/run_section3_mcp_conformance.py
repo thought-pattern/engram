@@ -8,17 +8,12 @@ from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from pathlib import Path
-from sys import argv as sys_argv, path as sys_path
+from sys import argv as sys_argv
 from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 
-from yaml import safe_dump as yaml_safe_dump, safe_load as yaml_safe_load
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
-
 from mcp.client import Client
+from yaml import safe_dump as yaml_safe_dump, safe_load as yaml_safe_load
 
 from engram.constants_service import (
     MCP_CONFORMANCE_MESSAGES,
@@ -29,6 +24,8 @@ from engram.constants_service import (
 from engram.conversation_seed import load_conversation_pairs
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from scripts.benchmark_metadata import benchmark_source_state
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns.json")
 PREFERENCE_CONTINUITY_SEED = REPOSITORY / "eval" / "fixtures" / "preference-continuity-mcp-seed.json"

@@ -298,7 +298,8 @@ class StandaloneSemanticResolver:
         self.internal_engram = engram
         self.internal_clock_ns = clock_ns
 
-    def available(self, frame: dict) -> bool:
+    # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
+    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
         settings = self.internal_engram.config.get("semantic", {})
         result = bool(settings.get("enabled", False) and self.internal_engram.semantic_retriever.available)
         return result
@@ -454,7 +455,8 @@ class SparseResolver:
         self.internal_engram = engram
         self.internal_clock_ns = clock_ns
 
-    def available(self, frame: dict) -> bool:
+    # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
+    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
         settings = self.internal_engram.config.get("sparse", {})
         result = bool(settings.get("enabled", False))
         return result

@@ -30,7 +30,7 @@ def test_component_preflight_reports_disabled_sparse_readiness_independently() -
     assert engine.component_status.get("sparse", {}) == {"enabled": False, "ready": False}
 
 
-"""Tests for statement storage."""
+# Tests for statement storage.
 
 
 def test_engram_store_store_basic() -> None:
@@ -114,7 +114,7 @@ def test_engram_store_duplicate_statement_id_is_rejected_without_mutation() -> N
     assert not engram.pattern_query("second")
 
 
-"""Tests for query operations."""
+# Tests for query operations.
 
 
 def test_engram_query_query_basic() -> None:
@@ -210,7 +210,7 @@ def test_engram_query_query_with_session_context() -> None:
     assert len(result.get("keywords", [])) > 1
 
 
-"""Tests for hit recording."""
+# Tests for hit recording.
 
 
 def test_engram_record_hit_record_hit() -> None:
@@ -294,7 +294,7 @@ def test_engram_evicting_without_the_store_locks_is_refused() -> None:
     assert metrics.get_dynamic_count(engram) == 1
 
 
-"""Tests for deterministic LRU eviction."""
+# Tests for deterministic LRU eviction.
 
 
 def test_eviction_lru_evicts_oldest_when_no_entry_was_reused() -> None:
@@ -442,7 +442,7 @@ def test_eviction_lru_has_no_hit_rate_protection() -> None:
     assert engram.get_statement(id3)
 
 
-"""Tests for session management."""
+# Tests for session management.
 
 
 def test_engram_sessions_create_session() -> None:
@@ -608,7 +608,7 @@ def test_engram_sessions_session_limit_reject() -> None:
         sessions.start_session(engram, session_id="third")
 
 
-"""Tests for process-memory lifetime."""
+# Tests for process-memory lifetime.
 
 
 def test_new_process_memory_starts_empty() -> None:
@@ -632,7 +632,7 @@ def test_process_memory_keeps_runtime_configuration_without_serializing_it() -> 
     assert engram.config.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
 
 
-"""Tests for initialization patterns."""
+# Tests for initialization patterns.
 
 
 def test_engram_initialization_load_corpus() -> None:
@@ -688,7 +688,7 @@ def test_static_data_validation_precedes_mutation() -> None:
     assert engram.statements == []
 
 
-"""Tests for metrics."""
+# Tests for metrics.
 
 
 def test_engram_metrics_get_metrics() -> None:
@@ -718,7 +718,7 @@ def test_engram_metrics_overall_hit_rate() -> None:
     assert metrics.get_overall_hit_rate(engram) == 0.5
 
 
-"""Tests for context-aware pattern matching with that/topic."""
+# Tests for context-aware pattern matching with that/topic.
 
 
 def test_engram_context_matching_pattern_with_topic() -> None:
@@ -901,7 +901,7 @@ def test_engram_context_matching_context_remains_available_in_process() -> None:
     assert found
 
 
-"""Tests for word sets and bot properties."""
+# Tests for word sets and bot properties.
 
 
 def test_engram_sets_and_bot_properties_replace_and_read_sets() -> None:
@@ -988,7 +988,7 @@ def test_engram_sets_and_bot_properties_sets_pattern_added_after_set() -> None:
     assert result
 
 
-"""Tests for multi-sentence input processing."""
+# Tests for multi-sentence input processing.
 
 
 def test_multi_sentence_input_selects_the_final_response() -> None:
@@ -1050,7 +1050,7 @@ def test_multi_sentence_input_empty_input() -> None:
     assert not result
 
 
-"""Priority prefers a statement among equals (keyword and pattern paths)."""
+# Priority prefers a statement among equals (keyword and pattern paths).
 
 
 def test_statement_priority_pattern_query_prefers_priority() -> None:
@@ -1085,7 +1085,7 @@ def test_statement_priority_priority_requires_a_match() -> None:
     assert result.get("matches", []) == []
 
 
-"""Tests for aging hit statistics."""
+# Tests for aging hit statistics.
 
 
 def test_decay_statistics_decay_halves_counts() -> None:
@@ -1161,7 +1161,7 @@ def test_decay_statistics_decay_validates_factor() -> None:
         metrics.decay_statistics(engram, factor=float("nan"))
 
 
-"""Integration tests for spelling correction and response polish."""
+# Integration tests for spelling correction and response polish.
 
 
 def test_input_output_cleanup_pattern_query_leaves_typos_unmatched() -> None:
@@ -1248,7 +1248,7 @@ def test_input_output_cleanup_sentiment_clause_flow_end_to_end() -> None:
     assert result[2] == "I'm sorry to hear you're tired. Want to talk about it?"
 
 
-"""The catch-all template can branch on input intent via {qtype:...}."""
+# The catch-all template can branch on input intent via {qtype:...}.
 
 
 INTENT_CATCHALL_TEMPLATE = {
@@ -1281,7 +1281,7 @@ def test_question_aware_catchall_statement_gets_statement_fallback() -> None:
     assert result[2] == "Tell me more about that."
 
 
-"""Underscore-prefixed predicates are template-local, never session state."""
+# Underscore-prefixed predicates are template-local, never session state.
 
 
 def test_scratch_predicates_scratch_predicate_does_not_persist() -> None:
@@ -1330,7 +1330,7 @@ def test_query_session_symmetry_query_creates_missing_session() -> None:
     assert "fresh_session" in engram.sessions
 
 
-"""Engine-level regressions from the 100-turn conversation soak."""
+# Engine-level regressions from the 100-turn conversation soak.
 
 
 def test_soak_regressions_typo_question_not_learned_as_fact() -> None:
@@ -1385,7 +1385,7 @@ def test_user_assertions_answer_only_their_speaker() -> None:
     assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["user-a"]
 
 
-"""Research facts enter shared knowledge without entering a user context."""
+# Research facts enter shared knowledge without entering a user context.
 
 
 def test_external_fact_ingestion_add_fact_is_unattributed_and_globally_retrievable() -> None:
@@ -1448,7 +1448,7 @@ def test_external_fact_ingestion_add_fact_validates_input() -> None:
         engram.add_fact("A fact", source_label=())
 
 
-"""A known fact stays stored. The matched category is what is spoken."""
+# A known fact stays stored. The matched category is what is spoken.
 
 
 def test_known_fact_contradiction_keeps_the_category_and_replaces_the_stored_fact() -> None:
@@ -1476,7 +1476,7 @@ def test_known_fact_restatement_keeps_the_category() -> None:
     assert len(stored) == 1
 
 
-"""Learned facts are keyword-indexed under their full content."""
+# Learned facts are keyword-indexed under their full content.
 
 
 def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() -> None:

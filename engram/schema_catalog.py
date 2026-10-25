@@ -1,7 +1,7 @@
 """Independent static and live catalog contracts for Engram Memgraph DDL."""
 
 from importlib.resources import files
-from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
+from re import IGNORECASE, MULTILINE, compile as re_compile
 
 # A label index has no property; the catalog represents it with an empty property name.
 ORDINARY_INDEX_PATTERN = re_compile(

@@ -35,7 +35,7 @@ def test_enabled_spacy_feature_fails_preflight_without_the_model(monkeypatch):
         Engram(config=engram_config(use_spacy_facts=True))
 
 
-"""Tests for noun-chunk phrase keyword extraction."""
+# Tests for noun-chunk phrase keyword extraction.
 
 
 def test_phrase_keywords_keeps_multiword_phrase():
@@ -54,7 +54,7 @@ def test_phrase_keywords_empty():
     assert extract_keywords_spacy("", DEFAULT_STOPWORDS) == []
 
 
-"""Tests for spaCy context-aware lemmatization."""
+# Tests for spaCy context-aware lemmatization.
 
 
 def test_spacy_lemmatization_verb_context():
@@ -75,7 +75,7 @@ def test_spacy_lemmatization_matcher_uses_spacy_lemmas():
     assert result[0] == "You see {star1}"
 
 
-"""use_spacy_facts routes pattern_query fact learning through the dependency parser."""
+# use_spacy_facts routes pattern_query fact learning through the dependency parser.
 
 
 def test_spacy_fact_learning_learns_relational_fact():

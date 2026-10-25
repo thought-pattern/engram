@@ -89,7 +89,7 @@ def test_fact_extractor_query_patterns_are():
     assert "WHAT IS MAMMALS" in patterns
 
 
-"""Integration tests for fact learning in Engram."""
+# Integration tests for fact learning in Engram.
 
 
 def test_fact_learning_integration_learn_and_retrieve_fact():
@@ -103,14 +103,14 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
     result1 = engram.pattern_query("Dogs are loyal")
     # Should acknowledge learning (via catch-all with learning)
     assert result1
-    stmt, captured, response = result1
+    _, _, response = result1
 
     assert response.casefold() == "default"
 
     # Retrieve the fact
     result2 = engram.pattern_query("What are dogs")
     assert result2
-    stmt, captured, response = result2
+    _, _, response = result2
     assert response == "Dogs are loyal."
 
 
@@ -127,7 +127,7 @@ def test_fact_learning_integration_learn_and_retrieve_with_article():
     # Retrieve with article
     result = engram.pattern_query("What is the moon")
     assert result
-    stmt, captured, response = result
+    _, _, response = result
     assert response == "The moon is bright."
 
 
@@ -147,11 +147,11 @@ def test_fact_learning_integration_no_overwrite_existing():
     # Should still return custom response
     result = engram.pattern_query("cats")
     assert result
-    stmt, captured, response = result
+    _, _, response = result
     assert response == "Custom response"
 
 
-"""The pre-copula span must look like a plain noun phrase."""
+# The pre-copula span must look like a plain noun phrase.
 
 
 def test_fact_extraction_guardrails_reject_embedded_clause_copula():
@@ -185,7 +185,7 @@ def test_fact_extraction_guardrails_accept_single_noun_like_ing_subject():
     assert fact.get("obj", "") == "an electrical discharge"
 
 
-"""Tests for the public question/intent detection."""
+# Tests for the public question/intent detection.
 
 
 def test_question_detection_trailing_question_mark():
@@ -208,7 +208,7 @@ def test_question_detection_statement_is_not_question():
     assert not is_question("The sky is blue")
 
 
-"""Tests for input intent classification."""
+# Tests for input intent classification.
 
 
 def test_input_kind_question():
@@ -226,7 +226,7 @@ def test_input_kind_statement():
     assert input_kind("I lost my hat yesterday") == "statement"
 
 
-"""Junk-fact families the 100-turn conversation soak surfaced."""
+# Junk-fact families the 100-turn conversation soak surfaced.
 
 
 def test_fact_extraction_soak_regressions_reject_pronoun_anywhere_in_subject():
@@ -255,7 +255,7 @@ def test_fact_extraction_soak_regressions_legitimate_facts_still_learn():
     assert extract_fact("Rex is a golden retriever").get("subject", "") == "Rex"
 
 
-"""A leading near-miss of a question word is a typo'd question."""
+# A leading near-miss of a question word is a typo'd question.
 
 
 def test_typo_question_detection_typo_question_words_detected():

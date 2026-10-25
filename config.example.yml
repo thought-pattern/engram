@@ -54,7 +54,7 @@ sparse:
 
 # --- Standalone semantic retrieval (optional, local, rebuildable) ---
 # Provision the pinned artifact explicitly with
-# `python scripts/provision_semantic_model.py`, then copy the emitted manifest
+# `PYTHONPATH=. python3 scripts/provision_semantic_model.py`, then copy the emitted manifest
 # values below. Runtime startup never downloads model files. Canonical requests
 # and aliases are embedded; accepted-response prose is never embedded.
 semantic:
@@ -140,7 +140,7 @@ conversation:
 # Graph database connection over Bolt with Cypher queries (for example Memgraph
 # or Neo4j). The graph's schema must include every definition in engram/schema.cypher;
 # it may have more. The graph's owner creates them; Engram only reads the graph.
-# Check a graph with: python scripts/verify_schema.py The password is never saved with cache state;
+# Check a graph with `PYTHONPATH=. python3 scripts/verify_schema.py`. The password is never saved with cache state;
 # supply it through this external runtime configuration.
 # The graph database is optional and off by default, so Engram runs without one.
 # To run with a graph database, set enabled: true and set host, port, username

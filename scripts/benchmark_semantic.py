@@ -8,13 +8,11 @@ from math import ceil as math_ceil
 from pathlib import Path
 from resource import RUSAGE_SELF, getrusage as resource_getrusage
 from statistics import fmean as statistics_fmean
-from sys import path as sys_path, platform as sys_platform
+from sys import platform as sys_platform
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from psutil import Process as psutil_Process
-
-sys_path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import reranker_config, semantic_config, sparse_config

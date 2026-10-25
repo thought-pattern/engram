@@ -46,7 +46,7 @@ def test_statement_unattributed_statement_defaults() -> None:
     assert stmt.get("pattern_aliases", []) == []
 
 
-"""Tests for KeywordEntry model."""
+# Tests for KeywordEntry model.
 
 
 def test_keyword_entry_hit_rate_calculation() -> None:
@@ -59,7 +59,7 @@ def test_keyword_entry_hit_rate_zero_hits() -> None:
     assert keyword_entry_hit_rate(entry) == 0.0
 
 
-"""Tests for Session model."""
+# Tests for Session model.
 
 
 def test_session_create() -> None:

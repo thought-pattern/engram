@@ -240,7 +240,7 @@ def pattern_query(
 
         if scoped_match:
             match_owner, result = scoped_match
-            (response_text, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that) = result
+            _, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = result
             captured = restore_capture_case(captured, sentence)
 
             # Find the statement carrying this (pattern, topic, that).
@@ -411,7 +411,7 @@ def process_statement_template(
             )
         if scoped_match:
             match_owner, result = scoped_match
-            (response_text, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that) = result
+            _, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that = result
             with engram.mutation_lock, engram.statement_lock:
                 redirect_stmt = engram.statement_for_match(matched_pattern, matched_topic, matched_that, match_owner)
                 if redirect_stmt:

@@ -9,7 +9,7 @@ from decimal import Decimal, DecimalException, localcontext
 from hashlib import sha256 as hashlib_sha256
 from importlib.resources import files
 from logging import getLogger as logging_getLogger
-from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
+from re import IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
 from uuid import UUID
 from zoneinfo import ZoneInfo
 

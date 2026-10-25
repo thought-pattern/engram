@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 
-from sentence_transformers import SentenceTransformer
-
 from engram.artifacts import validate_cached_response_artifact
 from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.constants_graph import PropositionProjectionQuery
@@ -129,12 +127,8 @@ BY_ID_PROJECTION_CHANGES = {
 }
 
 
-class ReadyEmbeddingModel(SentenceTransformer):
-    def __init__(self) -> None:
-        pass
-
-    def __bool__(self) -> bool:
-        return True
+class ReadyEmbeddingModel:
+    """A loaded-model marker: the vector resolver checks only that a model is present."""
 
 
 class ReadyGraphCapability:
@@ -143,6 +137,7 @@ class ReadyGraphCapability:
     available = True
 
     def empty_rows(self, *internal_args, **internal_kwargs) -> list:
+        del internal_args, internal_kwargs
         result = []
         return result
 
@@ -172,6 +167,8 @@ def enable_graph_resolvers(engine: Engram, *, vector: bool = False) -> None:
 
 
 class FakeResolver:
+    """A configurable resolver double that returns a fixed result or injects a failure."""
+
     def __init__(
         self,
         name: str,
@@ -191,6 +188,7 @@ class FakeResolver:
         self.calls = 0
 
     def available(self, frame: dict) -> bool:
+        del frame
         if self.internal_availability_error:
             raise RuntimeError("injected availability failure")
         result = self.internal_available
@@ -202,6 +200,7 @@ class FakeResolver:
         budget: dict,
         cooperative_check=(),
     ) -> dict:
+        del frame, budget
         if cooperative_check:
             cooperative_check()
         self.calls += 1

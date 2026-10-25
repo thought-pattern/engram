@@ -7,13 +7,8 @@ from math import log as math_log
 from pathlib import Path
 from sqlite3 import connect as sqlite3_connect
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import sparse_config

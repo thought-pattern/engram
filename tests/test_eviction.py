@@ -9,7 +9,7 @@ from engram.metrics import get_dynamic_count
 from engram.models import record_statement_hit
 from engram.statement_store import lru_entry
 
-"""Capacity holds under engine-only usage."""
+# Capacity holds under engine-only usage.
 
 
 def test_capacity_enforcement_capacity_respected_without_manual_stats() -> None:
@@ -42,7 +42,7 @@ def test_lru_prefers_recently_hit_statement() -> None:
     assert not engram.get_statement(id2)
 
 
-"""Evicting or retiring a statement must not leave its pattern matching."""
+# Evicting or retiring a statement must not leave its pattern matching.
 
 
 def test_pattern_cleanup_eviction_removes_pattern_from_matcher() -> None:

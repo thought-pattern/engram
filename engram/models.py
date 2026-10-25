@@ -135,7 +135,7 @@ def session(
 
 
 def session_update_context(
-    session: dict,
+    sess: dict,
     previous_response: str,
     user_input: str = "",
     *,
@@ -144,65 +144,65 @@ def session_update_context(
     """Update the session's context after a turn.
 
     Args:
-        session: Session dict.
+        sess: Session dict.
         previous_response: Bot's response text.
         user_input: User's input text (optional).
         moment: The caller's time of the turn.
     """
-    session["previous_response"] = previous_response
-    session["last_active"] = moment
-    history_size = session.get("history_size", 0)
+    sess["previous_response"] = previous_response
+    sess["last_active"] = moment
+    history_size = sess.get("history_size", 0)
 
     # Update response history
     if previous_response:
-        response_history = session.setdefault("response_history", [])
+        response_history = sess.setdefault("response_history", [])
         response_history.insert(0, previous_response)
         if len(response_history) > history_size:
             response_history.pop()
 
         # Update that_history (split into sentences)
         sentences = split_sentences(previous_response.upper())
-        that_history = session.setdefault("that_history", [])
+        that_history = sess.setdefault("that_history", [])
         that_history.insert(0, sentences)
         if len(that_history) > history_size:
             that_history.pop()
 
     # Update input history
     if user_input:
-        input_history = session.setdefault("input_history", [])
+        input_history = sess.setdefault("input_history", [])
         input_history.insert(0, user_input)
         if len(input_history) > history_size:
             input_history.pop()
 
 
-def session_record_input(session: dict, user_input: str, moment: datetime) -> bool:
+def session_record_input(sess: dict, user_input: str, moment: datetime) -> bool:
     """Record an input at ``moment`` without changing the previous bot response."""
     recorded = bool(user_input)
     if recorded:
-        session["last_active"] = moment
-        input_history = session.setdefault("input_history", [])
+        sess["last_active"] = moment
+        input_history = sess.setdefault("input_history", [])
         input_history.insert(0, user_input)
-        if len(input_history) > session.get("history_size", 0):
+        if len(input_history) > sess.get("history_size", 0):
             input_history.pop()
     return recorded
 
 
 def session_update_dialogue(
-    session: dict,
+    sess: dict,
     dialogue_act: str,
     active_topic: str = "",
     entities=(),
     fact_admissions=(),
 ) -> None:
     """Update per-user discourse state independently of response history."""
-    session.setdefault("entities", [])
+    sess.setdefault("entities", [])
 
-    session["active_topic"] = active_topic
-    session["last_fact_admissions"] = list(fact_admissions or ())
-    dialogue_act_history = session.setdefault("dialogue_act_history", [])
+    sess["active_topic"] = active_topic
+    sess["last_fact_admissions"] = list(fact_admissions or ())
+    dialogue_act_history = sess.setdefault("dialogue_act_history", [])
     if dialogue_act:
         dialogue_act_history.insert(0, dialogue_act)
-        if len(dialogue_act_history) > session.get("history_size", 0):
+        if len(dialogue_act_history) > sess.get("history_size", 0):
             dialogue_act_history.pop()
 
     for entity in entities or ():
@@ -211,24 +211,20 @@ def session_update_dialogue(
             continue
         entity_label = str(entity.get("label", ""))
         matching = [
-            existing
-            for existing in session.get("entities", [])
-            if str(existing.get("text", "")).casefold() == entity_text.casefold()
+            existing for existing in sess.get("entities", []) if str(existing.get("text", "")).casefold() == entity_text.casefold()
         ]
         for existing in matching:
             existing_priority = DIALOGUE_ENTITY_LABEL_PRIORITY.get(str(existing.get("label", "")), 0)
             if existing_priority > DIALOGUE_ENTITY_LABEL_PRIORITY.get(entity_label, 0):
                 entity_label = str(existing.get("label", ""))
         retained_entities = [
-            existing
-            for existing in session.get("entities", [])
-            if str(existing.get("text", "")).casefold() != entity_text.casefold()
+            existing for existing in sess.get("entities", []) if str(existing.get("text", "")).casefold() != entity_text.casefold()
         ]
         retained_entities.insert(0, {"text": entity_text, "label": entity_label})
-        session["entities"] = retained_entities
-    del session.setdefault("entities", [])[MAX_SESSION_ENTITIES:]
+        sess["entities"] = retained_entities
+    del sess.setdefault("entities", [])[MAX_SESSION_ENTITIES:]
 
 
-def session_touch(session: dict, moment: datetime) -> None:
+def session_touch(sess: dict, moment: datetime) -> None:
     """Set the session's last_active time to ``moment``."""
-    session["last_active"] = moment
+    sess["last_active"] = moment

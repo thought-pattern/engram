@@ -285,7 +285,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
 
 def test_learn_response_restores_integral_support_revisions_from_struct() -> None:
     core = GrpcCore()
-    with running_server(core) as (_, internal_channel, stub):
+    with running_server(core) as (_, _, stub):
         learned = as_dict(
             stub.LearnResponse(
                 engram_pb2.LearnResponseRequest(

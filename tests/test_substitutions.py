@@ -73,7 +73,7 @@ def test_apply_substitutions_no_match():
     assert result == "goodbye world"
 
 
-"""Tests for contractions expansion."""
+# Tests for contractions expansion.
 
 
 def test_expand_contractions_common_contractions():
@@ -118,7 +118,7 @@ def test_expand_contractions_no_contractions():
     assert result == text
 
 
-"""Tests for gender substitution (gendered pronouns -> singular they/them)."""
+# Tests for gender substitution (gendered pronouns -> singular they/them).
 
 
 def test_apply_gender_he_to_they():
@@ -155,7 +155,7 @@ def test_apply_gender_custom_gender_map():
     assert "female" in result.lower()
 
 
-"""Tests for sentence splitting."""
+# Tests for sentence splitting.
 
 
 def test_split_sentences_single_sentence():
@@ -221,7 +221,7 @@ def test_split_sentences_decimals_handled():
     assert len(result) == 2
 
 
-"""Integration tests for contractions with Engram."""
+# Integration tests for contractions with Engram.
 
 
 def test_contraction_integration_contractions_expanded_in_pattern_query():

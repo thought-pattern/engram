@@ -27,7 +27,7 @@ misses or finds only a pure wildcard. Their captures are the original words.
 """
 
 from functools import lru_cache
-from re import IGNORECASE as IGNORECASE, Match as re_Match, compile as re_compile, sub as re_sub
+from re import IGNORECASE, Match as re_Match, compile as re_compile, sub as re_sub
 
 from engram.constants import EMPTY_MAPPING
 from engram.constants_language import MAX_PATTERN_WORDS, WILDCARD_TOKENS

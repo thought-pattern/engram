@@ -18,6 +18,8 @@ from tests.test_support_scope_metadata import SCOPES
 
 
 class RemovalExample:
+    """One core seeded with engagement-scoped Propositions for scope-removal checks."""
+
     def __init__(self):
         self.core = EngramCore()
         self.ids = {}

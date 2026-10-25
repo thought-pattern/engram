@@ -25,7 +25,7 @@ def statement(text: str, **fields) -> dict:
     return result
 
 
-"""Tests for inverse document frequency weighting."""
+# Tests for inverse document frequency weighting.
 
 
 def test_keyword_idf_rare_keyword_outweighs_common() -> None:
@@ -48,7 +48,7 @@ def test_keyword_idf_empty_store_is_positive() -> None:
     assert keyword_idf("anything", {}, 0) > 0
 
 
-"""Tests for per-keyword match weighting."""
+# Tests for per-keyword match weighting.
 
 
 def test_keyword_match_weights_exact_match_full_weight() -> None:
@@ -79,7 +79,7 @@ def test_keyword_match_weights_no_synonym_map_no_synonym_credit() -> None:
     assert weights == {"car": 0.0}
 
 
-"""Tests for the IDF-weighted overlap fraction."""
+# Tests for the IDF-weighted overlap fraction.
 
 
 def test_calculate_overlap_full_overlap_is_one() -> None:
@@ -119,7 +119,7 @@ def test_calculate_overlap_empty_query() -> None:
     assert calculate_overlap({}, {}, 1) == 0.0
 
 
-"""Tests for time-decay recency."""
+# Tests for time-decay recency.
 
 
 def test_calculate_recency_fresh_statement_is_one() -> None:
@@ -153,7 +153,7 @@ def test_calculate_recency_stable_under_store_changes() -> None:
     assert first == second
 
 
-"""Tests for average hit rate calculation."""
+# Tests for average hit rate calculation.
 
 
 def test_calculate_average_hit_rate_single_keyword() -> None:
@@ -181,7 +181,7 @@ def test_calculate_average_hit_rate_without_observations_is_bounded_and_consiste
     assert unknown == empty
 
 
-"""Tests for calibrated statement scoring."""
+# Tests for calibrated statement scoring.
 
 
 def score_statement_score(stmt, query_keywords, keyword_index=(), synonyms=(), total=1):

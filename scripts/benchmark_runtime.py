@@ -8,15 +8,9 @@ from os import cpu_count as os_cpu_count
 from pathlib import Path
 from platform import machine as platform_machine, processor as platform_processor
 from subprocess import run as subprocess_run
-from sys import argv as sys_argv, executable as sys_executable, path as sys_path, stderr as sys_stderr
+from sys import argv as sys_argv, executable as sys_executable, stderr as sys_stderr
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
-
-from sentence_transformers import SentenceTransformer
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, graph_config
@@ -26,6 +20,8 @@ from engram.identity import extract_standalone_identity, retrieval_representatio
 from engram.repository import ArtifactRepository
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark.json")
 # Read-only provenance shared by every synthetic artifact; artifact validation copies it.
@@ -54,7 +50,8 @@ def benchmark_engram_config(capacity: int) -> dict:
     return config
 
 
-class SyntheticVectorGraph:
+# Benchmark double of the graph client: it accepts the engine's query arguments and returns fixed rows.
+class SyntheticVectorGraph:  # pylint: disable=unused-argument
     """Offline fixed-result graph used to measure support intersection cost."""
 
     def __init__(self, proposition_id: str) -> None:
@@ -78,11 +75,8 @@ class SyntheticVectorGraph:
         return result
 
 
-class SyntheticEmbeddingModel(SentenceTransformer):
+class SyntheticEmbeddingModel:
     """Truthful benchmark marker for a locally replaced encoder operation."""
-
-    def __init__(self) -> None:
-        pass
 
 
 def internal_percentile(samples: list[float], fraction: float) -> float:

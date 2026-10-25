@@ -5,13 +5,8 @@ from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
-
-REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
@@ -58,7 +53,8 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-class BenchmarkResolver:
+# Benchmark double of the resolver protocol: it accepts the frame and budget every resolver receives and uses neither.
+class BenchmarkResolver:  # pylint: disable=unused-argument
     """Configured benchmark resolver that records invocations across calls."""
 
     cost_class = CostClass.CHEAP
@@ -69,12 +65,10 @@ class BenchmarkResolver:
         self.calls = 0
 
     def available(self, frame) -> bool:
-        del frame
         result = True
         return result
 
     def resolve(self, frame, budget: dict, cooperative_check=()) -> dict:
-        del frame
         if cooperative_check:
             cooperative_check()
         self.calls += 1

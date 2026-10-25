@@ -11,7 +11,7 @@ def internal_first(text: str) -> dict:
     return result
 
 
-"""Copula sentences still extract correctly via spaCy."""
+# Copula sentences still extract correctly via spaCy.
 
 
 def test_copula_extraction_is_fact():
@@ -38,7 +38,7 @@ def test_copula_extraction_copula_with_preposition():
     assert fact.get("obj", "") == "France"
 
 
-"""Action-verb sentences (impossible for the copula extractor) work."""
+# Action-verb sentences (impossible for the copula extractor) work.
 
 
 def test_action_verb_extraction_transitive_verb():
@@ -65,7 +65,7 @@ def test_action_verb_extraction_verb_with_preposition():
     assert fact.get("obj", "") == "Mary"
 
 
-"""Facts carry NER entity types for subject and object when recognized."""
+# Facts carry NER entity types for subject and object when recognized.
 
 
 def test_entity_types_gpe_subject():
@@ -91,7 +91,7 @@ def test_entity_types_unrecognized_entity_is_empty():
     assert fact.get("subject_type", "") == ""
 
 
-"""Questions, commands, and pronoun subjects are not extracted."""
+# Questions, commands, and pronoun subjects are not extracted.
 
 
 def test_non_facts_skips_question():
@@ -111,7 +111,7 @@ def test_non_facts_empty_text():
     assert extract_facts("   ") == []
 
 
-"""Multiple declarative sentences yield multiple facts."""
+# Multiple declarative sentences yield multiple facts.
 
 
 def test_multiple_sentences_two_facts():
@@ -121,7 +121,7 @@ def test_multiple_sentences_two_facts():
     assert ("Shakespeare", "write", "Hamlet") in triples
 
 
-"""The use_spacy_facts flag exists and is opt-in."""
+# The use_spacy_facts flag exists and is opt-in.
 
 
 def test_config_flag_default_off():

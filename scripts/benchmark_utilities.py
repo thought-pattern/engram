@@ -10,12 +10,7 @@ from math import ceil as math_ceil
 from pathlib import Path
 from random import Random as random_Random
 from string import ascii_letters as string_ascii_letters, digits as string_digits, punctuation as string_punctuation
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants_resolution import UTILITY_MAX_OUTPUT_BYTES, UTILITY_PLUGIN_NAMES
 from engram.utilities import UtilityRegistry, evaluate_named_utility, utility_config, utility_plugin_contracts

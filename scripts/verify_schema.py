@@ -2,17 +2,15 @@
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from pathlib import Path
-from sys import exit as sys_exit, path as sys_path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys_path:
-    sys_path.insert(0, str(REPO_ROOT))
+from sys import exit as sys_exit
 
 from engram.config import load_config
 from engram.constants_graph import GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SCHEMA_FILE = packaged_schema()
 

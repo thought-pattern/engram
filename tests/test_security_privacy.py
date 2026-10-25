@@ -155,6 +155,8 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
     secret = "private-database-outage-detail"
 
     class FailingGraph:
+        """A connected graph double whose every read fails with a secret-bearing error."""
+
         available = True
 
         def execute(self, internal_query, internal_parameters=()):

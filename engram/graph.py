@@ -21,7 +21,7 @@ from asyncio import (
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
-from math import isfinite as math_isfinite
+from math import isfinite as math_isfinite, isnan as math_isnan
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
@@ -684,7 +684,12 @@ class MemGraphConnection:
         password: str = "",
         timeout_seconds: float = GRAPH_TIMEOUT_SECONDS,
     ):
-        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not timeout_seconds > 0:
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or math_isnan(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
             raise ValueError("graph timeout must be a positive number of seconds")
         self.host = host
         self.port = port

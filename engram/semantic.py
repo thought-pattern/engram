@@ -1,6 +1,7 @@
 """Request-local semantic retrieval over accepted-response artifacts."""
 
 from collections.abc import Iterable
+from functools import partial as functools_partial
 from hashlib import sha256 as hashlib_sha256
 from itertools import batched as itertools_batched
 from logging import getLogger as logging_getLogger
@@ -60,7 +61,7 @@ def model_artifact_sha256(path: Path) -> str:
         digest.update(str(file_path.stat().st_size).encode())
         digest.update(b"\0")
         with file_path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            for chunk in iter(functools_partial(stream.read, 1024 * 1024), b""):
                 digest.update(chunk)
     result = digest.hexdigest()
     return result

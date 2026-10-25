@@ -735,7 +735,8 @@ def main(argv: tuple[str, ...] = ()) -> int:
 
     shutdown_requested = threading_Event()
 
-    def request_shutdown(signum, frame) -> None:
+    # signal.signal calls a handler with (signum, frame); shutdown needs only the signal number.
+    def request_shutdown(signum, frame) -> None:  # pylint: disable=unused-argument
         LOGGER.info("Received signal %s; beginning graceful shutdown", signum)
         shutdown_requested.set()
 

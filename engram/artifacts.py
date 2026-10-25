@@ -30,7 +30,6 @@ from engram.constants_artifacts import (
     MAX_RESPONSE_BYTES,
     MAX_SOURCE_LABEL_BYTES,
     MAX_SUPPORT_REFERENCES,
-    TERMINAL_LIFECYCLE_STATES as TERMINAL_LIFECYCLE_STATES,
     LifecycleDecisionReason,
     LifecycleMutationReason,
     LifecycleOperation,

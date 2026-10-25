@@ -26,7 +26,7 @@ def internal_write(tmp_path, text: str) -> str:
     return result
 
 
-"""A missing or empty file falls back to the built-in EngramConfig defaults."""
+# A missing or empty file falls back to the built-in EngramConfig defaults.
 
 
 def test_load_config_defaults_missing_file_returns_defaults():
@@ -39,7 +39,7 @@ def test_load_config_defaults_empty_file_returns_defaults(tmp_path):
     assert cfg == engram_config()
 
 
-"""Values in the file override the corresponding defaults; others are untouched."""
+# Values in the file override the corresponding defaults; others are untouched.
 
 
 def test_load_config_values_scalar_overrides(tmp_path):
@@ -127,12 +127,11 @@ def test_load_config_absolute_seed_path_stays_absolute(tmp_path):
     assert os_path.normcase(seed_files[0]) == os_path.normcase(os_path.abspath(quoted))
 
 
-"""The shipped template is loadable.
-
-This is a smoke test on the loader, not an assertion about the template's
-chosen values: it only confirms the tracked example parses into a config
-without raising, so a syntactically broken template cannot ship.
-"""
+# The shipped template is loadable.
+#
+# This is a smoke test on the loader, not an assertion about the template's
+# chosen values: it only confirms the tracked example parses into a config
+# without raising, so a syntactically broken template cannot ship.
 
 
 def test_example_template_example_parses():

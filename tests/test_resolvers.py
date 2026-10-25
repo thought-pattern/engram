@@ -207,6 +207,7 @@ def test_structured_graph_adapter_excludes_ineligible_and_changed_propositions(m
     )
 
     def current(proposition_id, internal_basis_window):
+        del internal_basis_window
         if proposition_id == "proposition-eligible":
             result = (proposition_projection(**{**eligible, **BY_ID_PROJECTION_CHANGES}),)
             return result
@@ -545,6 +546,7 @@ def test_support_semantic_proposition_evidence_honors_graph_byte_and_memory_boun
 
     def current_projection(internal_proposition_id, internal_basis_window):
         nonlocal current_calls
+        del internal_proposition_id, internal_basis_window
         current_calls += 1
         result = (current,)
         return result

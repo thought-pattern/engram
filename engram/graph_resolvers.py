@@ -84,7 +84,8 @@ class StructuredGraphResolver:
             raise InvalidRequestError("structured graph eligibility_evaluator must be PropositionEligibilityEvaluator")
         self.internal_eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
-    def available(self, frame: dict) -> bool:
+    # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
+    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
         client = self.internal_engram.graph_client
         result = bool(client and getattr(client, "available", True))
         return result
@@ -522,7 +523,8 @@ class SupportSemanticResolver:
             raise InvalidRequestError("support semantic eligibility_evaluator must be PropositionEligibilityEvaluator")
         self.internal_eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
-    def available(self, frame: dict) -> bool:
+    # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
+    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
         graph = self.internal_engram.config.get("graph", {})
         client = self.internal_engram.graph_client
         result = bool(

@@ -90,10 +90,6 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.ruff.lint.per-file-ignores]
-# Runnable entrypoints put the repo root on sys.path before importing the
-# package, so their package imports are intentionally not at the top of file.
-"scripts/*" = ["E402"]
-"eval/*" = ["E402"]
 # Generated gRPC method names follow the protobuf service contract.
 "engram/grpc_server.py" = ["N802"]
 # The standard library's HTTP handler answers GET only through a method named do_GET.

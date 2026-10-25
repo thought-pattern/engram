@@ -4,8 +4,8 @@ from importlib.resources import files
 from json import JSONDecodeError as json_JSONDecodeError, loads as json_loads
 from logging import getLogger as logging_getLogger
 from re import (
-    IGNORECASE as IGNORECASE,
-    UNICODE as UNICODE,
+    IGNORECASE,
+    UNICODE,
     compile as re_compile,
     escape as re_escape,
     finditer as re_finditer,

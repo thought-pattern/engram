@@ -33,6 +33,7 @@ class EmptyReadGraph(MemGraphConnection):
         self.available = True
 
     def empty_rows(self, *internal_args, **internal_kwargs) -> list:
+        del internal_args, internal_kwargs
         result = []
         return result
 
@@ -78,8 +79,8 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
     release = threading_Event()
 
     class BlockingGraph(EmptyReadGraph):
-        def structured_proposition_projections(self, internal_value, *, projection_id, limit, basis_window):
-            del internal_value, basis_window
+        def structured_proposition_projections(self, value, *, projection_id, limit, basis_window):
+            del value, projection_id, limit, basis_window
             entered.set()
             assert release.wait(timeout=5)
             return []
@@ -171,8 +172,8 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
     release = threading_Event()
 
     class BlockingGraph(EmptyReadGraph):
-        def execute(self, internal_query, internal_parameters=()):
-            del internal_query, internal_parameters
+        def execute(self, query, parameters=()):
+            del query, parameters
             entered.set()
             assert release.wait(timeout=5)
             return []

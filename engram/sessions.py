@@ -90,11 +90,11 @@ def get_session(engram, session_id: str, create_if_missing: bool = True) -> dict
         Session object or an empty dict if not found and create_if_missing is False.
     """
     require_session_lock(engram)
-    session = engram.sessions.get(session_id, {})
-    if not session and create_if_missing:
+    sess = engram.sessions.get(session_id, {})
+    if not sess and create_if_missing:
         start_session(engram, session_id=session_id)
-        session = engram.sessions.get(session_id, {})
-    return session
+        sess = engram.sessions.get(session_id, {})
+    return sess
 
 
 def restore_session(engram, record: dict) -> None:
@@ -119,10 +119,10 @@ def update_session_context(engram, session_id: str, previous_response: str) -> N
     """
 
     with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
-        if not session:
+        sess = engram.sessions.get(session_id, {})
+        if not sess:
             raise SessionNotFoundError(f"Session not found: {session_id}")
-        session_update_context(session, previous_response, moment=engram.clock())
+        session_update_context(sess, previous_response, moment=engram.clock())
 
 
 def delete_session(engram, session_id: str) -> bool:
@@ -163,8 +163,8 @@ def expire_sessions(engram, now: datetime, inactive_threshold: timedelta = timed
     expired_ids: list[str] = []
 
     with engram.session_lock:
-        for sid, session in engram.sessions.items():
-            if now - session.get("last_active", EARLIEST_UTC) > inactive_threshold:
+        for sid, sess in engram.sessions.items():
+            if now - sess.get("last_active", EARLIEST_UTC) > inactive_threshold:
                 expired_ids.append(sid)
         for sid in expired_ids:
             del engram.sessions[sid]

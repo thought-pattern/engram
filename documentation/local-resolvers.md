@@ -55,8 +55,8 @@ reviewed local `all-MiniLM-L6-v2` artifact. Runtime is
 CPU-only and offline. Enabling it requires the configured model path, immutable
 revision, payload checksum, license, backend, and dimension. Provision explicitly:
 
-```powershell
-python scripts/provision_semantic_model.py
+```bash
+PYTHONPATH=. python3 scripts/provision_semantic_model.py
 ```
 
 Each request compares the query with every representation in the bounded current

@@ -110,7 +110,7 @@ def test_llm_tier_does_not_store_generated_responses_as_statements() -> None:
 
 def test_llm_tier_llm_updates_session_context() -> None:
     engram = Engram()
-    llm_fn, calls = counting_llm("Paris is lovely in spring.")
+    llm_fn, _ = counting_llm("Paris is lovely in spring.")
 
     pipeline.respond(engram, "tell me about paris", context_id="user1", llm_fn=llm_fn)
 
@@ -183,7 +183,7 @@ def test_user_aware_chat_user_labels_are_case_sensitive_and_caller_owned() -> No
     assert "alice" in engram.sessions
 
 
-"""A question that hits the catch-all is answered by that category."""
+# A question that hits the catch-all is answered by that category.
 
 
 def test_question_routing_question_hitting_catchall_keeps_the_category() -> None:

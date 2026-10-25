@@ -5,12 +5,7 @@ from datetime import UTC, datetime
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.graph import relation_proposition_projection_from_graph_row
 from engram.relation import select_relation_propositions

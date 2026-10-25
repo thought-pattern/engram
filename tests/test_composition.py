@@ -685,6 +685,8 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     )
 
     class CompositionGraph:
+        """A two-hop graph double that serves the founder and birthplace relations."""
+
         available = True
 
         def __init__(self) -> None:

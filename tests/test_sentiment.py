@@ -33,7 +33,7 @@ def test_sentiment_label_empty_is_neutral():
     assert sentiment_label("   ") == NEUTRAL
 
 
-"""Tests for sentiment_scores."""
+# Tests for sentiment_scores.
 
 
 def test_sentiment_scores_returns_compound():
@@ -59,7 +59,7 @@ def test_sentiment_scores_empty_neutral_scores():
     assert scores.get("compound", 0.0) == 0.0
 
 
-"""Tests for the {sentiment:...} template transform."""
+# Tests for the {sentiment:...} template transform.
 
 
 def test_sentiment_template_transform_transform_positive():
@@ -81,7 +81,7 @@ def test_sentiment_template_transform_transform_resolves_star_first():
     assert TemplateProcessor().process("{sentiment:{star1}}", ctx) == POSITIVE
 
 
-"""Integration tests for sentiment-routed responses in Engram."""
+# Integration tests for sentiment-routed responses in Engram.
 
 
 def test_sentiment_integration_negative_emotion_gets_sympathy():

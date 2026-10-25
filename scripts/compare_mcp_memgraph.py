@@ -6,13 +6,8 @@ from datetime import UTC, datetime
 from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
-from sys import path as sys_path
 from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from mcp.client import Client
 

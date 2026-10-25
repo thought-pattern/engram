@@ -116,6 +116,7 @@ class MockGraphClient:
 
     def vector_search_propositions(self, embedding, **kwargs) -> list:
         """Return configured ANN rows for vector-recall tests."""
+        del embedding, kwargs
         result = list(self.vector_rows)
         return result
 
@@ -136,7 +137,7 @@ def encode_fake_embeddings(texts: list[str], **kwargs) -> list:
     return result
 
 
-"""Tests for the list-row helpers."""
+# Tests for the list-row helpers.
 
 
 def test_graph_helpers_non_empty():
@@ -151,7 +152,7 @@ def test_graph_helpers_empty():
     assert graph_single(records) == {}
 
 
-"""Tests for graph operations in templates."""
+# Tests for graph operations in templates.
 
 
 def test_template_graph_operations_graph_query_success():
@@ -338,7 +339,7 @@ def test_template_graph_operations_graph_query_list_format():
     assert "KNOWS" in result or "LIKES" in result
 
 
-"""ENGRAM exposes graph recall only through every runtime path."""
+# ENGRAM exposes graph recall only through every runtime path.
 
 
 def test_read_only_graph_wiring_is_write_cypher_detects_mutations():

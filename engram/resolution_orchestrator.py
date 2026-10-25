@@ -745,7 +745,7 @@ class ResolutionOrchestrator:
             current_ns = resolver_clock_ns(self.internal_clock_ns)
             if isinstance(current_ns, bool) or not isinstance(current_ns, int) or current_ns < 0:
                 raise InvalidRequestError("orchestrator clock_ns must return a nonnegative integer")
-            elapsed_ns = max(elapsed_ns, max(0, current_ns - started_ns))
+            elapsed_ns = max(elapsed_ns, 0, current_ns - started_ns)
         if sized_output_bytes(assembly, elapsed_ns) > assembly.get("output_limit", 0):
             raise InvalidRequestError("minimum resolution result exceeds max_output_bytes")
 

@@ -6,13 +6,8 @@ from json import dumps as json_dumps
 from pathlib import Path
 from platform import machine as platform_machine
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
-
-REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind
 from engram.constants_resolution import ResolutionOutcome

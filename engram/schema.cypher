@@ -4,7 +4,7 @@
 // The definitions Engram needs from a knowledge graph. A graph is compatible
 // when it has all of them; it may have more. The graph's owner creates them;
 // Engram only reads the graph. To check a graph:
-//   python3 scripts/verify_schema.py
+//   PYTHONPATH=. python3 scripts/verify_schema.py
 //
 // Record IDs and Entity/Predicate canonical IDs are opaque strings owned by
 // the graph's writer (UUIDv7 in a Tapestry-managed graph). Existence,

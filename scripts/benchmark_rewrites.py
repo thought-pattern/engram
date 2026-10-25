@@ -5,12 +5,7 @@ from collections import Counter
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
 
 from engram.constants_identity import QueryOperator
 from engram.identity import scope_key, scoped_retrieval_key_from_text, trusted_scoped_retrieval_key_signature

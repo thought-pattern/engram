@@ -488,7 +488,7 @@ def select_relation_propositions(items: object, temporal_query: object) -> dict:
     if operator == TemporalQueryOperator.LATEST:
         lower_values = []
         for item in validated:
-            lower, lower_available, internal_upper, internal_upper_available = projection_interval(item, axis)
+            lower, lower_available, _, _ = projection_interval(item, axis)
             if not lower_available:
                 result = {
                     "direct_answer": False,

@@ -2,12 +2,7 @@
 
 from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps
-from pathlib import Path
-from sys import argv as sys_argv, path as sys_path, stderr as sys_stderr
-
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-if str(REPOSITORY_ROOT) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY_ROOT))
+from sys import argv as sys_argv, stderr as sys_stderr
 
 from engram.config import load_config
 from engram.errors import EngramCoreError

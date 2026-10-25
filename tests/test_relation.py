@@ -97,6 +97,8 @@ BIRTH_PLACE_PREDICATE_MATCH = {
 
 
 class RelationGraph:
+    """An in-memory relation graph double that serves fixed Proposition projections."""
+
     available = True
 
     def __init__(self, results: tuple[dict, ...] = ()) -> None:
@@ -130,6 +132,8 @@ class RelationGraph:
 
 
 class ChangingRelationGraph(RelationGraph):
+    """A relation graph double whose current reads change after the first lookup."""
+
     def __init__(self) -> None:
         super().__init__()
         self.current_reads = 0

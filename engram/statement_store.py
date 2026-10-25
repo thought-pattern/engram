@@ -19,26 +19,26 @@ from engram.pattern import PatternMatcher, pattern_word_count
 from engram.text import extract_keywords, extract_keywords_spacy, normalize
 
 
-def lru_entry(statement: dict, sequence: int) -> tuple:
+def lru_entry(stmt: dict, sequence: int) -> tuple:
     """Return a DYNAMIC statement's LRU heap entry: its eviction key, then its id.
 
     The key is (last used, whether it was ever hit, store order). Equal
     timestamps keep store order, as list positions did.
     """
-    hit = statement.get("last_hit_available", False)
-    last_used = statement.get("last_hit", EARLIEST_UTC) if hit else statement.get("created_at", EARLIEST_UTC)
-    result = (last_used, 1 if hit else 0, sequence, statement.get("id", ""))
+    hit = stmt.get("last_hit_available", False)
+    last_used = stmt.get("last_hit", EARLIEST_UTC) if hit else stmt.get("created_at", EARLIEST_UTC)
+    result = (last_used, 1 if hit else 0, sequence, stmt.get("id", ""))
     return result
 
 
-def visible_to(statement: dict, owner: str) -> bool:
+def visible_to(stmt: dict, owner: str) -> bool:
     """Return whether a statement may answer ``owner``'s chat.
 
     Shared statements (no introduced_by_user_id) answer everyone. A fact a
     person taught answers only that person; an empty owner sees shared
     statements alone.
     """
-    statement_owner = statement.get("introduced_by_user_id", "")
+    statement_owner = stmt.get("introduced_by_user_id", "")
     result = not statement_owner or statement_owner == owner
     return result
 
@@ -342,7 +342,7 @@ def detach_statement(engram, stmt: dict) -> None:
         matcher = engram.owned_matcher(owner)
         for pattern in registered_patterns:
             matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
-        if owner and not len(matcher):
+        if owner and not matcher:
             del engram.person_matchers[owner]
     for pattern in registered_patterns:
         carriers = engram.pattern_statements.get(pattern, [])

@@ -96,7 +96,7 @@ def test_template_context_get_map():
     assert get_map(ctx, "missing_map", "key") == ""
 
 
-"""Tests for basic template processing."""
+# Tests for basic template processing.
 
 
 def test_template_processor_basic_plain_string():
@@ -161,7 +161,7 @@ def test_template_processor_basic_map_lookup():
     assert result == "Capital: Paris"
 
 
-"""Tests for random template."""
+# Tests for random template.
 
 
 def test_template_processor_random_random_selection():
@@ -186,7 +186,7 @@ def test_template_processor_random_random_with_template():
     assert result in ["Hello, Alice!", "Hi, Alice!"]
 
 
-"""Tests for conditional templates."""
+# Tests for conditional templates.
 
 
 def test_template_processor_condition_condition_exists():
@@ -297,7 +297,7 @@ def test_template_processor_condition_condition_loop_never_changing_terminates()
     assert result.startswith("again")
 
 
-"""Tests for sequence templates."""
+# Tests for sequence templates.
 
 
 def test_template_processor_sequence_sequence_basic():
@@ -324,7 +324,7 @@ def test_template_processor_sequence_sequence_multiple_text():
     assert result == "First. Second."
 
 
-"""Tests for think (silent processing)."""
+# Tests for think (silent processing).
 
 
 def test_template_processor_think_think_no_output():
@@ -351,7 +351,7 @@ def test_template_processor_think_think_in_sequence():
     assert result == "Hello, Alice!"
 
 
-"""Tests for text transforms."""
+# Tests for text transforms.
 
 
 def test_template_processor_transforms_upper():
@@ -394,7 +394,7 @@ def test_template_processor_transforms_explode():
     assert result == "a b c"
 
 
-"""Tests for string utility transforms."""
+# Tests for string utility transforms.
 
 
 def test_string_utilities_first_word():
@@ -525,7 +525,7 @@ def test_string_utilities_nested_first_upper():
     assert result == "HELLO"
 
 
-"""Tests for redirect (SRAI)."""
+# Tests for redirect (SRAI).
 
 
 def test_template_processor_redirect_redirect_callback():
@@ -584,6 +584,7 @@ def test_template_processor_redirect_redirect_depth_limit():
     call_count = [0]
 
     def redirect_fn(pattern):
+        del pattern
         call_count[0] += 1
         # Infinite recursion attempt
         result = processor.process({"redirect": "LOOP"}, template_context(redirect_fn=redirect_fn))
@@ -595,7 +596,7 @@ def test_template_processor_redirect_redirect_depth_limit():
     assert call_count[0] <= 4  # Start + 3 redirects
 
 
-"""Tests for learn element."""
+# Tests for learn element.
 
 
 def test_template_processor_learn_learn_callback():
@@ -616,7 +617,7 @@ def test_template_processor_learn_learn_callback():
     assert learned[0].get("template", {}) == {"text": "blue"}
 
 
-"""Integration tests for templates."""
+# Integration tests for templates.
 
 
 def test_template_integration_spec_example_my_name_is():
@@ -680,7 +681,7 @@ def test_template_integration_nested_template():
     assert ctx.get("predicates", {}).get("greeted", "") == "true"
 
 
-"""Tests for system variables."""
+# Tests for system variables.
 
 
 def test_system_variables_program_variable():
@@ -753,7 +754,7 @@ def test_system_variables_vocabulary_variable():
     assert result == "My vocabulary is 1000 words"
 
 
-"""Tests for the {clause:...} transform."""
+# Tests for the {clause:...} transform.
 
 
 def test_clause_transform_clause_trims_capture():
@@ -770,7 +771,7 @@ def test_clause_transform_clause_keeps_single_clause():
     assert result == "You're really happy about the results."
 
 
-"""Tests for the {qtype:...} intent transform."""
+# Tests for the {qtype:...} intent transform.
 
 
 def test_qtype_transform_question():
@@ -791,7 +792,7 @@ def test_qtype_transform_command():
     assert processor.process("{qtype:{request}}", ctx) == "command"
 
 
-"""Bare {input} is the current input; {input:N} reads history."""
+# Bare {input} is the current input; {input:N} reads history.
 
 
 def test_input_variable_bare_input_is_current_input():
