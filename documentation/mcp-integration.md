@@ -5,8 +5,8 @@
 The Regulator names in this standalone Engram contract describe external
 proposal/verdict handling. Tapestry's Will owns that recall relationship and
 interprets/routes Channel input under `will.yml`. Tapestry Regulator only judges
-outbound Channel soundness and alone generates IDK; Utility is its basic small
-LLM. Tapestry selects only `model.actor` and `model.regulator`, with Will, Utility
+outbound Channel soundness and alone generates IDK; Utility serves inference
+wherever it is needed and sufficient. Tapestry selects only `model.actor` and `model.regulator`, with Will, Utility
 and Regulator using the latter through separate services. Existing Engram tools,
 enum names and receipts retain their standalone meaning.
 
@@ -439,7 +439,7 @@ is retry-safe by `request_id`; conflicting request reuse is an error.
 
 ### Process state
 
-Proposals and idempotency records are process-local, retained for five minutes,
+Proposals and idempotency records are process-local
 and bounded to 1,000 records of each kind. They are cleared by `engram_stop`
 and process exit. Learned responses, scope/provenance metadata, statistics,
 retirements, and user context share that process-only lifetime.
@@ -483,7 +483,7 @@ log.
 - A proposal records candidacy but earns a hit only after acceptance.
 - Scope and required metadata exclude responses that do not satisfy the request.
 - Proposal, learn, resolve, and retirement retries are idempotent; conflicting retries fail.
-- Transient proposals expire; learned responses last only for the process lifetime.
+- Transient proposals are bounded to 1,000 records; learned responses last only for the process lifetime.
 - Adaptive conversation tests observe every response before sending the next
   input.
 - The regulated-cache tools expose the schemas and lifecycle documented above.

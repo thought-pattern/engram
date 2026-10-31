@@ -51,9 +51,10 @@ to disable it.
 ## Standalone semantic retrieval and reranking
 
 Standalone semantic retrieval embeds canonical requests and aliases using the
-reviewed local `all-MiniLM-L6-v2` artifact. Runtime is
-CPU-only and offline. Enabling it requires the configured model path, immutable
-revision, payload checksum, license, backend, and dimension. Provision explicitly:
+local sentence-transformers model the user configures. Runtime is CPU-only and
+offline. Enabling it requires the configured model path, revision, payload
+checksum, backend, and dimension; the model identity also records its license.
+The provisioning script fetches the pinned default, `all-MiniLM-L6-v2`:
 
 ```bash
 PYTHONPATH=. python3 scripts/provision_semantic_model.py

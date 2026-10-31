@@ -5,7 +5,7 @@
 `RegulatorOutcome` is Engram's standalone external verdict type; its name does
 not assign Tapestry component ownership. In Tapestry, Will interprets/routes
 Channel input under `will.yml` and owns recall sufficiency and the Engram bridge.
-Utility is the basic small LLM; Regulator only judges outbound Channel soundness
+Utility serves inference wherever it is needed and sufficient; Regulator only judges outbound Channel soundness
 and alone generates IDK. Tapestry selects only `model.actor` and `model.regulator`,
 with Will/Utility/Regulator sharing the latter. Engram's independent API is unchanged.
 

@@ -5,8 +5,9 @@ store) through the neo4j driver. Runtime access is strictly read-only: every
 public execution path rejects mutating Cypher before reaching the database.
 
 Graph unavailability and query failure remain explicit; an empty row list means
-only that a successful read matched no records. Every operation is bounded by
-``GRAPH_TIMEOUT_SECONDS``; see ``MemGraphConnection``.
+only that a successful read matched no records. A read has no deadline; a database
+that stops answering is detected by the TCP keepalive watchdog (graph_keepalive.py);
+see ``MemGraphConnection``.
 """
 
 from asyncio import (
@@ -16,12 +17,12 @@ from asyncio import (
     new_event_loop as asyncio_new_event_loop,
     run_coroutine_threadsafe as asyncio_run_coroutine_threadsafe,
     wait as asyncio_wait,
-    wait_for as asyncio_wait_for,
 )
 from collections.abc import Mapping
+from concurrent.futures import wait as futures_wait
 from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
-from math import isfinite as math_isfinite, isnan as math_isnan
+from math import isfinite as math_isfinite
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
@@ -42,7 +43,8 @@ from engram.constants_graph import (
     ASSERTION_BASIS_WINDOW_FIELDS,
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_QUERY,
-    GRAPH_TIMEOUT_SECONDS,
+    GRAPH_KEEPALIVE_CHECK_SECONDS,
+    GRAPH_SHUTDOWN_GRACE_SECONDS,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
@@ -79,6 +81,7 @@ from engram.constants_relation import (
 )
 from engram.constants_resolution import MAX_GRAPH_READ_ROWS
 from engram.errors import InvalidRequestError, ResourceExhaustedError, failure_origin
+from engram.graph_keepalive import keep_graph_sockets_alive
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
 from engram.validation import parse_utc_timestamp, require_bool, require_identifier, require_text, utc_datetime
@@ -90,11 +93,12 @@ FIXED_READ_PROCEDURE_QUERIES = (VECTOR_PROPOSITION_PROJECTION_QUERY, VECTOR_SEAR
 
 
 def is_connection_error(err: BaseException) -> bool:
-    """Distinguish a lost or unresponsive connection from a failed query.
+    """Distinguish a lost connection from a failed query.
 
     True means the connection cannot be trusted and is replaced after the
-    turn; this includes timeouts. Query-level errors (syntax, missing
-    procedure, constraint) arrive over a healthy connection and return False.
+    turn; this includes a socket the keepalive watchdog failed. Query-level
+    errors (syntax, missing procedure, constraint) arrive over a healthy
+    connection and return False.
     """
     result = isinstance(err, (ServiceUnavailable, SessionExpired, OSError))
     return result
@@ -667,13 +671,14 @@ def graph_single(records: list) -> dict:
 class MemGraphConnection:
     """Manages a connection to a Bolt graph database through the neo4j async driver.
 
-    The driver runs on a private event-loop thread, and every operation,
-    connecting included, is bounded by ``timeout_seconds`` from the caller's
-    side: a caller never waits longer, and an overrunning query is cancelled,
-    which kills its connection. After a timeout or a lost connection, reads
-    fail immediately (``available`` is False) until ``reconnect_after_turn``
-    opens a new driver. The service calls it once the current turn is
-    complete, so an unresponsive database costs a turn at most one timeout.
+    The driver runs on a private event-loop thread. A statement and the wait
+    for a pooled connection have no deadline: every socket the driver opens
+    gets the TCP keepalive watchdog (graph_keepalive.py), so only a dead
+    database host or a broken network path fails a wait, and the driver's
+    connect window bounds only a TCP connect that gets no answer at all.
+    After a lost connection, reads fail immediately (``available`` is False)
+    until ``reconnect_after_turn`` opens a new driver. The service calls it
+    once the current turn is complete.
     """
 
     def __init__(
@@ -682,20 +687,14 @@ class MemGraphConnection:
         port: int = DEFAULT_GRAPH_PORT,
         username: str = "",
         password: str = "",
-        timeout_seconds: float = GRAPH_TIMEOUT_SECONDS,
     ):
-        if (
-            isinstance(timeout_seconds, bool)
-            or not isinstance(timeout_seconds, (int, float))
-            or math_isnan(timeout_seconds)
-            or timeout_seconds <= 0
-        ):
-            raise ValueError("graph timeout must be a positive number of seconds")
         self.host = host
         self.port = port
         self.username = username
         self.password = password
-        self.timeout_seconds = float(timeout_seconds)
+        # Sockets the driver's pool has opened, and how many of them had the keepalive watchdog set at the last check.
+        self.opened = 0
+        self.kept_alive = 0
         self.schema_report = {}
         self.driver = ()
         self.available = False
@@ -715,17 +714,30 @@ class MemGraphConnection:
         result = f"bolt://{host}:{self.port}"
         return result
 
+    def socket_opening(self, address) -> list:
+        """The pool's resolver: count each socket the pool opens, so its keepalive watchdog is set."""
+        self.opened += 1
+        return [address]
+
+    def keep_opened_sockets_alive(self) -> None:
+        """Set the keepalive watchdog on every socket the pool opened since the last time it was set."""
+        opened = self.opened
+        if opened != self.kept_alive:
+            keep_graph_sockets_alive(self.host, self.port)
+            self.kept_alive = opened
+
     async def open_driver(self):
-        """Create a driver and prove it can reach the database."""
+        """Create a driver, prove it can reach the database and set its socket's keepalive watchdog."""
         driver = AsyncGraphDatabase.driver(
             self.driver_uri(),
             auth=(self.username, self.password),
-            connection_timeout=self.timeout_seconds,
-            connection_acquisition_timeout=self.timeout_seconds,
-            connection_write_timeout=self.timeout_seconds,
+            # Taking a pooled connection, opening it included, waits as long as it takes.
+            connection_acquisition_timeout=float("inf"),
+            resolver=self.socket_opening,
         )
         try:
             await driver.verify_connectivity()
+            self.keep_opened_sockets_alive()
         except BaseException:
             await driver.close()
             raise
@@ -742,11 +754,11 @@ class MemGraphConnection:
         return self.loop
 
     def connect(self):
-        """Connect within the timeout.
+        """Connect to the database.
 
         Returns the driver on success, or an empty tuple when the database
-        cannot be reached in time. Sets ``available`` so callers can
-        distinguish readiness before a read.
+        cannot be reached. Sets ``available`` so callers can distinguish
+        readiness before a read.
         """
         with self.connect_lock:
             with self.internal_lock:
@@ -756,9 +768,8 @@ class MemGraphConnection:
                 loop = self.start_loop()
             future = asyncio_run_coroutine_threadsafe(self.open_driver(), loop)
             try:
-                driver = future.result(timeout=self.timeout_seconds)
+                driver = future.result()
             except Exception as err:
-                self.abandon_open(future, loop)
                 with self.internal_lock:
                     self.available = False
                     self.reconnect_needed = True
@@ -771,13 +782,6 @@ class MemGraphConnection:
                 self.reconnect_needed = False
             logger.debug("Connected to graph database at %s:%d", self.host, self.port)
             return driver
-
-    def abandon_open(self, future, loop) -> None:
-        """Cancel a driver open that overran; close its driver if it finished anyway."""
-        # concurrent.futures reports a successful open with an exception() of None.
-        abandoned = future.cancel() or future.cancelled() or future.exception() is not None
-        if not abandoned:
-            asyncio_run_coroutine_threadsafe(future.result().close(), loop)
 
     def reconnect_after_turn(self) -> bool:
         """Start replacing a lost connection; return whether an attempt started.
@@ -799,14 +803,14 @@ class MemGraphConnection:
             return result
 
     async def replace_driver(self, lost_driver) -> bool:
-        """Close the lost driver and open a new one, each within the timeout."""
+        """Close the lost driver and open a new one."""
         if lost_driver:
             try:
-                await asyncio_wait_for(lost_driver.close(), self.timeout_seconds)
+                await lost_driver.close()
             except Exception as err:
                 logger.warning("Closing the lost graph driver failed (%s)", failure_origin(err))
         try:
-            driver = await asyncio_wait_for(self.open_driver(), self.timeout_seconds)
+            driver = await self.open_driver()
         except Exception as err:
             with self.internal_lock:
                 self.reconnect_failures += 1
@@ -843,12 +847,12 @@ class MemGraphConnection:
         if loop and thread:
             future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
             try:
-                future.result(timeout=2 * self.timeout_seconds)
+                future.result(timeout=2 * GRAPH_SHUTDOWN_GRACE_SECONDS)
             except Exception as err:
                 future.cancel()
                 logger.warning("Graph driver shutdown did not finish (%s)", failure_origin(err))
             loop.call_soon_threadsafe(loop.stop)
-            thread.join(self.timeout_seconds)
+            thread.join(GRAPH_SHUTDOWN_GRACE_SECONDS)
             if not thread.is_alive():
                 loop.close()
             logger.info("Disconnected from graph database")
@@ -860,7 +864,7 @@ class MemGraphConnection:
         for task in pending:
             task.cancel()
         if pending:
-            await asyncio_wait(pending, timeout=self.timeout_seconds)
+            await asyncio_wait(pending, timeout=GRAPH_SHUTDOWN_GRACE_SECONDS)
         with self.internal_lock:
             driver = self.driver
             self.driver = ()
@@ -876,32 +880,34 @@ class MemGraphConnection:
             return result
 
     def run_on(self, loop, driver, statement: str, parameters: dict) -> list:
-        """Run one statement within the timeout and return its rows.
+        """Run one statement and return its rows.
 
-        A timeout or connection-level failure marks the connection lost, so
-        later reads fail immediately until the after-turn reconnect.
+        The wait has no deadline. A connection-level failure, the keepalive
+        watchdog's among them, marks the connection lost, so later reads fail
+        immediately until the after-turn reconnect.
         """
         sendable = {key: coerce_params(value) for key, value in parameters.items()}
         future = asyncio_run_coroutine_threadsafe(read_rows(driver, statement, sendable, MAX_GRAPH_READ_ROWS), loop)
         try:
-            result = future.result(timeout=self.timeout_seconds)
-            return result
+            # A connection the pool opens for this statement gets its watchdog within one check while the statement waits.
+            while futures_wait((future,), timeout=GRAPH_KEEPALIVE_CHECK_SECONDS).not_done:
+                self.keep_opened_sockets_alive()
+            result = future.result()
         except Exception as err:
-            # Cancelling kills the query's connection instead of leaving it
-            # waiting on the database.
-            future.cancel()
             if is_connection_error(err):
                 with self.internal_lock:
                     if self.driver is driver:
                         self.available = False
                         self.reconnect_needed = True
             raise
+        self.keep_opened_sockets_alive()
+        return result
 
     def execute(self, query: str, parameters=()) -> list:
         """Execute a Cypher query and return results as a list of dicts.
 
-        Raises if the database is unavailable, times out, or a query fails so
-        graph absence and service unavailability are never conflated.
+        Raises if the database is unavailable or a query fails so graph
+        absence and service unavailability are never conflated.
         Mutating or ambiguous Cypher is rejected before reaching the database.
         """
         if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
@@ -917,14 +923,12 @@ class MemGraphConnection:
         try:
             result = self.run_on(loop, driver, query, query_parameters)
             return result
-        except (TimeoutError, Neo4jError, DriverError, OSError, ResourceExhaustedError) as err:
+        except (Neo4jError, DriverError, OSError, ResourceExhaustedError) as err:
             # The database's rejection of a query (a missing procedure or index included)
             # is a client error and logs at debug, as every graph-read failure does at the
-            # caller; timeouts and lost connections are operational and log as errors.
+            # caller; lost connections are operational and log as errors.
             if isinstance(err, ClientError):
                 logger.debug("Query rejected by the graph database (%s)", failure_origin(err))
-            elif isinstance(err, TimeoutError):
-                logger.error("Query timed out after %.0f ms (%s)", self.timeout_seconds * 1000, failure_origin(err))
             else:
                 logger.error("Query failed (%s)", failure_origin(err))
             # Only the exception type crosses this boundary.

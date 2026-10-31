@@ -226,10 +226,6 @@ def test_depth_expansion_cycle_output_and_time_bounds() -> None:
     output_limited = RewriteEngine(output, max_output_bytes=8).rewrite("alpha")
     assert output_limited.get("stop_reason", RewriteStopReason.FIXED_POINT) == RewriteStopReason.OUTPUT_LIMIT
 
-    ticks = iter((0, 2, 3))
-    timed = RewriteEngine(chain, max_elapsed_ns=1, clock_ns=lambda: next(ticks))
-    assert timed.rewrite("alpha").get("stop_reason", RewriteStopReason.FIXED_POINT) == RewriteStopReason.TIME_LIMIT
-
 
 def test_cooperative_cancellation_propagates_without_partial_frame() -> None:
     engine = RewriteEngine(load_default_rewrite_corpus())

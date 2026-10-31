@@ -5,7 +5,6 @@ from pathlib import Path
 from sys import exit as sys_exit
 
 from engram.config import load_config
-from engram.constants_graph import GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS
 from engram.graph import MemGraphConnection
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
@@ -36,7 +35,7 @@ def main() -> None:
         "username": configured.get("username", ""),
         "password": configured.get("password", ""),
     }
-    connection = MemGraphConnection(**settings, timeout_seconds=GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS)
+    connection = MemGraphConnection(**settings)
     try:
         if not connection.connect():
             raise RuntimeError(f"graph database is unavailable at {settings.get('host', '')}:{settings.get('port', 0)}")

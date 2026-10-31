@@ -27,13 +27,15 @@ RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS = 0.05
 EMPTY_MAPPING = {}
 EMPTY_CONFIG: dict = {}
 EMPTY_METADATA: dict = {}
-PROPOSAL_TTL_SECONDS = 300
 MAX_TRANSIENT_RECORDS = 1_000
 REGULATOR_OUTCOMES = set({"accepted", "rejected_quality", "rejected_context", "rejected_stale", "rejected_policy"})
 DEFAULT_BIND_ADDRESS = "127.0.0.1:50051"
 DEFAULT_GRACE_SECONDS = 10.0
 # Shutdown waits this long past the grace period for gRPC's own drain to finish.
 SHUTDOWN_DRAIN_MARGIN_SECONDS = 5.0
+# A client's keepalive pings are its watchdog over a long silent call, so the server accepts them at any interval instead
+# of answering repeated pings on a quiet call with GOAWAY.
+GRPC_SERVER_OPTIONS = (("grpc.http2.max_ping_strikes", 0),)
 DEFAULT_MAX_WORKERS = 10
 EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)
 FRAME_OVERRIDES_PATH = Path(__file__).with_name("data") / "fact-phrasing.toml"
@@ -65,7 +67,6 @@ DEFAULT_SPARSE_MAX_POSTING_VISITS = 100_000
 MAX_SPARSE_POSTING_VISITS = 10_000_000
 DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS = 64
 MAX_SPARSE_PREFIX_EXPANSIONS = 1_024
-APPROVED_SEMANTIC_LICENSE_IDS = set({"apache-2.0", "mit", "bsd-3-clause"})
 SEMANTIC_BACKENDS = set({"native", "onnx", "quantized"})
 DEFAULT_SEMANTIC_BATCH_SIZE = 32
 MAX_SEMANTIC_BATCH_SIZE = 1_024

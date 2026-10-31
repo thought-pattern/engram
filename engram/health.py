@@ -27,6 +27,7 @@ from grpc import ServerInterceptor, StatusCode as grpc_StatusCode, unary_unary_r
 
 from engram.constants import DEFAULT_HTTP_REFRESH_SECONDS
 from engram.constants_service import HEALTH_HISTORY_SAMPLES, HEALTH_RECENT_OUTCOMES, HEALTH_SAMPLE_SECONDS
+from engram.health_exposition import METRICS_CONTENT_TYPE, health_exposition
 
 LOGGER = getLogger(__name__)
 ASSETS = Path(__file__).with_name("health_assets")
@@ -287,6 +288,9 @@ class HealthPageHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/health":
             body = json_dumps(self.server.owner.snapshot(), separators=(",", ":")).encode("utf-8")
             self.send_body(200, body, "application/json")
+        elif self.path == "/metrics":
+            body = health_exposition(self.server.owner.snapshot()).encode("utf-8")
+            self.send_body(200, body, METRICS_CONTENT_TYPE)
         elif self.path == "/health/live":
             self.send_body(200, b"Running", "text/plain; charset=utf-8")
         elif self.path == "/health/ready":

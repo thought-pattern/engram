@@ -1,4 +1,4 @@
-"""Graph connection timeouts and the after-turn reconnect, over a stub Bolt server."""
+"""Graph connection loss and the after-turn reconnect, over a stub Bolt server."""
 
 from datetime import UTC, datetime, timedelta
 from threading import Thread
@@ -9,14 +9,11 @@ from pytest import fixture, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
 from engram.constants import EARLIEST_UTC, EMPTY_CONFIG
-from engram.constants_graph import GRAPH_TIMEOUT_SECONDS
 from engram.core import Engram
 from engram.graph import MemGraphConnection
 from engram.service import EngramCore
 from tests.bolt_stub import BoltStub, Structure
 
-# Room for thread wake-ups; Windows timers tick about every 16 ms.
-SLACK_SECONDS = 0.25
 FAIL_FAST_SECONDS = 0.05
 
 
@@ -35,9 +32,9 @@ def client_fixture(stub):
     connection.disconnect()
 
 
-def time_out_one_query(stub: BoltStub, client: MemGraphConnection) -> None:
-    stub.mode = "hang"
-    with pytest_raises(RuntimeError, match=r"Query failed \(TimeoutError\)"):
+def lose_one_query(stub: BoltStub, client: MemGraphConnection) -> None:
+    stub.mode = "drop"
+    with pytest_raises(RuntimeError, match=r"Query failed \((ServiceUnavailable|SessionExpired)\)"):
         client.execute("RETURN 1 AS ready")
 
 
@@ -64,11 +61,8 @@ def test_driver_datetimes_come_back_as_python_datetimes(stub, client) -> None:
     assert value.utcoffset() == timedelta(0)
 
 
-def test_query_times_out_and_later_reads_fail_fast_until_the_after_turn_reconnect(stub, client) -> None:
-    started = time_monotonic()
-    time_out_one_query(stub, client)
-    elapsed = time_monotonic() - started
-    assert GRAPH_TIMEOUT_SECONDS - 0.02 <= elapsed < GRAPH_TIMEOUT_SECONDS + SLACK_SECONDS
+def test_a_lost_connection_makes_later_reads_fail_fast_until_the_after_turn_reconnect(stub, client) -> None:
+    lose_one_query(stub, client)
     assert client.available is False
 
     # The rest of the turn does not touch the database.
@@ -88,9 +82,8 @@ def test_query_times_out_and_later_reads_fail_fast_until_the_after_turn_reconnec
 
 
 def test_a_failed_reconnect_is_retried_after_the_next_turn(stub, client) -> None:
-    time_out_one_query(stub, client)
+    lose_one_query(stub, client)
 
-    stub.mode = "silent"
     assert client.reconnect_after_turn() is True
     assert client.reconnect_future.result(timeout=5) is False
     assert client.available is False
@@ -100,20 +93,6 @@ def test_a_failed_reconnect_is_retried_after_the_next_turn(stub, client) -> None
     assert client.reconnect_after_turn() is True
     assert client.reconnect_future.result(timeout=5) is True
     assert client.execute("RETURN 1 AS ready") == [{"ready": 1}]
-
-
-def test_connect_gives_up_at_the_timeout_on_an_unresponsive_server(stub) -> None:
-    stub.mode = "silent"
-    connection = MemGraphConnection(host="127.0.0.1", port=stub.port)
-    try:
-        started = time_monotonic()
-        assert connection.connect() == ()
-        assert time_monotonic() - started < GRAPH_TIMEOUT_SECONDS + SLACK_SECONDS
-        assert connection.available is False
-        with pytest_raises(RuntimeError, match="unavailable"):
-            connection.execute("RETURN 1")
-    finally:
-        connection.disconnect()
 
 
 def test_disconnect_stops_the_driver_loop(stub) -> None:
@@ -127,11 +106,6 @@ def test_disconnect_stops_the_driver_loop(stub) -> None:
     assert not thread.is_alive()
     assert connection.driver == ()
     assert connection.reconnect_after_turn() is False
-
-
-def test_timeout_must_be_positive() -> None:
-    with pytest_raises(ValueError, match="positive"):
-        MemGraphConnection(timeout_seconds=0)
 
 
 class ReconnectCountingGraph:

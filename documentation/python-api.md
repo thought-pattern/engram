@@ -8,8 +8,8 @@
 External Regulator outcome names below belong to Engram's standalone API, not
 Tapestry's component ownership. Tapestry Will owns Channel input interpretation
 under `will.yml`, routing and recall sufficiency; Regulator only reviews outbound
-Channel soundness and alone generates IDK. Utility supplies basic small-LLM
-inference. Tapestry's only selections are `model.actor` and `model.regulator`,
+Channel soundness and alone generates IDK. Utility serves inference wherever it
+is needed and sufficient. Tapestry's only selections are `model.actor` and `model.regulator`,
 with Will/Utility/Regulator sharing the latter; this does not alter Engram's API.
 
 `EngramCore.resolve_request` is the Python entry point for unified

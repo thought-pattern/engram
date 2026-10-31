@@ -5,9 +5,8 @@ HELLO/LOGON, auto-commit RUN + PULL, RESET, and GOODBYE. ``mode`` decides how
 the next handshake or query is answered:
 
 - ``answer``: reply with ``rows`` (dicts sharing one ordered set of keys)
-- ``hang``: never reply to the query
 - ``fail``: reply with a FAILURE carrying ``failure_message``
-- ``silent``: accept connections but never answer the handshake
+- ``drop``: close the connection instead of answering the handshake or the query
 
 Received queries and their parameters are kept in ``queries``.
 """
@@ -191,12 +190,6 @@ def send(connection: socket_socket, tag: int, *fields) -> None:
     connection.sendall(struct_pack(">H", len(body)) + body + b"\x00\x00")
 
 
-def drain(connection: socket_socket) -> None:
-    """Read until the client closes the connection."""
-    while connection.recv(4096):
-        pass
-
-
 class BoltStub:
     """A Bolt server on 127.0.0.1 whose answers the test controls."""
 
@@ -234,14 +227,12 @@ class BoltStub:
         # A client disconnect, or close() shutting the socket down under a blocked read, is this worker's normal end.
         with connection, contextlib_suppress(OSError, EOFError):
             read_exact(connection, 20)
-            if self.mode == "silent":
-                drain(connection)
-            else:
+            if self.mode != "drop":
                 connection.sendall(BOLT_5_2)
                 self.answer(connection)
 
     def answer(self, connection: socket_socket) -> None:
-        """Answer Bolt messages on one handshaken connection until GOODBYE or a hung query."""
+        """Answer Bolt messages on one handshaken connection until GOODBYE or a dropped query."""
         failed = False
         pending: list[list] = []
         while True:
@@ -252,8 +243,7 @@ class BoltStub:
                 send(connection, SUCCESS, {"server": "Neo4j/5.2.0", "connection_id": "bolt-stub"})
             elif message.tag == RUN:
                 self.queries.append((message.fields[0], message.fields[1]))
-                if self.mode == "hang":
-                    drain(connection)
+                if self.mode == "drop":
                     break
                 if self.mode == "fail":
                     failed = True

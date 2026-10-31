@@ -7,7 +7,6 @@ completing the resolution once its candidate is settled. Each function that take
 
 from collections import Counter
 from copy import deepcopy
-from time import monotonic as time_monotonic
 from uuid import uuid4
 
 from engram import sessions
@@ -77,7 +76,6 @@ def propose(
     """Create a speculative, uncredited response-cache proposal."""
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         require_cache_request(request)
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
@@ -239,7 +237,6 @@ def propose(
         }
         candidate_responses = {candidate.get("statement_id", ""): candidate.get("response", "") for candidate in candidates}
         record = {
-            "created_at": time_monotonic(),
             "signature": signature,
             "proposal": proposal,
             "candidate_responses": candidate_responses,
@@ -276,7 +273,6 @@ def resolve(core, proposal_id: str, outcome: str, statement_id: str = "", reason
     """Commit one Regulator verdict without double-crediting retries."""
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         require_any_text(proposal_id, "proposal_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         require_any_text(outcome, "outcome", MAX_REASON_CODE_BYTES, allow_empty=True)
         require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=True)

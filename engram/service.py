@@ -12,12 +12,11 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from logging import getLogger as logging_getLogger
 from threading import Condition as threading_Condition, RLock as threading_RLock
-from time import monotonic as time_monotonic, monotonic_ns as time_monotonic_ns
+from time import monotonic_ns as time_monotonic_ns
 
 from engram.constants import (
     EMPTY_CONFIG,
     MAX_TRANSIENT_RECORDS,
-    PROPOSAL_TTL_SECONDS,
     REGULATOR_OUTCOMES,
     RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS,
 )
@@ -537,7 +536,6 @@ class EngramCore:
         """Return a JSON-ready snapshot of regulated-cache activity."""
         with self.lock:
             self.require_running()
-            self.cleanup_transient()
             result = {
                 **deepcopy(self.regulated_metrics),
                 "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
@@ -564,18 +562,6 @@ class EngramCore:
     def require_running(self) -> None:
         if self.internal_state != CoreState.RUNNING:
             raise LifecycleError(f"core is {self.internal_state.value}; operation requires running state")
-
-    def cleanup_transient(self) -> None:
-        cutoff = time_monotonic() - PROPOSAL_TTL_SECONDS
-        expired_proposals = [
-            proposal_id for proposal_id, record in self.proposals.items() if record.get("created_at", 0.0) < cutoff
-        ]
-        for proposal_id in expired_proposals:
-            self.remove_proposal(proposal_id)
-        for records in (self.learn_requests, self.retire_requests):
-            expired_request_ids = [request_id for request_id, record in records.items() if record.get("created_at", 0.0) < cutoff]
-            for request_id in expired_request_ids:
-                records.pop(request_id, {})
 
     def enforce_transient_bound(self) -> None:
         while len(self.proposals) > MAX_TRANSIENT_RECORDS:

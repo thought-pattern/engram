@@ -93,14 +93,7 @@ same `MISS` returned after a successful graph query with no rows, not a separate
 unavailable resolution outcome. Component diagnostics may still report the graph
 failure. Cooperative cancellation is checked around graph calls.
 
-Every graph call, connecting included, is bounded at 500 ms
-(`GRAPH_TIMEOUT_SECONDS`); an overrunning query is cancelled and its connection
-closed. After a timeout or a lost connection, the rest of the turn's graph reads fail
-immediately, so an unresponsive database costs a turn at most one timeout. When the
-turn ends (a chat or resolution request, or any gRPC call), the connection is
-replaced in the background without delaying the response, and graph reads resume
-once it succeeds. A failed reconnect is retried after the next turn. The schema
-check uses a 30-second limit instead (`GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS`).
+A graph call has no deadline, and taking a pooled connection waits as long as that takes. Every socket the driver opens gets TCP keepalive as its watchdog (`engram/graph_keepalive.py`): after 30 seconds without traffic the kernel probes the database every 10 seconds and fails the socket after 3 unanswered probes, which the driver reports as a lost connection. A live database answers the probes from its kernel however long its query runs, so only a dead host or a broken network path ends a wait; the driver's connect window bounds only a TCP connect that gets no answer at all. The values are set explicitly because the system defaults (two hours of idle time on macOS) are too slow for a watchdog, and the driver's descriptors are configured in place, never duplicated or closed. After a lost connection, the rest of the turn's graph reads fail immediately. When the turn ends (a chat or resolution request, or any gRPC call), the connection is replaced in the background without delaying the response, and graph reads resume once it succeeds. A failed reconnect is retried after the next turn. The schema check uses the same connection.
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,

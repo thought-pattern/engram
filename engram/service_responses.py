@@ -6,7 +6,6 @@ of graph records supports. Each function that takes ``core`` is bound on
 """
 
 from copy import deepcopy
-from time import monotonic as time_monotonic
 
 from engram import sessions
 from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_USER_ID, EMPTY_METADATA
@@ -42,7 +41,6 @@ def learn_response(
     """Create one DYNAMIC ACTIVE response artifact through base commit."""
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         require_cache_request(request)
         require_any_text(response, "response", MAX_RESPONSE_BYTES, blank_is_empty=True)
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
@@ -115,7 +113,6 @@ def supersede_response(
 
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         require_any_text(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
@@ -137,7 +134,6 @@ def retire_response(core, statement_id: str, reason: str, request_id: str) -> di
     """Retire one accepted-response artifact."""
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, blank_is_empty=True)
         require_any_text(reason, "reason", MAX_FEEDBACK_REASON_BYTES, blank_is_empty=True)
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
@@ -197,7 +193,6 @@ def retire_response(core, statement_id: str, reason: str, request_id: str) -> di
             "generation": generation,
         }
         core.retire_requests[request_id] = {
-            "created_at": time_monotonic(),
             "expected_generation": expected_generation,
             "result": result,
         }

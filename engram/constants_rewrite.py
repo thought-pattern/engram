@@ -17,8 +17,6 @@ MAX_REWRITE_PRIORITY = 10_000
 MAX_REWRITE_APPLICATIONS_PER_RULE = 8
 DEFAULT_REWRITE_MAX_DEPTH = 8
 DEFAULT_REWRITE_MAX_EXPANSIONS = 16
-DEFAULT_REWRITE_MAX_ELAPSED_NS = 50_000_000
-MAX_REWRITE_ELAPSED_NS = 10_000_000_000
 REWRITE_RULE_FIELDS = set(
     {"rule_id", "category", "input_constraints", "output_template", "priority", "scope", "max_applications", "provenance"}
 )
@@ -54,4 +52,3 @@ class RewriteStopReason(StrEnum):
     EXPANSION_LIMIT = "expansion_limit"
     CYCLE = "cycle"
     OUTPUT_LIMIT = "output_limit"
-    TIME_LIMIT = "time_limit"

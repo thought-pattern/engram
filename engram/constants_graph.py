@@ -1,4 +1,4 @@
-"""Graph fact-recall reads, Proposition projection contracts and queries, and graph operation bounds."""
+"""Graph fact-recall reads, Proposition projection contracts and queries, and graph connection watchdog settings."""
 
 from enum import StrEnum
 from re import IGNORECASE, compile as re_compile
@@ -114,10 +114,15 @@ TRIPLE_QUERY_SUBJECT = (
     "AND (assertion.valid_time_end IS NULL OR datetime($evaluation_time) < assertion.valid_time_end) "
     "RETURN s.primary_label AS result LIMIT 1"
 )
-# Every runtime graph operation, connecting included, must finish within this
-# time. The schema check runs outside the request path and gets longer.
-GRAPH_TIMEOUT_SECONDS = 0.5
-GRAPH_SCHEMA_CHECK_TIMEOUT_SECONDS = 30.0
+# The TCP keepalive watchdog on every graph socket: after this much idle time the kernel probes the server at the
+# interval and fails the socket after the probe count goes unanswered.
+GRAPH_KEEPALIVE_IDLE_SECONDS = 30
+GRAPH_KEEPALIVE_INTERVAL_SECONDS = 10
+GRAPH_KEEPALIVE_PROBES = 3
+# How often a waiting statement sets the watchdog on a connection the pool opened for it; the wait itself has no end.
+GRAPH_KEEPALIVE_CHECK_SECONDS = 1.0
+# Stop grace for closing the driver and its event loop at disconnect.
+GRAPH_SHUTDOWN_GRACE_SECONDS = 0.5
 WRITE_CLAUSE = re_compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b", IGNORECASE
 )

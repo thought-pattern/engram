@@ -20,12 +20,10 @@ from engram.constants_identity import MAX_ENUM_WIRE_BYTES, QueryOperator
 from engram.constants_resolution import MAX_TRACE_STEPS
 from engram.constants_rewrite import (
     DEFAULT_REWRITE_MAX_DEPTH,
-    DEFAULT_REWRITE_MAX_ELAPSED_NS,
     DEFAULT_REWRITE_MAX_EXPANSIONS,
     MAX_REWRITE_APPLICATIONS_PER_RULE,
     MAX_REWRITE_CATEGORY_BYTES,
     MAX_REWRITE_CORPUS_ID_BYTES,
-    MAX_REWRITE_ELAPSED_NS,
     MAX_REWRITE_LICENSE_BYTES,
     MAX_REWRITE_PATTERN_BYTES,
     MAX_REWRITE_PRIORITY,
@@ -231,7 +229,6 @@ class RewriteEngine:
         max_depth: int = DEFAULT_REWRITE_MAX_DEPTH,
         max_expansions: int = DEFAULT_REWRITE_MAX_EXPANSIONS,
         max_output_bytes: int = MAX_REQUEST_BYTES,
-        max_elapsed_ns: int = DEFAULT_REWRITE_MAX_ELAPSED_NS,
         clock_ns: object = time_perf_counter_ns,
     ) -> None:
         if not isinstance(rules, tuple):
@@ -245,7 +242,6 @@ class RewriteEngine:
         self.max_depth = internal_integer(max_depth, "rewrite max_depth", 1, MAX_TRACE_STEPS)
         self.max_expansions = internal_integer(max_expansions, "rewrite max_expansions", 1, MAX_REWRITE_RULES)
         self.max_output_bytes = internal_integer(max_output_bytes, "rewrite max_output_bytes", 1, MAX_REQUEST_BYTES)
-        self.max_elapsed_ns = internal_integer(max_elapsed_ns, "rewrite max_elapsed_ns", 1, MAX_REWRITE_ELAPSED_NS)
         if not callable(clock_ns):
             raise InvalidRequestError("rewrite clock_ns must be callable")
         self.internal_clock_ns = clock_ns
@@ -286,9 +282,6 @@ class RewriteEngine:
         stop_reason = RewriteStopReason.FIXED_POINT
         while len(chain) < self.max_depth:
             check()
-            if max(0, self.current_time_ns() - started) > self.max_elapsed_ns:
-                stop_reason = RewriteStopReason.TIME_LIMIT
-                break
             candidates = []
             for rule in self.rules:
                 identity = rule.get("rule_id", "")
@@ -320,8 +313,6 @@ class RewriteEngine:
         else:
             stop_reason = RewriteStopReason.DEPTH_LIMIT
         elapsed = max(0, self.current_time_ns() - started)
-        if stop_reason == RewriteStopReason.FIXED_POINT and elapsed > self.max_elapsed_ns:
-            stop_reason = RewriteStopReason.TIME_LIMIT
         result: dict = {
             "original_text": original,
             "final_text": current,
@@ -341,7 +332,7 @@ def apply_rewrites_to_frame(
     """Populate the reserved QueryFrame trace without changing authoritative identity.
 
     Only a complete fixed point reaches resolver planning. A chain stopped by
-    a depth, expansion, cycle, output, or time limit is discarded and the
+    a depth, expansion, cycle or output limit is discarded and the
     frame keeps its original representation, so an optional rewrite cannot
     fail the request.
     """

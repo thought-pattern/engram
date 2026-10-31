@@ -13,14 +13,6 @@ from sentence_transformers import SentenceTransformer
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import semantic_config
-from engram.constants import (
-    APPROVED_SEMANTIC_ARTIFACT_SHA256,
-    APPROVED_SEMANTIC_BACKEND,
-    APPROVED_SEMANTIC_DIMENSION,
-    APPROVED_SEMANTIC_LICENSE_ID,
-    APPROVED_SEMANTIC_MODEL_ID,
-    APPROVED_SEMANTIC_MODEL_REVISION,
-)
 from engram.constants_artifacts import LifecycleState
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
@@ -220,30 +212,9 @@ class StandaloneSemanticRetriever:
         self.internal_identity: dict = {}
         if settings.get("enabled", False):
             try:
-                if not injected_model:
-                    approved_identity = {
-                        "model_id": APPROVED_SEMANTIC_MODEL_ID,
-                        "model_revision": APPROVED_SEMANTIC_MODEL_REVISION,
-                        "license_id": APPROVED_SEMANTIC_LICENSE_ID,
-                        "artifact_sha256": APPROVED_SEMANTIC_ARTIFACT_SHA256,
-                        "backend": APPROVED_SEMANTIC_BACKEND,
-                        "dimension": APPROVED_SEMANTIC_DIMENSION,
-                    }
-                    configured_identity = {
-                        "model_id": settings.get("model_id", ""),
-                        "model_revision": settings.get("model_revision", ""),
-                        "license_id": settings.get("license_id", ""),
-                        "artifact_sha256": settings.get("artifact_sha256", ""),
-                        "backend": settings.get("backend", ""),
-                        "dimension": settings.get("dimension", 0),
-                    }
-                    if configured_identity != approved_identity:
-                        raise InvalidRequestError("semantic model identity is not approved")
                 model_path = Path(settings.get("model_path", ""))
                 if not model_path.is_dir():
                     raise InvalidRequestError("semantic model artifact must be a directory")
-                if not (model_path / "LICENSE").is_file():
-                    raise InvalidRequestError("semantic model artifact is missing its license file")
                 actual_sha256 = model_artifact_sha256(model_path)
                 if actual_sha256 != settings.get("artifact_sha256", ""):
                     raise InvalidRequestError("semantic model artifact checksum mismatch")

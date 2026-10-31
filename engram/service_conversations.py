@@ -144,7 +144,6 @@ def inspect_conversation(core, user_id: str, conversation_token: str = "") -> di
     """Inspect one conversation and shared regulated-cache metrics."""
     with core.lock:
         core.require_running()
-        core.cleanup_transient()
         snapshot = core.owned_conversation(user_id, conversation_token).inspect()
         snapshot["regulated_cache"] = core.regulated_cache_metrics()
         snapshot["core_status"] = core.status()

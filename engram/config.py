@@ -22,7 +22,6 @@ from engram.constants import (
     APPROVED_SEMANTIC_BACKEND,
     APPROVED_SEMANTIC_DIMENSION,
     APPROVED_SEMANTIC_LICENSE_ID,
-    APPROVED_SEMANTIC_LICENSE_IDS,
     APPROVED_SEMANTIC_MODEL_ID,
     CONVERSATION_DUPLICATE_POLICIES,
     DEFAULT_BOT_NAME,
@@ -230,8 +229,6 @@ def semantic_config(
             raise ValueError(f"semantic {name} must be a string")
     if not model_id.strip():
         raise ValueError("semantic model_id must be a non-empty string")
-    if license_id.strip().casefold() not in APPROVED_SEMANTIC_LICENSE_IDS:
-        raise ValueError("semantic license_id is not approved")
     if backend not in SEMANTIC_BACKENDS:
         raise ValueError(f"semantic backend must be one of {', '.join(sorted(SEMANTIC_BACKENDS))}")
     if artifact_sha256 and (len(artifact_sha256) != 64 or any(value not in "0123456789abcdefABCDEF" for value in artifact_sha256)):

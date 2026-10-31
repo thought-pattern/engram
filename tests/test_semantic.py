@@ -70,7 +70,6 @@ def settings(tmp_path: Path, **changes) -> dict:
     model_path = tmp_path / "model"
     model_path.mkdir(parents=True, exist_ok=True)
     (model_path / "weights.bin").write_bytes(b"local-test-model")
-    (model_path / "LICENSE").write_text("Apache License 2.0", encoding="utf-8")
     values = {
         "enabled": True,
         "model_path": str(model_path),
@@ -95,7 +94,7 @@ def search(value, artifacts, text="japanese rolls", namespace="tenant-a", **chan
     return result
 
 
-def test_semantic_model_is_checksum_license_and_dimension_gated(tmp_path: Path) -> None:
+def test_semantic_model_is_checksum_and_dimension_gated(tmp_path: Path) -> None:
     valid = settings(tmp_path)
     corrupt = dict(valid)
     corrupt["artifact_sha256"] = "0" * 64

@@ -32,6 +32,7 @@ from engram.constants import (
     DEFAULT_MAX_WORKERS,
     DEFAULT_PROPOSE_LIMIT,
     EMPTY_CONFIG,
+    GRPC_SERVER_OPTIONS,
     SHUTDOWN_DRAIN_MARGIN_SECONDS,
 )
 from engram.constants_resolution import MAX_DIAGNOSTIC_ID_BYTES
@@ -594,7 +595,9 @@ class EngramGrpcServer:
         self.service = EngramGrpcService(core, self.health_servicer, self.health_page)
         self.evidence_service = EngramEvidenceGrpcService(self.service)
         executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.internal_server = grpc_server(executor, interceptors=[HealthInterceptor(self.health_metrics)])
+        self.internal_server = grpc_server(
+            executor, interceptors=[HealthInterceptor(self.health_metrics)], options=list(GRPC_SERVER_OPTIONS)
+        )
         bound = False
         try:
             add_EngramServiceServicer_to_server(self.service, self.internal_server)
