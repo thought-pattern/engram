@@ -26,14 +26,14 @@ from engram.resolution import (
     trusted_candidate_to_dict,
     trusted_evidence_reference_to_dict,
     trusted_resolution_result,
-    trusted_resolution_result_to_json,
+    trusted_resolution_result_to_dict,
     trusted_resolver_result_to_dict,
     trusted_resolver_result_with_changes,
 )
 from engram.resolution_accounting import ResolutionAccountingFinalizer, accounting_diagnostics, accounting_finalization
 from engram.resolution_budget import budget_consumption_to_dict, budget_consumption_with_changes
-from engram.resolution_package import build_evidence_package, empty_evidence_package, trusted_evidence_package_to_json
-from engram.resolution_sizing import json_size, working_size
+from engram.resolution_package import build_evidence_package, empty_evidence_package, evidence_package_payload
+from engram.resolution_sizing import encoded_size, working_size
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import (
     ResolverRegistry,
@@ -130,7 +130,7 @@ def start_evidence_assembly(assembly: dict) -> None:
         + tuple(nested for candidate in result.get("candidates", ()) for nested in candidate.get("evidence", ()))
     )
     minimal_evidence_bytes = (
-        json_size([evidence_reference_to_dict(reference) for reference in minimal_evidence_values])
+        encoded_size([evidence_reference_to_dict(reference) for reference in minimal_evidence_values])
         if minimal_evidence_values
         else 0
     )
@@ -266,7 +266,7 @@ def package_proposition_evidence(assembly: dict, screened: dict, remaining_worki
         max_records=min(10, max(0, budget_limits.get("max_evidence", 0) - assembly.get("minimal_evidence_count", 0))),
         max_bytes=package_byte_limit,
     )
-    candidate_package_bytes = len(trusted_evidence_package_to_json(candidate_package).encode("utf-8"))
+    candidate_package_bytes = encoded_size(evidence_package_payload(candidate_package))
     if candidate_package_bytes <= remaining_evidence_bytes:
         assembly.update({"evidence_package_available": True, "evidence_package": candidate_package})
         evidence_working_memory += candidate_package_bytes
@@ -294,7 +294,7 @@ def bound_frame_diagnostics(assembly: dict, values: dict[str, object]) -> dict[s
         0,
         budget_limits.get("max_diagnostic_bytes", 0) - assembly.get("execution_consumption", {}).get("diagnostic_bytes", 0),
     )
-    if not values or json_size(values) <= remaining:
+    if not values or encoded_size(values) <= remaining:
         return values
     assembly.get("orchestration_exhausted", set()).add("diagnostic_bytes")
     append_reason(assembly, "diagnostics_truncated")
@@ -311,10 +311,10 @@ def bound_frame_diagnostics(assembly: dict, values: dict[str, object]) -> dict[s
         },
         "truncated": True,
     }
-    if json_size(compact) <= remaining:
+    if encoded_size(compact) <= remaining:
         return compact
     marker: dict[str, object] = {"truncated": True}
-    result = marker if json_size(marker) <= remaining else {}
+    result = marker if encoded_size(marker) <= remaining else {}
     return result
 
 
@@ -375,16 +375,14 @@ def complete_consumption(assembly: dict, elapsed_ns: int, reserve: bool) -> dict
         exhausted.add("output_bytes")
     if assembly.get("decision_report", {}).get("budget_exhausted", "") == "fusion_memory_exhausted":
         exhausted.add("working_memory_bytes")
-    package_evidence_bytes = (
-        len(trusted_evidence_package_to_json(evidence_package).encode("utf-8")) if evidence_package_available else 0
-    )
+    package_evidence_bytes = encoded_size(evidence_package_payload(evidence_package)) if evidence_package_available else 0
     evidence_count = assembly.get("minimal_evidence_count", 0) + evidence_package.get("retained_count", 0)
     evidence_bytes = assembly.get("minimal_evidence_bytes", 0) + package_evidence_bytes
     if evidence_count > budget_limits.get("max_evidence", 0):
         exhausted.add("evidence")
     if evidence_bytes > max_evidence_bytes:
         exhausted.add("evidence_bytes")
-    frame_diagnostic_bytes = json_size(frame_diagnostics) if frame_diagnostics else 0
+    frame_diagnostic_bytes = encoded_size(frame_diagnostics) if frame_diagnostics else 0
     diagnostic_bytes = execution_consumption.get("diagnostic_bytes", 0) + frame_diagnostic_bytes
     if diagnostic_bytes > max_diagnostic_bytes:
         exhausted.add("diagnostic_bytes")
@@ -414,25 +412,25 @@ def complete_consumption(assembly: dict, elapsed_ns: int, reserve: bool) -> dict
 
 
 def sized_output_bytes(assembly: dict, elapsed_ns: int) -> int:
-    """Encode the result as large as it can be once accounting is written."""
+    """Size the result as large as it can be once accounting is written."""
     value = trusted_resolution_result(**assembly.get("result_fields", {}), budget=complete_consumption(assembly, elapsed_ns, True))
-    result = len(trusted_resolution_result_to_json(value).encode("utf-8"))
+    result = encoded_size(trusted_resolution_result_to_dict(value))
     return result
 
 
 def trailing_item_bytes(payload: dict, count: int) -> int:
     """Bytes the last of ``count`` encoded list items occupies, with its separating comma."""
-    result = json_size(payload) + (1 if count > 1 else 0)
+    result = encoded_size(payload) + (1 if count > 1 else 0)
     return result
 
 
 def package_field_bytes(assembly: dict) -> int:
-    """Encode the only top-level fields a package trim changes: package, diagnostics, budget."""
+    """Size the only top-level fields a package trim changes: package, diagnostics, budget."""
     budget_payload = budget_consumption_to_dict(complete_consumption(assembly, MAX_RESOURCE_COUNTER, True))
     result = (
-        len(trusted_evidence_package_to_json(assembly.get("evidence_package", {})).encode("utf-8"))
-        + json_size(assembly.get("frame_diagnostics", {}))
-        + json_size(budget_payload)
+        encoded_size(evidence_package_payload(assembly.get("evidence_package", {})))
+        + encoded_size(assembly.get("frame_diagnostics", {}))
+        + encoded_size(budget_payload)
     )
     return result
 
@@ -640,18 +638,18 @@ def settled_resolution_result(assembly: dict, finalization: dict, elapsed_ns: in
     consumption = complete_consumption(assembly, elapsed_ns, False)
     for _ in range(8):
         result = trusted_resolution_result(**result_fields, budget=consumption)
-        encoded_size = len(trusted_resolution_result_to_json(result).encode("utf-8"))
+        output_bytes = encoded_size(trusted_resolution_result_to_dict(result))
         fixed_exhausted = set(consumption.get("exhausted_dimensions", ()))
         max_working_memory_bytes = budget_limits.get("max_working_memory_bytes", 0)
-        if encoded_size > max_working_memory_bytes:
+        if output_bytes > max_working_memory_bytes:
             fixed_exhausted.add("working_memory_bytes")
         updated_consumption = budget_consumption_with_changes(
             consumption,
             {
-                "output_bytes": encoded_size,
+                "output_bytes": output_bytes,
                 "working_memory_bytes": min(
                     max_working_memory_bytes,
-                    max(consumption.get("working_memory_bytes", 0), encoded_size),
+                    max(consumption.get("working_memory_bytes", 0), output_bytes),
                 ),
                 "exhausted_dimensions": tuple(sorted(fixed_exhausted)),
             },
@@ -660,7 +658,7 @@ def settled_resolution_result(assembly: dict, finalization: dict, elapsed_ns: in
             break
         consumption = updated_consumption
     result = trusted_resolution_result(**result_fields, budget=consumption)
-    if len(trusted_resolution_result_to_json(result).encode("utf-8")) > assembly.get("output_limit", 0):
+    if encoded_size(trusted_resolution_result_to_dict(result)) > assembly.get("output_limit", 0):
         raise RuntimeError("resolution result outgrew the output size checked before accounting")
     return result
 

@@ -13,7 +13,7 @@ from engram.constants_artifacts import (
 )
 from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES
 from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES
-from engram.constants_mutations import MAX_REQUEST_ID_BYTES, MAX_SIGNATURE_INPUT_BYTES
+from engram.constants_mutations import MAX_REQUEST_ID_BYTES
 from engram.constants_resolution import ResolutionOutcome, ResolverState
 from engram.constants_service import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES
 from engram.core import Engram
@@ -90,13 +90,11 @@ def test_conversation_and_mcp_share_the_request_bound() -> None:
     service.stop()
 
 
-def test_initial_context_and_service_signatures_are_bounded() -> None:
+def test_initial_context_is_bounded_and_service_signatures_need_valid_unicode() -> None:
     core = EngramCore()
 
     with pytest_raises(InvalidRequestError, match="initial_bot_text exceeds"):
         core.start_conversation(initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))
-    with pytest_raises(InvalidRequestError, match="service request exceeds"):
-        service_request_signature(value="x" * MAX_SIGNATURE_INPUT_BYTES)
     with pytest_raises(InvalidRequestError, match="must contain valid Unicode"):
         service_request_signature(metadata={"nested": "\ud800"})
 

@@ -67,7 +67,6 @@ The server accepts these options:
 | `--bind` | `127.0.0.1:50051` | Listen address. |
 | `--config-path` | empty | Engram YAML configuration. |
 | `--max-workers` | `10` | Maximum concurrent unary RPC handlers. |
-| `--grace-period` | `10` | Seconds allowed for RPCs to drain during shutdown. |
 | `--tls-cert`, `--tls-key` | empty | PEM certificate/key pair for server TLS. |
 | `--log-level` | `INFO` | Server log level. |
 
@@ -322,10 +321,12 @@ Only call names, outcomes, times and counts are kept: never conversation text,
 user names or IDs, facts or responses. The page has no controls and never
 contacts another service. A listener that cannot bind is logged and reported in
 the snapshot's `http` state (`available` false, with the error type and code)
-while Engram keeps serving gRPC.
+while Engram keeps serving gRPC. The snapshot's `grpc` state reports the gRPC
+listener in the same form: `available` with its dial target as `url` once the
+server starts, and `available` false once shutdown begins.
 
-SIGINT and SIGTERM mark health not serving, stop admission, allow in-flight
-calls to drain for `--grace-period`, and close the core. Closing discards all
+SIGINT and SIGTERM mark health not serving, stop admission, wait for every
+in-flight call to finish, and close the core. Closing discards all
 remaining process memory and disconnects graph resources. Repeated shutdown is
 idempotent.
 

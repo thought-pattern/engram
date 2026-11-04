@@ -13,7 +13,9 @@ MAX_PLANNED_CANDIDATES = 16
 MAX_REQUEST_ID_BYTES = 256
 MAX_RECEIPT_STATEMENT_ID_BYTES = 256
 MAX_RESULT_BYTES = 65_536
-MAX_SIGNATURE_INPUT_BYTES = 1_048_576
+# Domains of Engram's internal identities, each the SHA-256 of its domain and a value's canonical binary encoding.
+MUTATION_PAYLOAD_SIGNATURE_DOMAIN = b"engram-mutation-payload\0"
+SERVICE_REQUEST_SIGNATURE_DOMAIN = b"engram-service-request\0"
 MAX_RESULT_DEPTH = 8
 MAX_RESULT_ITEMS = 1_024
 MAX_RESULT_KEY_BYTES = 256

@@ -161,7 +161,7 @@ graph:
   vector_model_path: ""
   vector_dimension: 384
   vector_limit: 250
-  vector_support_scan_limit: 100000 # Bound matched Proposition-support fan-out
+  vector_support_scan_limit: 100000 # Matching Proposition supports one recall ranks; past it the ranked responses are kept and the truncation is logged
   vector_min_similarity: 0.45
   vector_weight: 0.75
 

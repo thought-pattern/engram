@@ -44,7 +44,6 @@ from engram.constants_graph import (
     CANONICAL_ENTITY_MATCH_QUERY,
     CANONICAL_PREDICATE_MATCH_QUERY,
     GRAPH_KEEPALIVE_CHECK_SECONDS,
-    GRAPH_SHUTDOWN_GRACE_SECONDS,
     MAX_PROPOSITION_PROJECTION_EMBEDDING_DIMENSIONS,
     MAX_PROPOSITION_PROJECTION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_PROJECTION_ROWS,
@@ -80,7 +79,7 @@ from engram.constants_relation import (
     PredicateCardinality,
 )
 from engram.constants_resolution import MAX_GRAPH_READ_ROWS
-from engram.errors import InvalidRequestError, ResourceExhaustedError, failure_origin
+from engram.errors import InvalidRequestError, failure_origin
 from engram.graph_keepalive import keep_graph_sockets_alive
 from engram.schema_admin import verify_schema
 from engram.schema_catalog import packaged_schema
@@ -125,8 +124,9 @@ def native_value(value: object) -> object:
 async def read_rows(driver, statement: str, parameters: dict, max_rows: int) -> list[dict]:
     """Run one auto-commit statement and return its rows as column -> value dicts.
 
-    Records are consumed one at a time, so a read that would exceed ``max_rows``
-    is refused before its remaining rows are fetched, decoded or rendered.
+    Records are consumed one at a time. A read that reaches ``max_rows`` keeps the
+    rows already read and logs the truncation; its remaining rows are never fetched,
+    decoded or rendered.
     """
     rows = []
     async with driver.session() as session:
@@ -134,7 +134,8 @@ async def read_rows(driver, statement: str, parameters: dict, max_rows: int) -> 
         columns = list(result.keys())
         async for record in result:
             if len(rows) >= max_rows:
-                raise ResourceExhaustedError(f"graph read exceeded the allowance of {max_rows} rows")
+                logger.info("code=graph_read_truncated Graph read kept the first %d rows; the rest were not read", max_rows)
+                break
             rows.append(dict(zip(columns, (native_value(value) for value in record.values()), strict=False)))
     return rows
 
@@ -846,15 +847,15 @@ class MemGraphConnection:
             self.reconnect_needed = False
         if loop and thread:
             future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
+            # The shutdown ends when its cancelled work and the driver's close have finished; a stalled connection is
+            # ended by the connection watchdog's keepalive, never by elapsed time.
             try:
-                future.result(timeout=2 * GRAPH_SHUTDOWN_GRACE_SECONDS)
+                future.result()
             except Exception as err:
-                future.cancel()
                 logger.warning("Graph driver shutdown did not finish (%s)", failure_origin(err))
             loop.call_soon_threadsafe(loop.stop)
-            thread.join(GRAPH_SHUTDOWN_GRACE_SECONDS)
-            if not thread.is_alive():
-                loop.close()
+            thread.join()
+            loop.close()
             logger.info("Disconnected from graph database")
 
     async def shutdown(self) -> None:
@@ -864,7 +865,7 @@ class MemGraphConnection:
         for task in pending:
             task.cancel()
         if pending:
-            await asyncio_wait(pending, timeout=GRAPH_SHUTDOWN_GRACE_SECONDS)
+            await asyncio_wait(pending)
         with self.internal_lock:
             driver = self.driver
             self.driver = ()
@@ -923,7 +924,7 @@ class MemGraphConnection:
         try:
             result = self.run_on(loop, driver, query, query_parameters)
             return result
-        except (Neo4jError, DriverError, OSError, ResourceExhaustedError) as err:
+        except (Neo4jError, DriverError, OSError) as err:
             # The database's rejection of a query (a missing procedure or index included)
             # is a client error and logs at debug, as every graph-read failure does at the
             # caller; lost connections are operational and log as errors.

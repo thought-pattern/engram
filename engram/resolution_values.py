@@ -11,6 +11,7 @@ from engram.constants_resolution import (
     MAX_JSON_STRING_BYTES,
 )
 from engram.errors import InvalidRequestError
+from engram.resolution_sizing import encoded_size
 from engram.validation import require_any_text
 
 
@@ -92,8 +93,7 @@ def freeze_mapping(value: object, name: str) -> dict[str, object]:
     frozen = freeze_json(value, name)
     if not isinstance(frozen, dict):
         raise InvalidRequestError(f"{name} must be an object")
-    encoded = json_dumps(thaw_json(frozen), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    if len(encoded.encode("utf-8")) > MAX_JSON_BYTES:
+    if encoded_size(frozen) > MAX_JSON_BYTES:
         raise InvalidRequestError(f"{name} exceeds the limit of {MAX_JSON_BYTES} UTF-8 bytes")
     return frozen
 

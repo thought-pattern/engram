@@ -1,7 +1,6 @@
 """Candidate normalization, fusion, eligibility, and ambiguity policy."""
 
 from hashlib import sha256 as hashlib_sha256
-from json import dumps as json_dumps
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
@@ -57,7 +56,6 @@ from engram.relation import phrase_relation_result
 from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     empty_candidate,
-    evidence_reference_to_json,
     trusted_candidate,
     trusted_candidate_to_dict,
     trusted_candidate_with_changes,
@@ -67,6 +65,7 @@ from engram.resolution import (
 )
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import validate_query_frame
+from engram.resolution_sizing import encoded_size
 from engram.utilities import evaluate_named_utility, utility_statement_id
 from engram.validation import require_bool
 
@@ -89,11 +88,6 @@ def policy_unit(value: object, name: str) -> float:
     if not 0.0 <= selected <= 1.0:
         raise InvalidRequestError(f"{name} must be between 0 and 1")
     return selected
-
-
-def json_text(value: dict) -> str:
-    result = json_dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    return result
 
 
 def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
@@ -820,13 +814,6 @@ def trusted_fusion_contribution_to_report_dict(current: dict) -> dict:
     return result
 
 
-def trusted_fusion_contribution_to_json(value: dict) -> str:
-    """Serialize one engine-owned contribution without redundant revalidation."""
-    data = trusted_fusion_contribution_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def trusted_fused_candidate_sources(current: dict) -> tuple[CandidateSource, ...]:
     """Collect active sources from an engine-owned fused candidate."""
     sources = tuple(
@@ -876,13 +863,6 @@ def trusted_fused_candidate_to_report_dict(current: dict) -> dict:
         "contributions": [trusted_fusion_contribution_to_report_dict(contribution) for contribution in visible],
         "omitted_contribution_count": len(current.get("contributions", ())) - len(visible),
     }
-    return result
-
-
-def trusted_fused_candidate_to_json(value: dict) -> str:
-    """Serialize one engine-owned fused candidate without redundant revalidation."""
-    data = trusted_fused_candidate_to_dict(value)
-    result = json_text(data)
     return result
 
 
@@ -1446,15 +1426,16 @@ class CandidateFusionEngine:
         # Evidence is retained even by an exhausted decision, so all of it is
         # validated (the count is already bounded); candidates are copied one at
         # a time against the working-memory allowance. Working memory is counted
-        # in bytes of each value's external JSON encoding, the same unit as the
-        # diagnostic report bound; equality and ordering use native keys.
+        # in the encoded size of each retained value, the unit of the request's
+        # budget and of the diagnostic report bound, computed from the native
+        # value; equality and ordering use native keys.
         validated_evidence = []
         working_bytes = 0
         for value in evidence:
             control_check()
             reference = validate_evidence_reference(value)
             validated_evidence.append(reference)
-            working_bytes += len(evidence_reference_to_json(reference).encode("utf-8"))
+            working_bytes += encoded_size(trusted_evidence_reference_to_dict(reference))
         evidence = tuple(validated_evidence)
         keyed_values = []
         for value in candidates:
@@ -1464,7 +1445,7 @@ class CandidateFusionEngine:
             candidate = validate_candidate(value)
             payload = trusted_candidate_to_dict(candidate)
             keyed_values.append((candidate, canonical_native_key(payload)))
-            working_bytes += len(json_text(payload).encode("utf-8"))
+            working_bytes += encoded_size(payload)
         if working_bytes > memory_limit:
             result = self.exhausted_decision(
                 frame,
@@ -1503,8 +1484,7 @@ class CandidateFusionEngine:
             normalized = apply_validated_authoritative_features(normalized, eligibility)
             contribution = {"candidate": candidate, "normalized": normalized, "eligibility": eligibility}
             contribution_groups.setdefault(candidate.get("statement_id", ""), []).append(contribution)
-            contribution_json = trusted_fusion_contribution_to_json(contribution)
-            working_bytes += len(contribution_json.encode("utf-8"))
+            working_bytes += encoded_size(trusted_fusion_contribution_to_dict(contribution))
             if working_bytes > memory_limit:
                 result = self.exhausted_decision(
                     frame,
@@ -1519,8 +1499,7 @@ class CandidateFusionEngine:
             control_check()
             fused_value = self.fuse_group(statement_id, tuple(contribution_groups.get(statement_id, [])), frame)
             fused_values.append(fused_value)
-            fused_json = trusted_fused_candidate_to_json(fused_value)
-            working_bytes += len(fused_json.encode("utf-8"))
+            working_bytes += encoded_size(trusted_fused_candidate_to_dict(fused_value))
             if working_bytes > memory_limit:
                 result = self.exhausted_decision(
                     frame,
@@ -1668,10 +1647,10 @@ class CandidateFusionEngine:
             "candidates": candidate_reports,
         }
         report_limit = min(MAX_FUSION_REPORT_BYTES, max(512, frame.get("budget", {}).get("max_diagnostic_bytes", 0)))
-        while candidate_reports and len(json_text(report).encode("utf-8")) > report_limit:
+        while candidate_reports and encoded_size(report) > report_limit:
             candidate_reports.pop()
             report["omitted_candidate_count"] = len(report_values) - len(candidate_reports)
-        if len(json_text(report).encode("utf-8")) > report_limit:
+        if encoded_size(report) > report_limit:
             report = {
                 "policy_fingerprint": policy_fingerprint(self.policy),
                 "input_candidate_count": len(candidates),
@@ -1687,7 +1666,7 @@ class CandidateFusionEngine:
                 },
                 "candidates": [],
             }
-        working_bytes += len(json_text(report).encode("utf-8"))
+        working_bytes += encoded_size(report)
         if working_bytes > memory_limit:
             result = self.exhausted_decision(
                 frame,

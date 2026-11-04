@@ -64,7 +64,7 @@ from engram.service_feedback import (
     proposal_feedback_observations,
     record_resolution_feedback,
 )
-from engram.service_proposals import complete_proposal_resolution, current_proposal_candidate, propose, resolve
+from engram.service_proposals import complete_proposal_resolution, current_proposal_candidate, propose, record_recall, resolve
 from engram.service_requests import no_cancellation_check
 from engram.service_resolution import internal_negative_key, resolve_request
 from engram.service_responses import learn_response, responses_by_support, retire_response, supersede_response
@@ -596,6 +596,7 @@ class EngramCore:
     # Response proposals, in engram.service_proposals.
     propose = propose
     resolve = resolve
+    record_recall = record_recall
     current_proposal_candidate = current_proposal_candidate
     complete_proposal_resolution = complete_proposal_resolution
 

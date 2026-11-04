@@ -66,12 +66,14 @@ def load_json_mapping(value: str, name: str) -> dict:
     return decoded
 
 
-def canonical_binary_value(value: object) -> object:
+def canonical_binary_value(value: object, *, allow_null: bool = False) -> object:
     """Sort native mappings and reserve extension tags for tuples and large integers.
 
-    Engram-owned fingerprint inputs carry no null token, so ``None`` is
-    rejected with every other unsupported value instead of being encoded.
+    Engram-owned fingerprint inputs carry no null token, so ``None`` is rejected with every other unsupported value
+    instead of being encoded; a service request's own values may carry nulls, which `allow_null` keeps as MessagePack nil.
     """
+    if value is None and allow_null:
+        return value
     if isinstance(value, str) and type(value) is str:
         return value
     if isinstance(value, bool) and type(value) is bool:
@@ -83,37 +85,41 @@ def canonical_binary_value(value: object) -> object:
         return large_integer
     if isinstance(value, float) and type(value) is float:
         if not math_isfinite(value):
-            raise InvalidRequestError("feedback fingerprint values must be finite")
+            raise InvalidRequestError("canonical values must be finite")
         return value
     if isinstance(value, list) and type(value) is list:
-        items = [canonical_binary_value(item) for item in value]
+        items = [canonical_binary_value(item, allow_null=allow_null) for item in value]
         return items
     if isinstance(value, dict) and type(value) is dict:
         if any(type(key) is not str for key in value):
-            raise InvalidRequestError("feedback fingerprint mapping keys must be strings")
+            raise InvalidRequestError("canonical mapping keys must be strings")
         # Keys are unique strings, so ordering the items never compares values.
-        mapping = {key: canonical_binary_value(item) for key, item in sorted(value.items())}
+        mapping = {key: canonical_binary_value(item, allow_null=allow_null) for key, item in sorted(value.items())}
         return mapping
     if isinstance(value, tuple) and type(value) is tuple:
-        elements = [canonical_binary_value(item) for item in value]
+        elements = [canonical_binary_value(item, allow_null=allow_null) for item in value]
         encoded = msgpack_packb(elements, use_bin_type=True, strict_types=True, use_single_float=False)
         if not isinstance(encoded, bytes):
-            raise InvalidRequestError("feedback fingerprint tuple encoding failed")
+            raise InvalidRequestError("canonical tuple encoding failed")
         tagged_tuple = msgpack_ExtType(1, encoded)
         return tagged_tuple
-    raise InvalidRequestError("feedback fingerprint contains an unsupported native value")
+    raise InvalidRequestError("canonical value contains an unsupported native value")
 
 
-def canonical_binary_encoding(value: object) -> bytes:
+def canonical_binary_encoding(value: object, *, allow_null: bool = False) -> bytes:
     """Encode one native value as canonical MessagePack bytes for hashing and bounds."""
     try:
-        encoded = msgpack_packb(canonical_binary_value(value), use_bin_type=True, strict_types=True, use_single_float=False)
+        encoded = msgpack_packb(
+            canonical_binary_value(value, allow_null=allow_null), use_bin_type=True, strict_types=True, use_single_float=False
+        )
     except InvalidRequestError:
         raise
-    except (OverflowError, ValueError, TypeError, UnicodeError, RecursionError) as err:
-        raise InvalidRequestError("feedback fingerprint contains an invalid native value") from err
+    except UnicodeError as err:
+        raise InvalidRequestError("canonical values must contain valid Unicode") from err
+    except (OverflowError, ValueError, TypeError, RecursionError) as err:
+        raise InvalidRequestError("canonical value contains an invalid native value") from err
     if not isinstance(encoded, bytes):
-        raise InvalidRequestError("feedback fingerprint encoding failed")
+        raise InvalidRequestError("canonical encoding failed")
     return encoded
 
 
@@ -121,6 +127,14 @@ def canonical_fingerprint(value: object) -> str:
     """Return one domain-separated, canonical binary SHA-256 fingerprint."""
     encoded = canonical_binary_encoding(value)
     result = hashlib_sha256(b"engram-feedback-fingerprint\0" + encoded).hexdigest()
+    return result
+
+
+def canonical_signature(domain: bytes, value: object, *, allow_null: bool = False) -> str:
+    """Return `sha256:<hex>`, the SHA-256 of `domain` and the canonical binary encoding of `value` with tuples read as
+    lists, as one internal identity: mapping order never matters, while Booleans, integers and floats stay distinct."""
+    encoded = canonical_binary_encoding(thaw_native_value(value), allow_null=allow_null)
+    result = f"sha256:{hashlib_sha256(domain + encoded).hexdigest()}"
     return result
 
 

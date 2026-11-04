@@ -1,6 +1,6 @@
 """Single-instance gRPC adapter for :class:`engram.service.EngramCore`."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, ArgumentTypeError as argparse_ArgumentTypeError
+from argparse import ArgumentParser as argparse_ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from gc import collect as gc_collect, freeze as gc_freeze
@@ -27,13 +27,11 @@ from engram import engram_pb2
 from engram.config import load_config
 from engram.constants import (
     DEFAULT_BIND_ADDRESS,
-    DEFAULT_GRACE_SECONDS,
     DEFAULT_LEARNED_SOURCE_LABEL,
     DEFAULT_MAX_WORKERS,
     DEFAULT_PROPOSE_LIMIT,
     EMPTY_CONFIG,
     GRPC_SERVER_OPTIONS,
-    SHUTDOWN_DRAIN_MARGIN_SECONDS,
 )
 from engram.constants_resolution import MAX_DIAGNOSTIC_ID_BYTES
 from engram.constants_service import GRPC_REGULATOR_OUTCOME_NAMES
@@ -210,32 +208,6 @@ def require_resolution_message(value: protobuf_Message) -> engram_pb2.Resolution
     if not isinstance(value, engram_pb2.ResolutionResult):
         raise InvalidRequestError("ResolveEvidence returned an invalid protobuf message")
     return value
-
-
-def require_grace_seconds(grace: object) -> float:
-    """Admit a shutdown grace period that gRPC's drain and its bounded wait can honor.
-
-    Both waits are platform timed waits, so the period plus the drain margin must
-    stay within threading.TIMEOUT_MAX; infinity and NaN fail every comparison.
-    """
-    # The exact-type test also refuses bool and numeric subclasses.
-    if type(grace) not in (int, float) or not isinstance(grace, (int, float)):
-        raise InvalidRequestError("grace must be a non-negative number")
-    if not 0 <= grace <= TIMEOUT_MAX - SHUTDOWN_DRAIN_MARGIN_SECONDS:
-        raise InvalidRequestError(
-            f"grace must be a finite number from 0 through {TIMEOUT_MAX - SHUTDOWN_DRAIN_MARGIN_SECONDS} seconds"
-        )
-    result = float(grace)
-    return result
-
-
-def grace_period_argument(value: str) -> float:
-    """Parse --grace-period with the same admission rule as EngramGrpcServer.stop."""
-    try:
-        result = require_grace_seconds(float(value))
-    except (InvalidRequestError, ValueError) as err:
-        raise argparse_ArgumentTypeError(str(err)) from err
-    return result
 
 
 class EngramGrpcService(EngramServiceServicer):
@@ -577,11 +549,14 @@ class EngramGrpcServer:
         tls_certificate: bytes = b"",
         tls_private_key: bytes = b"",
         http: dict = EMPTY_CONFIG,
+        message_limit_bytes: int = 0,
     ) -> None:
         if not isinstance(bind_address, str) or not bind_address.strip():
             raise InvalidRequestError("bind_address must be a non-empty string")
         if not isinstance(max_workers, int) or isinstance(max_workers, bool) or max_workers < 1:
             raise InvalidRequestError("max_workers must be a positive integer")
+        if type(message_limit_bytes) is not int or message_limit_bytes < 0:
+            raise InvalidRequestError("message_limit_bytes must be a non-negative integer")
         if bool(tls_certificate) != bool(tls_private_key):
             raise InvalidRequestError("TLS certificate and private key must be configured together")
 
@@ -595,9 +570,13 @@ class EngramGrpcServer:
         self.service = EngramGrpcService(core, self.health_servicer, self.health_page)
         self.evidence_service = EngramEvidenceGrpcService(self.service)
         executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.internal_server = grpc_server(
-            executor, interceptors=[HealthInterceptor(self.health_metrics)], options=list(GRPC_SERVER_OPTIONS)
-        )
+        # A host that carries larger messages than gRPC's own defaults names its message limit; 0 keeps gRPC's.
+        options = list(GRPC_SERVER_OPTIONS)
+        if message_limit_bytes:
+            options.extend(
+                (("grpc.max_receive_message_length", message_limit_bytes), ("grpc.max_send_message_length", message_limit_bytes))
+            )
+        self.internal_server = grpc_server(executor, interceptors=[HealthInterceptor(self.health_metrics)], options=options)
         bound = False
         try:
             add_EngramServiceServicer_to_server(self.service, self.internal_server)
@@ -615,7 +594,7 @@ class EngramGrpcServer:
         finally:
             if not bound:
                 # Retire only the transport this constructor created; the caller keeps its core.
-                # The server never started, so a zero grace stops it at once.
+                # The server never started, so it has no calls to wait for and stops at once.
                 self.internal_server.stop(0)
                 executor.shutdown(wait=False, cancel_futures=True)
 
@@ -644,6 +623,7 @@ class EngramGrpcServer:
                 self.service.sync_health()
                 self.internal_server.start()
                 self.started = True
+                self.health_page.grpc_state.update(available=True, url=self.target)
                 self.health_page.start()
             result = self.target
             return result
@@ -656,9 +636,12 @@ class EngramGrpcServer:
         result = self.internal_server.wait_for_termination()
         return result
 
-    def stop(self, grace: float = DEFAULT_GRACE_SECONDS) -> bool:
-        """Stop admission, drain calls, then close the single core instance."""
-        selected_grace = require_grace_seconds(grace)
+    def stop(self) -> bool:
+        """Stop admission, wait for every call in progress to finish, then close the single core instance.
+
+        No call is cut short for the time it takes: gRPC's drain is given the longest wait the platform has, which is
+        no limit, and cancels nothing while a call is still running.
+        """
         with self.lifecycle_lock:
             if self.internal_closed:
                 result = False
@@ -666,9 +649,10 @@ class EngramGrpcServer:
             try:
                 if not self.shutdown_started:
                     self.shutdown_started = True
+                    self.health_page.grpc_state["available"] = False
                     self.health_servicer.enter_graceful_shutdown()
-                    stop_event = self.internal_server.stop(selected_grace if self.started else 0)
-                    stop_event.wait(timeout=selected_grace + SHUTDOWN_DRAIN_MARGIN_SECONDS)
+                    stop_event = self.internal_server.stop(TIMEOUT_MAX if self.started else 0)
+                    stop_event.wait()
             finally:
                 # A drain that raises still retires the page and the core, which waits for its own in-flight work.
                 self.health_page.stop()
@@ -696,9 +680,6 @@ def main(argv: tuple[str, ...] = ()) -> int:
     parser.add_argument("--bind", default=DEFAULT_BIND_ADDRESS, help="listen address, default: %(default)s")
     parser.add_argument("--config-path", default="", help="Engram YAML configuration")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS, help="maximum concurrent RPC handlers")
-    parser.add_argument(
-        "--grace-period", type=grace_period_argument, default=DEFAULT_GRACE_SECONDS, help="shutdown grace period in seconds"
-    )
     parser.add_argument("--tls-cert", default="", help="PEM server certificate")
     parser.add_argument("--tls-key", default="", help="PEM server private key")
     parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
@@ -761,7 +742,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
         # A startup or wait failure still retires the server and its core; the
         # original failure keeps propagating and a shutdown failure is logged.
         try:
-            server.stop(args.grace_period)
+            server.stop()
             stopped = True
         except EngramCoreError as err:
             LOGGER.error("Engram gRPC shutdown failed", exc_info=err)

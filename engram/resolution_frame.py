@@ -16,6 +16,7 @@ from engram.constants_resolution import (
     MAX_INHERITANCE_SOURCE_TURN,
     MAX_REQUIRED_SOURCE_LABEL_BYTES,
     MAX_TRACE_STEPS,
+    QUERY_FRAME_DIAGNOSTIC_DOMAIN,
     QUERY_FRAME_FIELDS,
 )
 from engram.constants_rewrite import MAX_REWRITE_RULE_ID_BYTES, REWRITE_TRACE_STEP_FIELDS
@@ -27,11 +28,11 @@ from engram.eligibility import (
     validate_eligibility_context,
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
+from engram.feedback_values import canonical_binary_encoding
 from engram.identity import (
     extract_standalone_identity,
     query_identity_from_dict,
     query_identity_to_dict,
-    query_identity_to_json,
     retrieval_representation,
     scope_key_from_dict,
     scope_key_to_dict,
@@ -364,9 +365,15 @@ class QueryFrameBuilder:
         if self.internal_engram.config.get("expand_contractions", False):
             resolved = expand_contractions(original, self.internal_engram.substitution_maps.get("contractions", {}))
         eligibility = capture_standalone_eligibility_context(self.internal_utc_clock, scope, True)
-        seed = diagnostic_seed or f"{query_identity_to_json(selected_identity)}:{resolved}"
-        require_any_text(seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False)
-        diagnostic_id = f"resolution:sha256:{hashlib_sha256(seed.encode('utf-8')).hexdigest()}"
+        if diagnostic_seed:
+            seed = require_any_text(diagnostic_seed, "diagnostic_seed", MAX_REQUEST_BYTES * 4, allow_empty=False).encode("utf-8")
+        else:
+            # Without a caller's seed the frame is named by its identity and resolved text, in their canonical binary
+            # encoding under the frame's own domain.
+            seed = QUERY_FRAME_DIAGNOSTIC_DOMAIN + canonical_binary_encoding(
+                {"identity": query_identity_to_dict(selected_identity), "resolved_text": resolved}
+            )
+        diagnostic_id = f"resolution:sha256:{hashlib_sha256(seed).hexdigest()}"
         result = query_frame(
             original_text=original,
             resolved_text=resolved,

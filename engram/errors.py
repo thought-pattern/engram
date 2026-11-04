@@ -56,10 +56,6 @@ class ResourceExhaustedError(EngramCoreError):
     """A configured capacity limit refuses the request."""
 
 
-class VectorSupportScanExceededError(ResourceExhaustedError):
-    """Response support fan-out from vector hits exceeds the configured scan limit."""
-
-
 class WorkingMemoryExceededError(ResourceExhaustedError):
     """A request's working-memory budget refuses further retained work.
 

@@ -30,9 +30,6 @@ EMPTY_METADATA: dict = {}
 MAX_TRANSIENT_RECORDS = 1_000
 REGULATOR_OUTCOMES = set({"accepted", "rejected_quality", "rejected_context", "rejected_stale", "rejected_policy"})
 DEFAULT_BIND_ADDRESS = "127.0.0.1:50051"
-DEFAULT_GRACE_SECONDS = 10.0
-# Shutdown waits this long past the grace period for gRPC's own drain to finish.
-SHUTDOWN_DRAIN_MARGIN_SECONDS = 5.0
 # A client's keepalive pings are its watchdog over a long silent call, so the server accepts them at any interval instead
 # of answering repeated pings on a quiet call with GOAWAY.
 GRPC_SERVER_OPTIONS = (("grpc.http2.max_ping_strikes", 0),)

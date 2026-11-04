@@ -23,7 +23,6 @@ from engram.constants_resolution import (
 )
 from engram.errors import (
     InvalidRequestError,
-    VectorSupportScanExceededError,
     WorkingMemoryExceededError,
 )
 from engram.evidence import (
@@ -59,7 +58,7 @@ from engram.resolution_evidence import (
     trusted_proposition_evidence_record_to_dict,
 )
 from engram.resolution_frame import validate_query_frame
-from engram.resolution_sizing import json_array_bytes, json_size, working_size
+from engram.resolution_sizing import array_bytes, encoded_size, working_size
 from engram.resolver_plan import (
     resolver_budget_with_changes,
     resolver_clock_ns,
@@ -316,18 +315,18 @@ class StructuredGraphResolver:
                     )
                 )
         exhausted = set()
-        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
         record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_array_bytes(record_total, len(records))
+            result = array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
             records.pop()
             record_total -= record_sizes.pop()
             exhausted.add("evidence_bytes")
-        output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
+        output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
         while candidates and output_bytes > budget.get("max_output_bytes", 0):
             candidates.pop()
             exhausted.add("output_bytes")
@@ -462,11 +461,11 @@ class StructuredGraphResolver:
             records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
         records.sort(key=lambda record: record.get("proposition_id", ""))
         exhausted = set()
-        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
         record_total = sum(record_sizes)
 
         def record_bytes() -> int:
-            result = json_array_bytes(record_total, len(records))
+            result = array_bytes(record_total, len(records))
             return result
 
         while records and record_bytes() > budget.get("max_evidence_bytes", 0):
@@ -477,7 +476,7 @@ class StructuredGraphResolver:
             records.pop()
             record_total -= record_sizes.pop()
             exhausted.add("output_bytes")
-        working_memory = json_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
+        working_memory = encoded_size([proposition_projection_to_dict(projection) for projection in projections]) + record_bytes()
         if working_memory > budget.get("max_working_memory_bytes", 0):
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
@@ -615,9 +614,6 @@ class SupportSemanticResolver:
         except WorkingMemoryExceededError:
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
-        except VectorSupportScanExceededError:
-            result = exhausted_result(self.name, ("vector_results",))
-            return result
         candidates = []
         accounting = []
         evidence_count = 0
@@ -700,20 +696,20 @@ class SupportSemanticResolver:
         # Candidates are fixed while records are trimmed, so their sizes are
         # computed once and each record's size is subtracted as it goes.
         reference_sizes = [
-            json_size(evidence_reference_to_dict(reference))
+            encoded_size(evidence_reference_to_dict(reference))
             for candidate in candidates
             for reference in candidate.get("evidence", ())
         ]
-        candidate_sizes = [json_size(candidate_to_dict(candidate)) for candidate in candidates]
-        record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+        candidate_sizes = [encoded_size(candidate_to_dict(candidate)) for candidate in candidates]
+        record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
         record_total = sum(record_sizes)
 
         def evidence_bytes() -> int:
-            result = json_array_bytes(sum(reference_sizes) + record_total, len(reference_sizes) + len(records))
+            result = array_bytes(sum(reference_sizes) + record_total, len(reference_sizes) + len(records))
             return result
 
         def output_bytes() -> int:
-            result = json_array_bytes(sum(candidate_sizes) + record_total, len(candidate_sizes) + len(records))
+            result = array_bytes(sum(candidate_sizes) + record_total, len(candidate_sizes) + len(records))
             return result
 
         while records and evidence_bytes() > budget.get("max_evidence_bytes", 0):

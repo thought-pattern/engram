@@ -21,6 +21,7 @@ from engram.resolution_evidence import (
     trusted_proposition_evidence_record_to_dict,
     validate_proposition_evidence_record,
 )
+from engram.resolution_sizing import encoded_size
 from engram.resolution_values import exact_mapping, freeze_mapping, json_text, load_json_mapping, require_int, require_list
 from engram.validation import require_any_text, require_bool
 
@@ -86,8 +87,7 @@ def evidence_package(
         "truncated": normalized_truncated,
         "truncation_reasons": normalized_reasons,
     }
-    encoded = json_text(evidence_package_payload(result)).encode("utf-8")
-    if len(encoded) > MAX_EVIDENCE_PACKAGE_BYTES:
+    if encoded_size(evidence_package_payload(result)) > MAX_EVIDENCE_PACKAGE_BYTES:
         raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
     return result
 
@@ -171,7 +171,7 @@ def build_evidence_package(
             "truncation_reasons": ordered_reasons,
         }
         payload = evidence_package_payload(package)
-        if len(json_text(payload).encode("utf-8")) <= byte_limit:
+        if encoded_size(payload) <= byte_limit:
             result = package
             break
         if not retained:

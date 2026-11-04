@@ -5,7 +5,6 @@ the lifecycle vocabulary and policies without depending on storage tier,
 residency, indexes, or adapters.
 """
 
-from json import dumps as json_dumps
 from math import isfinite as math_isfinite
 
 from engram.constants_artifacts import (
@@ -50,6 +49,7 @@ from engram.identity import (
     validate_retrieval_representation,
     validate_scope_key,
 )
+from engram.resolution_sizing import encoded_size
 from engram.support import validate_support_references, validate_support_visibility
 from engram.validation import (
     Characters,
@@ -189,8 +189,7 @@ def freeze_metadata(value: object) -> dict:
     frozen = freeze_json_value(caller_metadata, "artifact metadata", 0, [0])
     if not isinstance(frozen, dict):
         raise InvalidRequestError("artifact metadata must be an object")
-    encoded = json_dumps(thaw_json_value(frozen), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    if len(encoded.encode("utf-8")) > MAX_METADATA_BYTES:
+    if encoded_size(frozen) > MAX_METADATA_BYTES:
         raise InvalidRequestError(f"artifact metadata exceeds the UTF-8 limit of {MAX_METADATA_BYTES} bytes")
     if LIFECYCLE_AUDIT_KEY in value:
         frozen[LIFECYCLE_AUDIT_KEY] = freeze_lifecycle_audit(value.get(LIFECYCLE_AUDIT_KEY, {}))
@@ -207,11 +206,6 @@ def thaw_json_value(value: object) -> object:
         result = [thaw_json_value(item) for item in value]
         return result
     return value
-
-
-def json_text(value: dict) -> str:
-    result = json_dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return result
 
 
 def validate_artifact_provenance(value: object) -> dict:

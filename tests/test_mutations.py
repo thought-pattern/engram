@@ -51,7 +51,7 @@ def test_canonical_payload_signature_is_order_independent_unicode_exact_and_conc
     assert first.startswith("sha256:")
     assert len(first) == 71
     assert first != canonical_payload_signature({"z": ["e", True], "a": {"count": 1}})
-    with pytest_raises(InvalidRequestError, match="unsupported JSON"):
+    with pytest_raises(InvalidRequestError, match="unsupported native value"):
         canonical_payload_signature(json_loads('{"missing": null}'))
 
 

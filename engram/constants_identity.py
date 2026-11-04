@@ -50,7 +50,8 @@ EXACT_LOOKUP_RESULT_FIELDS = set(
     {"outcome", "key", "statement_id", "generation", "provenance", "representation", "owner_statement_ids", "truncated"}
 )
 MAX_EXACT_LOOKUP_PROVENANCE_BYTES = 32
-MAX_EXACT_LOOKUP_REPRESENTATION_BYTES = 1_024
+# An exact lookup reports the representation it matched, which can be any admitted retrieval representation.
+MAX_EXACT_LOOKUP_REPRESENTATION_BYTES = MAX_RETRIEVAL_REPRESENTATION_BYTES
 
 
 class ExactLookupOutcome(StrEnum):

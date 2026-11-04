@@ -5,7 +5,6 @@ bounded negative cache for misses. Each function that takes ``core`` is bound on
 ``engram.service.EngramCore`` as the method of the same name.
 """
 
-from json import dumps as json_dumps
 from logging import getLogger as logging_getLogger
 from time import monotonic_ns as time_monotonic_ns
 
@@ -30,7 +29,7 @@ from engram.feedback_values import canonical_fingerprint, constraint_fingerprint
 from engram.fusion import policy_fingerprint
 from engram.identity import query_identity_to_dict, scope_key, validate_query_identity
 from engram.negative_resolution import empty_negative_resolution, negative_resolution_key
-from engram.resolution import empty_candidate, resolution_result, resolution_result_to_json, validate_resolution_result
+from engram.resolution import empty_candidate, resolution_result, resolution_result_to_dict, validate_resolution_result
 from engram.resolution_budget import (
     budget_consumption,
     budget_consumption_with_changes,
@@ -38,6 +37,7 @@ from engram.resolution_budget import (
     resolution_budget_to_dict,
     validate_resolution_budget,
 )
+from engram.resolution_sizing import encoded_size
 from engram.resolver_plan import resolver_contract, trusted_resolution_plan_to_dict
 from engram.rewrite import RewriteEngine, apply_rewrites_to_frame
 from engram.rollout import apply_rollout, select_rollout
@@ -114,7 +114,7 @@ def bounded_miss_result(
         **diagnostics,
         "accounting": {"candidate_count": 0, "accepted_present": False, "success_applied": False},
     }
-    diagnostic_bytes = len(json_dumps(selected_diagnostics, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    diagnostic_bytes = encoded_size(selected_diagnostics)
     if diagnostic_bytes > budget.get("max_diagnostic_bytes", 0):
         selected_diagnostics = {}
         diagnostic_bytes = 0
@@ -138,7 +138,7 @@ def bounded_miss_result(
             resolver_results=(),
             budget=consumption,
         )
-        size = len(resolution_result_to_json(result).encode("utf-8"))
+        size = encoded_size(resolution_result_to_dict(result))
         if size > budget.get("max_output_bytes", 0):
             raise InvalidRequestError("negative resolution result exceeds max_output_bytes")
         if size > budget.get("max_working_memory_bytes", 0):

@@ -6,11 +6,13 @@ is bound on ``engram.core.Engram`` as the method of the same name.
 """
 
 from heapq import heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from logging import getLogger as logging_getLogger
 
 from engram.constants import DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT
-from engram.errors import VectorSupportScanExceededError
 from engram.resources import estimate_working_bytes, require_working_memory, run_cooperative_check
 from engram.sparse import search_sparse_artifacts
+
+logger = logging_getLogger(__name__)
 
 
 def sparse_candidates(engram, text: str, scope, *, limit: int, max_working_memory_bytes: int) -> dict:
@@ -110,9 +112,9 @@ def vector_supported_match_components_from_scores(
 ) -> list[dict]:
     """Rank scoped cached responses by their best supporting Proposition similarity.
 
-    Raises ``VectorSupportScanExceededError`` when the matching support references exceed
-    ``graph.vector_support_scan_limit`` and ``WorkingMemoryExceededError`` past the
-    request's working-memory budget, so a truncated scan never reads as a miss.
+    A scan that reaches ``graph.vector_support_scan_limit`` matching support references
+    keeps the responses ranked from the references already read and logs the truncation.
+    Raises ``WorkingMemoryExceededError`` past the request's working-memory budget.
     """
     if not support_scores:
         result = []
@@ -128,7 +130,10 @@ def vector_supported_match_components_from_scores(
     retained_bytes = source_working_bytes + estimate_working_bytes(support_scores)
     repository = engram.response_repository.trusted_state()
     edge_count = 0
+    truncated = False
     for index, artifact in enumerate(repository.get("artifacts", {}).values()):
+        if truncated:
+            break
         run_cooperative_check(cooperative_check)
         if artifact_filter and not artifact_filter(artifact):
             continue
@@ -137,11 +142,11 @@ def vector_supported_match_components_from_scores(
             reference_id = reference.get("id", "")
             if reference_id not in support_scores:
                 continue
+            if edge_count >= scan_limit:
+                # The responses ranked so far are kept; the remaining support references are not read.
+                truncated = True
+                break
             edge_count += 1
-            if edge_count > scan_limit:
-                raise VectorSupportScanExceededError(
-                    f"relevant response support fan-out exceeds the configured limit of {scan_limit}"
-                )
             similarities.append(support_scores.get(reference_id, 0.0))
         if not similarities:
             continue
@@ -169,6 +174,13 @@ def vector_supported_match_components_from_scores(
             removed = heapq_heapreplace(scored, ranked)
             scored_bytes += ranked_bytes - estimate_working_bytes(removed)
         require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
+    if truncated:
+        logger.info(
+            "code=vector_support_scan_truncated Vector recall ranked %d responses from the first %d matching support "
+            "references; the rest were not read",
+            len(scored),
+            scan_limit,
+        )
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     run_cooperative_check(cooperative_check)
     result = [components for _, _, components in scored]

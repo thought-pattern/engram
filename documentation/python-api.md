@@ -176,7 +176,10 @@ proposal-verdict operation; it is distinct from unified `resolve_request`.
 Accepted-response candidacy and success statistics mutate only the authoritative
 artifact collection. The conversational statement matcher has separate accounting.
 
-`learn_response` admits one new artifact without implicit replacement.
+`learn_response` admits one new artifact. The newest learned response replaces the
+one held for the same question: every ACTIVE artifact holding one of its retrieval
+keys in the same scope becomes SUPERSEDED by it in the same mutation, and the result
+names them in `superseded_statement_ids` with `action` `replaced`.
 Its idempotency signature preserves the exact admitted request and response,
 including tab, line-feed, and carriage-return characters; canonical JSON escaping
 does not rewrite the stored text. Other control characters and surrogates remain

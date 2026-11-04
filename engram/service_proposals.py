@@ -345,6 +345,26 @@ def resolve(core, proposal_id: str, outcome: str, statement_id: str = "", reason
         return result
 
 
+def record_recall(core, request_id: str, statement_ids: list) -> int:
+    """Count one recall of a held answer as a use of every artifact it was assembled from; return how many were counted.
+
+    A recall answers a request with held text whose release was already judged, so it records each artifact's hit and
+    last-hit time, which its least-recently-used eviction reads, and no verdict. Each hit is one idempotent accounting
+    request named by `request_id` and the artifact, so a request sent again does not count its recall twice.
+    """
+    with core.lock:
+        core.require_running()
+        require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
+        if not isinstance(statement_ids, list):
+            raise InvalidRequestError("statement_ids must be a list")
+        for statement_id in statement_ids:
+            require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
+            core.response_mutations.record_response_hit(
+                statement_id, accounting_request_id("recall-hit", f"{request_id}\0{statement_id}")
+            )
+    return len(statement_ids)
+
+
 def current_proposal_candidate(core, record: dict, statement_id: str) -> dict:
     """Return the proposed artifact while it is still the accepted candidate, or raise a conflict.
 

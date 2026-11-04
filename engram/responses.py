@@ -27,7 +27,7 @@ from engram.coordination import AtomicMutationCoordinator, validate_mutation_exe
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import (
     extract_standalone_identity,
-    normalize_retrieval_key,
+    retrieval_form,
     retrieval_representation,
     retrieval_representation_bindings,
     scope_key,
@@ -111,7 +111,7 @@ def validate_base_response_artifact(artifact: dict) -> dict:
         raise InvalidRequestError("base commit requires an ACTIVE artifact")
     if validated_artifact.get("generation", 0) != 1:
         raise InvalidRequestError("base commit requires artifact generation 1")
-    if normalize_retrieval_key(validated_artifact.get("response", "")) == "idk":
+    if retrieval_form(validated_artifact.get("response", "")) == "idk":
         raise InvalidRequestError("IDK is not a cacheable response")
     if LIFECYCLE_AUDIT_KEY in validated_artifact.get("metadata", {}):
         raise InvalidRequestError("base commit metadata must not use the reserved lifecycle_audit field")
@@ -208,25 +208,50 @@ class AcceptedResponseService:
             result = self.commit_new_locked(artifact, request_id, payload_signature, created_at)
             return result
 
+    def superseded_by_learned(self, current: dict, replacement_id: str, request_id: str, occurred_at: str) -> dict:
+        """`current` as SUPERSEDED by the newer learned response `replacement_id`, one generation on."""
+        updated = cached_response_artifact_to_dict(current)
+        updated["generation"] = current.get("generation", 0) + 1
+        updated["lifecycle"] = LifecycleState.SUPERSEDED.value
+        updated["superseded_by"] = replacement_id
+        updated_metadata = mapping_copy(updated.get("metadata", {}), "metadata")
+        updated_metadata[LIFECYCLE_AUDIT_KEY] = {
+            "operation": MutationOperation.SUPERSEDE_RESPONSE.value,
+            "reason": LifecycleMutationReason.STALE.value,
+            "caller_id": "LearnResponse",
+            "request_id": request_id,
+            "occurred_at": occurred_at,
+            "detail": "replaced by a newer learned response",
+            "replacement_statement_id": replacement_id,
+        }
+        updated["metadata"] = updated_metadata
+        superseded = cached_response_artifact_from_dict(updated)
+        return superseded
+
     def commit_new_locked(
         self,
         artifact: dict,
         request_id: str,
         payload_signature: str,
         created_at: str,
+        *,
+        replaces_owners: bool = False,
     ) -> dict:
+        """Admit one new artifact; a learned response (`replaces_owners`) supersedes the answers holding its keys."""
         current = self.internal_coordinator.repository.trusted_state()
         current_artifacts = current.get("artifacts", {})
         if artifact.get("statement_id", "") in current_artifacts:
             raise ConflictError(f"artifact statement_id already exists: {artifact.get('statement_id', '')}")
         collision_owner_ids = response_collision_owner_ids(artifact, self.internal_coordinator)
-        if collision_owner_ids:
+        if collision_owner_ids and not replaces_owners:
             named = ", ".join(collision_owner_ids)
             raise ConflictError(f"retrieval key collision with existing statement IDs: {named}")
 
         plan = self.internal_coordinator.repository.plan_admission(artifact, self.internal_admission_policy)
         admission_outcome = plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY)
         evicted_statement_ids = plan.get("evicted_statement_ids", ())
+        repository_candidate = plan.get("candidate", {})
+        superseded = ()
         if admission_outcome == AdmissionOutcome.REJECTED_CAPACITY:
             result_code = MutationResultCode.REJECTED_CAPACITY
             affected_generations = ()
@@ -236,6 +261,16 @@ class AcceptedResponseService:
                 if admission_outcome == AdmissionOutcome.ADMITTED_WITH_EVICTION
                 else MutationResultCode.CREATED
             )
+            # A held answer the admission evicts is already gone; every other one is superseded in this mutation.
+            superseded = tuple(
+                self.superseded_by_learned(
+                    current_artifacts.get(statement_id, {}), artifact.get("statement_id", ""), request_id, created_at
+                )
+                for statement_id in collision_owner_ids
+                if statement_id not in evicted_statement_ids
+            )
+            if superseded:
+                repository_candidate = repository_state_with_artifact_updates(repository_candidate, superseded)
             # Evicted IDs come from the live state the plan was built from.
             removed = tuple(
                 artifact_generation_change(
@@ -245,14 +280,23 @@ class AcceptedResponseService:
                 )
                 for statement_id in evicted_statement_ids
             )
+            replaced = tuple(
+                artifact_generation_change(item.get("statement_id", ""), item.get("generation", 0) - 1, item.get("generation", 0))
+                for item in superseded
+            )
             affected_generations = normalize_artifact_generation_changes(
-                (*removed, artifact_generation_change(artifact.get("statement_id", ""), 0, artifact.get("generation", 0)))
+                (
+                    *removed,
+                    *replaced,
+                    artifact_generation_change(artifact.get("statement_id", ""), 0, artifact.get("generation", 0)),
+                )
             )
         result = {
             "statement_id": artifact.get("statement_id", ""),
             "generation": artifact.get("generation", 0),
             "admission_outcome": admission_outcome.value,
             "evicted_statement_ids": list(evicted_statement_ids),
+            "superseded_statement_ids": [item.get("statement_id", "") for item in superseded],
         }
         mutation_receipt_value = mutation_receipt(
             sequence=self.internal_coordinator.next_receipt_sequence,
@@ -266,7 +310,7 @@ class AcceptedResponseService:
             created_at=created_at,
         )
         candidate = self.internal_coordinator.build_candidate(
-            plan.get("candidate", {}),
+            repository_candidate,
             mutation_receipt_value,
         )
         execution = self.internal_coordinator.execute(candidate)
@@ -284,7 +328,7 @@ class AcceptedResponseService:
         source_label: str,
         metadata: dict,
     ) -> dict:
-        """Construct one DYNAMIC ACTIVE response artifact and commit it."""
+        """Construct one DYNAMIC ACTIVE response artifact and commit it; it replaces the answers holding its keys."""
 
         if not isinstance(metadata, dict):
             raise InvalidRequestError("learn response metadata must be an object")
@@ -347,7 +391,7 @@ class AcceptedResponseService:
             }
             artifact = validate_cached_response_artifact(raw_artifact)
             artifact = validate_base_response_artifact(artifact)
-            result = self.commit_new_locked(artifact, request_id, payload_signature, accepted_at)
+            result = self.commit_new_locked(artifact, request_id, payload_signature, accepted_at, replaces_owners=True)
             return result
 
     def record_response_queries(

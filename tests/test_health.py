@@ -45,7 +45,7 @@ def running(core: EngramCore, port: int):
         finally:
             channel.close()
     finally:
-        server.stop(0)
+        server.stop()
 
 
 def fetch(port: int, path: str) -> tuple:
@@ -124,6 +124,6 @@ def test_a_server_without_http_settings_serves_no_page_and_still_reports_its_fig
         server.start()
         snapshot = server.health_page.snapshot()
     finally:
-        server.stop(0)
+        server.stop()
     assert server.health_page.listener is False
     assert snapshot.get("http", {}).get("enabled", True) is False and snapshot.get("ready", False) is True

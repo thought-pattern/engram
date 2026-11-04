@@ -121,8 +121,6 @@ GRAPH_KEEPALIVE_INTERVAL_SECONDS = 10
 GRAPH_KEEPALIVE_PROBES = 3
 # How often a waiting statement sets the watchdog on a connection the pool opened for it; the wait itself has no end.
 GRAPH_KEEPALIVE_CHECK_SECONDS = 1.0
-# Stop grace for closing the driver and its event loop at disconnect.
-GRAPH_SHUTDOWN_GRACE_SECONDS = 0.5
 WRITE_CLAUSE = re_compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|CALL|LOAD|" r"GRANT|DENY|REVOKE|ALTER|COPY|FREE)\b", IGNORECASE
 )

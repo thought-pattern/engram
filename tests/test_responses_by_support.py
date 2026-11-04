@@ -54,4 +54,4 @@ def test_grpc_lookup_exposes_the_core_result() -> None:
         assert result.get("statement_ids", []) == [named]
     finally:
         channel.close()
-        server.stop(0)
+        server.stop()

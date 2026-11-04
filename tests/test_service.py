@@ -546,19 +546,25 @@ def test_restart_discards_receipts_responses_and_conversations() -> None:
     assert recreated.get("idempotent", False) is False
 
 
-def test_learn_response_new_request_cannot_implicitly_replace_owned_identity() -> None:
+def test_learn_response_newest_replaces_owned_identity() -> None:
     core = EngramCore()
     original = core.learn_response("What is current?", "Original exact response.", "learn-original")
     original_id = original.get("statement_id", "")
     assert original_id
 
-    with pytest_raises(ConflictError, match=original_id):
-        core.learn_response("What is current?", "Implicit replacement.", "learn-replacement")
+    replacement = core.learn_response("What is current?", "Newer response.", "learn-replacement")
+    replacement_id = replacement.get("statement_id", "")
 
+    assert replacement.get("action", "") == "replaced"
+    assert replacement.get("superseded_statement_ids", []) == [original_id]
     artifact = core.engram.response_repository.get_artifact(original_id)
     assert artifact.get("response", "") == "Original exact response."
-    assert artifact.get("lifecycle", LifecycleState.RETIRED).value == "ACTIVE"
-    assert artifact.get("generation", 0) == 1
+    assert artifact.get("lifecycle", LifecycleState.RETIRED).value == "SUPERSEDED"
+    assert artifact.get("superseded_by", "") == replacement_id
+    assert artifact.get("generation", 0) == 2
+    proposal = core.propose("What is current?", "proposal-current")
+    assert [candidate.get("statement_id", "") for candidate in proposal.get("candidates", [])] == [replacement_id]
+    assert proposal.get("candidates", [])[0].get("response", "") == "Newer response."
 
 
 def test_proposal_and_resolution_accounting_mutate_only_the_artifact() -> None:

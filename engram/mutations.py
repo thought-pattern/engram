@@ -1,7 +1,6 @@
 """Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
 from copy import deepcopy
-from hashlib import sha256 as hashlib_sha256
 from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
@@ -19,8 +18,8 @@ from engram.constants_mutations import (
     MAX_RESULT_ITEMS,
     MAX_RESULT_KEY_BYTES,
     MAX_RESULT_STRING_BYTES,
-    MAX_SIGNATURE_INPUT_BYTES,
     MAX_TOMBSTONES,
+    MUTATION_PAYLOAD_SIGNATURE_DOMAIN,
     MUTATION_RECEIPT_FIELDS,
     RECEIPT_LOOKUP_FIELDS,
     RECEIPT_TOMBSTONE_FIELDS,
@@ -31,6 +30,8 @@ from engram.constants_mutations import (
 )
 from engram.constants_resolution import MAX_RESOURCE_COUNTER
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.feedback_values import canonical_signature
+from engram.resolution_sizing import encoded_size
 from engram.support import validate_statement_scope_bindings
 from engram.validation import Characters, require_text, require_utc_timestamp
 
@@ -131,8 +132,7 @@ def freeze_result(value: object) -> dict:
     frozen = freeze_json(value, "mutation result", 0, [0])
     if not isinstance(frozen, dict):
         raise InvalidRequestError("mutation result must be an object")
-    encoded = json_text(thaw_json(frozen))
-    if len(encoded.encode("utf-8")) > MAX_RESULT_BYTES:
+    if encoded_size(frozen) > MAX_RESULT_BYTES:
         raise InvalidRequestError(f"mutation result exceeds the UTF-8 limit of {MAX_RESULT_BYTES} bytes")
     return frozen
 
@@ -143,21 +143,12 @@ def json_text(value: object) -> str:
 
 
 def canonical_payload_signature(payload: object) -> str:
-    """Return the stable signature for one concrete canonical mutation payload."""
+    """Return the stable signature for one concrete canonical mutation payload: the domain-separated SHA-256 of its
+    canonical binary encoding, the same for any mapping order and for a tuple and its list."""
 
     if not isinstance(payload, dict):
         raise InvalidRequestError("mutation payload must be an object")
-    frozen = freeze_json(
-        payload,
-        "mutation payload",
-        0,
-        [0],
-        characters=Characters.LINES,
-    )
-    encoded = json_text(thaw_json(frozen)).encode("utf-8")
-    if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
-        raise InvalidRequestError(f"mutation payload exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
-    signature = f"sha256:{hashlib_sha256(encoded).hexdigest()}"
+    signature = canonical_signature(MUTATION_PAYLOAD_SIGNATURE_DOMAIN, payload)
     return signature
 
 

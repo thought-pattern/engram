@@ -126,8 +126,22 @@ def clean_normalized_token(token: str) -> str:
 
 
 def normalize_retrieval_key(text: str) -> str:
-    """Normalize one identity or retrieval representation."""
+    """Normalize one identity or retrieval representation within the retrieval key's bound."""
     raw = identity_raw_text(text, "retrieval text", MAX_RETRIEVAL_REPRESENTATION_BYTES, allow_empty=True)
+    result = retrieval_form(raw)
+    # NFKC and contraction expansion can grow admitted text; a key beyond the
+    # bound could not pass its own next validation, so it is refused here.
+    if len(result.encode("utf-8")) > MAX_RETRIEVAL_REPRESENTATION_BYTES:
+        raise IdentityValidationError(
+            f"retrieval text exceeds the UTF-8 limit of {MAX_RETRIEVAL_REPRESENTATION_BYTES} bytes once normalized; "
+            "Unicode compatibility forms and contractions expand it"
+        )
+    return result
+
+
+def retrieval_form(raw: str) -> str:
+    """The normalized form of text of any size, as a retrieval key compares it: NFKC, casefolded, with contractions
+    expanded, punctuation outside technical tokens spaced out and whitespace collapsed."""
     normalized = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION).casefold()
     normalized = IDENTITY_CONTRACTION_RE.sub(expand_contraction, normalized)
     characters = []
@@ -140,13 +154,6 @@ def normalize_retrieval_key(text: str) -> str:
     collapsed = " ".join("".join(characters).split())
     tokens = [clean_normalized_token(token) for token in collapsed.split()]
     result = " ".join(token for token in tokens if token)
-    # NFKC and contraction expansion can grow admitted text; a key beyond the
-    # bound could not pass its own next validation, so it is refused here.
-    if len(result.encode("utf-8")) > MAX_RETRIEVAL_REPRESENTATION_BYTES:
-        raise IdentityValidationError(
-            f"retrieval text exceeds the UTF-8 limit of {MAX_RETRIEVAL_REPRESENTATION_BYTES} bytes once normalized; "
-            "Unicode compatibility forms and contractions expand it"
-        )
     return result
 
 

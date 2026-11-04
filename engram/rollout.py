@@ -6,9 +6,10 @@ from engram.config import rollout_config
 from engram.constants import RolloutMode
 from engram.constants_resolution import ResolutionOutcome
 from engram.errors import InvalidRequestError
-from engram.resolution import empty_candidate, resolution_result_to_json, resolution_result_with_changes, validate_resolution_result
+from engram.resolution import empty_candidate, resolution_result_to_dict, resolution_result_with_changes, validate_resolution_result
 from engram.resolution_budget import budget_consumption_with_changes
 from engram.resolution_package import empty_evidence_package
+from engram.resolution_sizing import encoded_size
 
 
 def select_rollout(config: dict, namespace: str) -> dict:
@@ -99,7 +100,7 @@ def apply_rollout(result: dict, selection: dict) -> dict:
 
     updated = resolution_result_with_changes(current, changes)
     for _ in range(4):
-        size = len(resolution_result_to_json(updated).encode("utf-8"))
+        size = encoded_size(resolution_result_to_dict(updated))
         budget = updated.get("budget", {})
         consumption = budget_consumption_with_changes(
             budget,

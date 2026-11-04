@@ -20,7 +20,7 @@ from json import dumps as json_dumps
 from logging import getLogger
 from os import getpid
 from pathlib import Path
-from threading import Lock as threading_Lock, Thread as threading_Thread
+from threading import Lock as threading_Lock, Thread as threading_Thread, local as threading_local
 from time import monotonic
 
 from grpc import ServerInterceptor, StatusCode as grpc_StatusCode, unary_unary_rpc_method_handler
@@ -55,10 +55,16 @@ def operation_counts() -> dict:
 
 
 class EngramHealth:
-    """Engram's figures since its server started; every method takes the lock only briefly, from any thread."""
+    """Engram's figures since its server started; every method takes the lock only briefly, from any thread.
+
+    A call runs from its arrival unless its service places it on an input queue: `waiting` then holds it in the queue
+    until `running` starts its work and `worked` ends it, so the snapshot shows the queue and the work running apart, and
+    a call whose work is done is only being answered. `current_key` is the key of the call the calling thread is serving.
+    """
 
     def __init__(self, incarnation: str):
         self.incarnation = incarnation
+        self.calls = threading_local()
         self.lock = threading_Lock()
         self.began = monotonic()
         self.started_at = datetime.now(UTC).isoformat()
@@ -76,15 +82,48 @@ class EngramHealth:
     def received(self, operation: str) -> int:
         """Count one call arriving and hold it as running until `finished`; return its key."""
         observed_at = datetime.now(UTC).isoformat()
+        arrived = monotonic()
         with self.lock:
             self.next_key += 1
             key = self.next_key
-            self.items[key] = {"operation": operation, "started": monotonic()}
+            self.items[key] = {"operation": operation, "accepted": arrived, "accepted_at": observed_at, "started": arrived}
             self.requests["received"] = self.requests.get("received", 0) + 1
             self.requests["last_received_at"] = observed_at
             row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
             row["received"] = row.get("received", 0) + 1
         return key
+
+    def current_key(self) -> int:
+        """The key of the call this thread is serving, 0 outside a counted call."""
+        result = getattr(self.calls, "key", 0)
+        return result
+
+    def waiting(self, key: int) -> bool:
+        """Hold a received call in the input queue until `running`; return whether the key was held."""
+        with self.lock:
+            item = self.items.get(key, {})
+            if not item:
+                return False
+            item.pop("started", 0.0)
+        return True
+
+    def running(self, key: int) -> bool:
+        """Start a queued call's work; return whether the key was held."""
+        with self.lock:
+            item = self.items.get(key, {})
+            if not item:
+                return False
+            item["started"] = monotonic()
+        return True
+
+    def worked(self, key: int) -> bool:
+        """End a queued call's work; the call is then only being answered. Return whether the key was held."""
+        with self.lock:
+            item = self.items.get(key, {})
+            if not item:
+                return False
+            item["worked"] = monotonic()
+        return True
 
     def finished(self, key: int, outcome: str, error_kind: str = "") -> bool:
         """Record a running call's answer by outcome; return whether the key was held, so a call finishes once."""
@@ -95,7 +134,9 @@ class EngramHealth:
             if not item:
                 return False
             operation = item.get("operation", "")
-            elapsed = max(0.0, now - item.get("started", now))
+            total = max(0.0, now - item.get("accepted", now))
+            executed = "started" in item
+            execution = max(0.0, item.get("worked", now) - item.get("started", now)) if executed else 0.0
             self.requests["responses"] = self.requests.get("responses", 0) + 1
             self.requests["last_response_at"] = observed_at
             row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
@@ -106,10 +147,14 @@ class EngramHealth:
                 kinds = self.errors.get("by_kind", {})
                 kinds[error_kind] = kinds.get(error_kind, 0) + 1
                 self.errors["last"] = {"kind": error_kind, "operation": operation, "observed_at": observed_at}
-            for name, value in (("total_seconds", elapsed), ("execution_seconds", elapsed)):
-                self.timing[name] = self.timing.get(name, 0.0) + value
-            for name in ("terminal_count", "execution_count"):
-                self.timing[name] = self.timing.get(name, 0) + 1
+            self.timing["total_seconds"] = self.timing.get("total_seconds", 0.0) + total
+            self.timing["terminal_count"] = self.timing.get("terminal_count", 0) + 1
+            if executed:
+                self.timing["execution_seconds"] = self.timing.get("execution_seconds", 0.0) + execution
+                self.timing["execution_count"] = self.timing.get("execution_count", 0) + 1
+            else:
+                self.timing["queue_only_seconds"] = self.timing.get("queue_only_seconds", 0.0) + total
+                self.timing["queue_only_count"] = self.timing.get("queue_only_count", 0) + 1
             self.finished_count += 1
             self.recent.append(
                 {
@@ -118,10 +163,10 @@ class EngramHealth:
                     "outcome": outcome,
                     "error_kind": error_kind,
                     "finished_at": observed_at,
-                    "queue_seconds": 0.0,
-                    "executed": True,
-                    "execution_seconds": elapsed,
-                    "total_seconds": elapsed,
+                    "queue_seconds": max(0.0, total - execution),
+                    "executed": executed,
+                    "execution_seconds": execution,
+                    "total_seconds": total,
                     "ids": {},
                 }
             )
@@ -138,7 +183,7 @@ class EngramHealth:
                 {
                     "observed_at": datetime.now(UTC).isoformat(),
                     "elapsed_seconds": now - self.began,
-                    "queue_depth": 0,
+                    "queue_depth": sum(1 for item in self.items.values() if "started" not in item),
                     "finished": self.finished_count,
                     "responses": self.requests.get("responses", 0),
                     "provider_calls": 0,
@@ -148,13 +193,24 @@ class EngramHealth:
             )
         return True
 
-    def snapshot(self, status: dict, *, stopping: bool, http: dict, refresh_seconds: float) -> dict:
+    def snapshot(self, status: dict, *, stopping: bool, http: dict, grpc: dict, refresh_seconds: float) -> dict:
         """The standard snapshot every Tapestry page shows, then the GetStatus fields in STATUS_FIELDS.
 
-        Calls wait for a gRPC worker inside the gRPC library, where they cannot be seen, so the queue is always empty.
+        The queue is the calls held in an input queue, oldest first; a call waiting for a gRPC worker inside the gRPC
+        library cannot be seen and is not in it.
         """
         now = monotonic()
         with self.lock:
+            queue = [
+                {
+                    "operation": item.get("operation", ""),
+                    "wait_seconds": max(0.0, now - item.get("accepted", now)),
+                    "accepted_at": item.get("accepted_at", ""),
+                    "ids": {},
+                }
+                for item in self.items.values()
+                if "started" not in item
+            ]
             active = [
                 {
                     "operation": item.get("operation", ""),
@@ -165,6 +221,7 @@ class EngramHealth:
                     "ids": {},
                 }
                 for item in self.items.values()
+                if "started" in item and "worked" not in item
             ]
             by_operation = {
                 operation: {**row, "outcomes": dict(row.get("outcomes", {}))}
@@ -191,12 +248,13 @@ class EngramHealth:
             "stopping": stopping,
             "fault_type": "",
             "http": dict(http),
+            "grpc": dict(grpc),
             "refresh_seconds": refresh_seconds,
             "requests": requests,
             "timing": timing,
-            "queue_depth": 0,
-            "oldest_wait_seconds": 0.0,
-            "queue": [],
+            "queue_depth": len(queue),
+            "oldest_wait_seconds": queue[0].get("wait_seconds", 0.0) if queue else 0.0,
+            "queue": queue,
             "queue_display_clipped": False,
             "active_work": active,
             "work": {"by_operation": {}},
@@ -234,12 +292,16 @@ class HealthInterceptor(ServerInterceptor):
 
         def observe(request, context):
             key = metrics.received(operation)
+            # The behavior runs on this thread, so a service that queues the call finds its key here.
+            metrics.calls.key = key
             try:
                 response = behavior(request, context)
             except Exception as err:
                 outcome = call_outcome(context, err)
                 metrics.finished(key, outcome, outcome)
                 raise
+            finally:
+                metrics.calls.key = 0
             metrics.finished(key, "OK")
             return response
 
@@ -308,7 +370,7 @@ class HealthPageHandler(BaseHTTPRequestHandler):
 
 class HealthPage:
     """Engram's health listener and the snapshot it serves; `status` returns GetStatus's fields and `stopping` whether
-    the server is shutting down."""
+    the server is shutting down. `grpc_state` is the gRPC listener's state, which the gRPC server keeps."""
 
     def __init__(self, settings: dict, metrics: EngramHealth, status, stopping):
         self.settings = dict(settings)
@@ -318,6 +380,7 @@ class HealthPage:
         self.listener = False
         self.thread = False
         self.state = {"enabled": self.settings.get("enabled", False), "available": False, "error_type": "", "error_code": ""}
+        self.grpc_state = {"enabled": True, "available": False, "error_type": "", "error_code": ""}
 
     def snapshot(self) -> dict:
         """The snapshot `/api/health` serves, read with the current GetStatus fields."""
@@ -330,6 +393,7 @@ class HealthPage:
             status,
             stopping=self.stopping(),
             http=self.state,
+            grpc=self.grpc_state,
             refresh_seconds=self.settings.get("refresh_seconds", DEFAULT_HTTP_REFRESH_SECONDS),
         )
         return snapshot
@@ -361,6 +425,6 @@ class HealthPage:
         self.listener.shutdown()
         self.listener.server_close()
         if isinstance(self.thread, threading_Thread):
-            self.thread.join(timeout=5)
+            self.thread.join()
         self.listener = False
         return True

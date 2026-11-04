@@ -41,7 +41,7 @@ from engram.resolution_evidence import (
     trusted_proposition_evidence_record_to_dict,
 )
 from engram.resolution_frame import validate_query_frame
-from engram.resolution_sizing import json_array_bytes, json_size, working_size
+from engram.resolution_sizing import array_bytes, encoded_size, working_size
 from engram.resolver_plan import resolver_clock_ns, run_cooperative_check
 
 COMPOSITION_NOT_APPLICABLE_REASONS = {
@@ -381,18 +381,18 @@ def composition_candidate(
 def fit_composition_output(records: list, candidates: list, budget: dict) -> dict:
     """Trim records to the evidence-byte budget and candidates to the output budget, in place."""
     exhausted = set()
-    record_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+    record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
     record_total = sum(record_sizes)
 
     def record_bytes() -> int:
-        result = json_array_bytes(record_total, len(records))
+        result = array_bytes(record_total, len(records))
         return result
 
     while records and record_bytes() > budget.get("max_evidence_bytes", 0):
         records.pop()
         record_total -= record_sizes.pop()
         exhausted.add("evidence_bytes")
-    output_bytes = record_bytes() + sum(json_size(candidate_to_dict(value)) for value in candidates)
+    output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
     while candidates and output_bytes > budget.get("max_output_bytes", 0):
         candidates.pop()
         exhausted.add("output_bytes")

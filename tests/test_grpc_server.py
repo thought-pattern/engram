@@ -66,7 +66,7 @@ def running_server(core: EngramCore, **kwargs):
         finally:
             channel.close()
     finally:
-        server.stop(0)
+        server.stop()
 
 
 def health_status(channel) -> int:
@@ -651,7 +651,7 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     assert entered.wait(timeout=5)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
-        stop_future = executor.submit(server.stop, 2)
+        stop_future = executor.submit(server.stop)
         assert stop_future.done() is False
         release.set()
         assert as_dict(chat_future.result(timeout=5)).get("response", "") == "Hello!"
@@ -659,7 +659,7 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
 
     channel.close()
     assert core.status().get("state", "") == "closed"
-    assert server.stop(0) is False
+    assert server.stop() is False
 
 
 def test_tls_requires_a_certificate_and_key_pair() -> None:

@@ -24,7 +24,7 @@ from engram.resolution_evidence import (
     trusted_proposition_evidence_record_to_dict,
 )
 from engram.resolution_frame import validate_query_frame
-from engram.resolution_sizing import json_array_size, json_size
+from engram.resolution_sizing import array_size, encoded_size
 from engram.resolver_plan import (
     execute_resolver,
     resolver_budget,
@@ -68,17 +68,19 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
     proposition_evidence = retained_proposition_evidence
 
     candidate_evidence_sizes = [
-        [json_size(trusted_evidence_reference_to_dict(reference)) for reference in candidate.get("evidence", ())]
+        [encoded_size(trusted_evidence_reference_to_dict(reference)) for reference in candidate.get("evidence", ())]
         for candidate in candidates
     ]
-    evidence_sizes = [json_size(trusted_evidence_reference_to_dict(reference)) for reference in evidence]
-    proposition_evidence_sizes = [json_size(trusted_proposition_evidence_record_to_dict(record)) for record in proposition_evidence]
+    evidence_sizes = [encoded_size(trusted_evidence_reference_to_dict(reference)) for reference in evidence]
+    proposition_evidence_sizes = [
+        encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in proposition_evidence
+    ]
     flattened_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
         *evidence_sizes,
         *proposition_evidence_sizes,
     ]
-    evidence_size = json_array_size(flattened_evidence_sizes) if flattened_evidence_sizes else 0
+    evidence_size = array_size(flattened_evidence_sizes) if flattened_evidence_sizes else 0
     evidence_count = len(flattened_evidence_sizes)
     while evidence_size > lease.get("max_evidence_bytes", 0):
         if proposition_evidence:
@@ -104,9 +106,9 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         if len(sizes) != len(candidate_evidence):
             candidates[index] = trusted_candidate_with_changes(candidate, {"evidence": candidate_evidence[: len(sizes)]})
 
-    candidate_sizes = [json_size(trusted_candidate_to_dict(candidate)) for candidate in candidates]
+    candidate_sizes = [encoded_size(trusted_candidate_to_dict(candidate)) for candidate in candidates]
     output_item_sizes = [*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes]
-    bounded_output_size = json_array_size(output_item_sizes) if output_item_sizes else 0
+    bounded_output_size = array_size(output_item_sizes) if output_item_sizes else 0
     output_count = len(output_item_sizes)
     while bounded_output_size > lease.get("max_output_bytes", 0) and output_count:
         if proposition_evidence:
@@ -123,20 +125,20 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         output_count -= 1
         exhausted.add("output_bytes")
     diagnostics = result.get("diagnostics", {})
-    if diagnostics and json_size(dict(diagnostics)) > lease.get("max_diagnostic_bytes", 0):
+    if diagnostics and encoded_size(dict(diagnostics)) > lease.get("max_diagnostic_bytes", 0):
         marker = {"truncated": True}
-        diagnostics = marker if json_size(dict(marker)) <= lease.get("max_diagnostic_bytes", 0) else {}
+        diagnostics = marker if encoded_size(dict(marker)) <= lease.get("max_diagnostic_bytes", 0) else {}
         exhausted.add("diagnostic_bytes")
     accounting_ids = {candidate.get("statement_id", "") for candidate in candidates}
     accounting = tuple(value for value in result.get("accounting", ()) if value.get("statement_id", "") in accounting_ids)
-    candidate_bytes = json_array_size(candidate_sizes) if candidate_sizes else 0
+    candidate_bytes = array_size(candidate_sizes) if candidate_sizes else 0
     retained_evidence_sizes = [
         *[size for values in candidate_evidence_sizes for size in values],
         *evidence_sizes,
         *proposition_evidence_sizes,
     ]
-    evidence_bytes = json_array_size(retained_evidence_sizes) if retained_evidence_sizes else 0
-    diagnostic_bytes = json_size(dict(diagnostics)) if diagnostics else 0
+    evidence_bytes = array_size(retained_evidence_sizes) if retained_evidence_sizes else 0
+    diagnostic_bytes = encoded_size(dict(diagnostics)) if diagnostics else 0
     reported_graph_rows = current_consumption.get("graph_rows", 0)
     reported_vector_results = current_consumption.get("vector_results", 0)
     graph_rows = min(reported_graph_rows, lease.get("max_graph_rows", 0))
@@ -147,8 +149,8 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         exhausted.add("vector_results")
     estimated_memory = max(
         candidate_bytes
-        + (json_array_size(evidence_sizes) if evidence_sizes else 0)
-        + (json_array_size(proposition_evidence_sizes) if proposition_evidence_sizes else 0)
+        + (array_size(evidence_sizes) if evidence_sizes else 0)
+        + (array_size(proposition_evidence_sizes) if proposition_evidence_sizes else 0)
         + diagnostic_bytes,
         current_consumption.get("working_memory_bytes", 0),
     )
@@ -176,7 +178,7 @@ def bound_validated_resolver_result(result: dict, lease: dict) -> dict:
         evidence=len(evidence) + len(proposition_evidence) + sum(len(candidate.get("evidence", ())) for candidate in candidates),
         evidence_bytes=evidence_bytes,
         output_bytes=(
-            json_array_size([*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes])
+            array_size([*candidate_sizes, *evidence_sizes, *proposition_evidence_sizes])
             if candidate_sizes or evidence_sizes or proposition_evidence_sizes
             else 0
         ),

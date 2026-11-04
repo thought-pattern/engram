@@ -222,7 +222,7 @@ class MCPConversationService:
         source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
         metadata: dict = EMPTY_METADATA,
     ) -> dict:
-        """Cache a response without implicitly replacing existing knowledge."""
+        """Cache a response; it replaces the response held for the same question."""
         with self.lock:
             core, _ = self.require_active()
             result = core.learn_response(

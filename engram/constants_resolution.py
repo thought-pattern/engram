@@ -149,6 +149,9 @@ RESOLUTION_RESULT_FIELDS = set(
 )
 MAX_RESOLUTION_REASON_CODES = 64
 MAX_DIAGNOSTIC_ID_BYTES = 256
+# Domain of a query frame's diagnostic id when the caller gives no seed: the SHA-256 of this domain and the canonical
+# binary encoding of the frame's identity and resolved text.
+QUERY_FRAME_DIAGNOSTIC_DOMAIN = b"engram-query-frame\0"
 MAX_RESOLVER_NAME_BYTES = 96
 EXACT_RESOLVER_NAME = "exact"
 EXACT_RESOLVER_COST_CLASS = CostClass.EXACT

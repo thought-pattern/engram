@@ -36,7 +36,7 @@ from engram.resolution_budget import (
 from engram.resolution_evidence import (
     feature_set,
 )
-from engram.resolution_sizing import json_size
+from engram.resolution_sizing import encoded_size
 from engram.resolver_plan import (
     resolver_clock_ns,
     run_cooperative_check,
@@ -157,7 +157,7 @@ class ExactResolver:
             },
             diagnostics={"context_signature": contextual.get("context_signature", "")},
         )
-        if json_size(candidate_to_dict(candidate)) > budget.get("max_working_memory_bytes", 0):
+        if encoded_size(candidate_to_dict(candidate)) > budget.get("max_working_memory_bytes", 0):
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
         result = resolver_result(
@@ -269,7 +269,7 @@ class UtilityResolver:
             },
             diagnostics={"operations": operations},
         )
-        working_memory_bytes = json_size(candidate_to_dict(current))
+        working_memory_bytes = encoded_size(candidate_to_dict(current))
         if working_memory_bytes > budget.get("max_working_memory_bytes", 0):
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
@@ -405,7 +405,7 @@ class StandaloneSemanticResolver:
                 },
                 diagnostics={},
             )
-            candidate_bytes = json_size(candidate_to_dict(candidate))
+            candidate_bytes = encoded_size(candidate_to_dict(candidate))
             if retained_bytes + candidate_bytes > budget.get("max_working_memory_bytes", 0):
                 result = resolver_result(
                     resolver=self.name,
@@ -557,7 +557,7 @@ class SparseResolver:
                     "matched_term_count": match.get("matched_term_count", 0),
                 },
             )
-            candidate_bytes = json_size(candidate_to_dict(candidate))
+            candidate_bytes = encoded_size(candidate_to_dict(candidate))
             if retained_bytes + candidate_bytes > budget.get("max_working_memory_bytes", 0):
                 result = resolver_result(
                     resolver=self.name,

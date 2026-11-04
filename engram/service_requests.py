@@ -6,13 +6,13 @@ transports.
 """
 
 from hashlib import sha256 as hashlib_sha256
-from json import dumps as json_dumps
 
 from engram import sessions
 from engram.constants_artifacts import MAX_CALLER_ID_BYTES
-from engram.constants_mutations import MAX_SIGNATURE_INPUT_BYTES
+from engram.constants_mutations import SERVICE_REQUEST_SIGNATURE_DOMAIN
 from engram.constants_service import MAX_CACHE_REQUEST_BYTES
 from engram.errors import InvalidRequestError
+from engram.feedback_values import canonical_signature
 from engram.identity import normalize_retrieval_key
 from engram.validation import require_any_text
 
@@ -37,22 +37,12 @@ def require_cache_request(request: str) -> None:
 def service_request_signature(**values) -> str:
     """Return the canonical retry identity of one idempotent service request.
 
-    The text is compared for equality with the identity retained for the same
-    request ID and is never parsed. Request values are JSON-shaped, so canonical
-    JSON gives the exact identity the request contract defines: lists and tuples
-    match, while Booleans, integers and floats stay distinct, which native
-    equality would merge. Its UTF-8 length bounds the retained identity.
+    The identity is compared for equality with the one retained for the same request ID. It is the domain-separated
+    SHA-256 of the values' canonical binary encoding, so it has the exact identity the request contract defines: mapping
+    order never matters and lists and tuples match, while Booleans, integers, floats and nulls stay distinct, which
+    native equality would merge.
     """
-    try:
-        result = json_dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError) as err:
-        raise InvalidRequestError("metadata and request values must be JSON-compatible") from err
-    try:
-        encoded = result.encode("utf-8")
-    except UnicodeEncodeError as err:
-        raise InvalidRequestError("metadata and request values must contain valid Unicode") from err
-    if len(encoded) > MAX_SIGNATURE_INPUT_BYTES:
-        raise InvalidRequestError(f"service request exceeds the UTF-8 limit of {MAX_SIGNATURE_INPUT_BYTES} bytes")
+    result = canonical_signature(SERVICE_REQUEST_SIGNATURE_DOMAIN, values, allow_null=True)
     return result
 
 

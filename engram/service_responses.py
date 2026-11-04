@@ -38,7 +38,7 @@ def learn_response(
     source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
     metadata: dict = EMPTY_METADATA,
 ) -> dict:
-    """Create one DYNAMIC ACTIVE response artifact through base commit."""
+    """Create one DYNAMIC ACTIVE response artifact; it supersedes the answers holding its retrieval keys."""
     with core.lock:
         core.require_running()
         require_cache_request(request)
@@ -70,7 +70,10 @@ def learn_response(
             raise LifecycleError("response mutation receipt result is not an object")
         receipt_statement_id = receipt_result.get("statement_id", False)
         evicted_statement_ids = receipt_result.get("evicted_statement_ids", False)
+        superseded_statement_ids = receipt_result.get("superseded_statement_ids", False)
         if not isinstance(receipt_statement_id, str) or not isinstance(evicted_statement_ids, list):
+            raise LifecycleError("response mutation receipt result is malformed")
+        if not isinstance(superseded_statement_ids, list):
             raise LifecycleError("response mutation receipt result is malformed")
         result_code = receipt_value.get("result_code", "")
         learned = result_code != "REJECTED_CAPACITY"
@@ -84,10 +87,13 @@ def learn_response(
             core.regulated_metrics["idempotent_retries"] += 1
         elif learned:
             core.regulated_metrics["learned_created"] += 1
+        action = "rejected_capacity"
+        if learned:
+            action = "replaced" if superseded_statement_ids else "created"
         result = {
             "learned": learned,
             "statement_id": receipt_statement_id,
-            "action": "created" if learned else "rejected_capacity",
+            "action": action,
             "request_id": request_id,
             "user_id": normalized_user_id,
             "namespace": namespace,
@@ -96,6 +102,7 @@ def learn_response(
             "idempotent": replayed,
             "result_code": result_code,
             "evicted_statement_ids": evicted_statement_ids,
+            "superseded_statement_ids": superseded_statement_ids,
         }
         result = deepcopy(result)
         return result

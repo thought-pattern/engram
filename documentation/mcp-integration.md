@@ -411,10 +411,12 @@ of `IDK` are rejected. `source_label` defaults to `unknown`.
 }
 ```
 
-The result returns `learned`, `statement_id`, `action` (`created` or
-`rejected_capacity`), scope, provenance, and `idempotent`. A canonical or alias collision
-in the same exact scope names the existing owner and is rejected; the
-transport-neutral supersession operation handles replacement. Learned responses remain shared knowledge
+The result returns `learned`, `statement_id`, `action` (`created`, `replaced` or
+`rejected_capacity`), scope, provenance, `idempotent`, `evicted_statement_ids` and
+`superseded_statement_ids`. The newest learned response replaces the one held for the
+same question: an ACTIVE artifact holding one of its retrieval keys in the same exact
+scope becomes SUPERSEDED by it in the same mutation and is named in
+`superseded_statement_ids`. Learned responses remain shared knowledge
 (`introduced_by_user_id` is `""`), while the calling user's previous-response
 context is updated. `request_id` makes retries idempotent and conflicting reuse
 is an error.

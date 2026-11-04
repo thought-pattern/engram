@@ -33,7 +33,7 @@ from engram.resolution import (
 from engram.resolution_accounting import ResolutionAccountingFinalizer
 from engram.resolution_budget import budget_consumption, capture_resolution_budget, validate_resolution_budget
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
-from engram.resolution_sizing import json_array_bytes, json_size
+from engram.resolution_sizing import array_bytes, encoded_size
 from engram.resolver_execution import ResolverExecutor, bound_validated_resolver_result
 from engram.resolver_plan import (
     ResolverRegistry,
@@ -508,10 +508,10 @@ def test_accounting_rejects_invalid_acceptance_before_any_mutation() -> None:
     assert statistics.get("query_count", 0) == 0
 
 
-def test_json_array_bytes_matches_encoding_every_prefix() -> None:
+def test_array_bytes_matches_encoding_every_prefix() -> None:
     values = [{"proposition_id": f"p-{index}", "label": "Ü" * index, "scores": [index, 0.5], "flag": True} for index in range(12)]
 
     for count in range(len(values) + 1):
         prefix = values[:count]
-        expected = json_size(prefix) if prefix else 0
-        assert json_array_bytes(sum(json_size(value) for value in prefix), count) == expected
+        expected = encoded_size(prefix) if prefix else 0
+        assert array_bytes(sum(encoded_size(value) for value in prefix), count) == expected

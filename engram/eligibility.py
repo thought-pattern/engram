@@ -21,7 +21,7 @@ from engram.constants_identity import (
 )
 from engram.errors import IdentityValidationError, InvalidRequestError
 from engram.identity import retrieval_representation_bindings, scope_key, validate_scope_key, validate_scoped_retrieval_key
-from engram.validation import require_available_utc_timestamp, require_bool, require_text, utc_datetime
+from engram.validation import Characters, require_available_utc_timestamp, require_bool, require_text, utc_datetime
 
 
 def require_exact_mapping(value: object, name: str, keys: set[str]) -> dict:
@@ -297,11 +297,13 @@ def exact_lookup_result(
         MAX_EXACT_LOOKUP_PROVENANCE_BYTES,
         allow_empty=not selected,
     )
+    # The matched representation is a raw request, which may span lines.
     normalized_representation = require_text(
         representation,
         "exact lookup representation",
         MAX_EXACT_LOOKUP_REPRESENTATION_BYTES,
         allow_empty=not selected,
+        characters=Characters.LINES,
     )
     if selected:
         try:
