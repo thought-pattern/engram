@@ -27,7 +27,7 @@ MAX_TOMBSTONES = 100_000
 DEFAULT_RECEIPT_RETENTION = 10_000
 DEFAULT_TOMBSTONE_RETENTION = 10_000
 ARTIFACT_GENERATION_CHANGE_FIELDS = set({"statement_id", "before_generation", "after_generation"})
-RECEIPT_TOMBSTONE_FIELDS = set({"sequence", "request_id", "operation", "payload_signature", "scope_bindings"})
+RECEIPT_TOMBSTONE_FIELDS = set({"sequence", "request_id", "operation", "payload_signature"})
 MUTATION_RECEIPT_FIELDS = set(
     {
         "sequence",

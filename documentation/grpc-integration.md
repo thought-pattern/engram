@@ -150,7 +150,6 @@ pinned in `pyproject.toml`.
 | `LearnResponse` | Cache one non-`IDK` answer with scope and opaque metadata; preserve admitted multiline response text exactly. |
 | `RetireResponse` | Remove one dynamic cached response after its owner establishes staleness. |
 | `ResponsesBySupport` | List ACTIVE accepted-response statement IDs whose support references any given durable record ID. |
-| `MaintainEngagement` | Plan, prepare, physically purge, or resume an exactly scoped administrative operation. |
 | `GetStatus` | Return lifecycle, readiness, component, rollout, and telemetry status. |
 
 Starting unknown user "0" returns a `conversation_token`. `Chat`,
@@ -179,36 +178,11 @@ can exceed it once normalized. Both checks run before any other work and return
 `INVALID_ARGUMENT` with a message naming the limit. A request that normalizes
 to nothing, such as punctuation only, is rejected the same way.
 
-## Engagement maintenance
+## Dynamic data lifetime
 
-`MaintainEngagement` carries a closed `Struct` with `action` (`plan`, `prepare`,
-`purge`, or `resume`), a bounded `operation_id`, an exact native engagement
-`visibility_scope`, and an array of opaque graph `dependency_ids`. The operation,
-scope and normalized dependency set own the pause; a conflicting command fails.
-`plan` is read-only. `prepare` rejects new work and drains active resolution and
-graph-operation slots, moving readiness out of service. `purge` requires that
-pause and deletes matching response artifacts, affected mutation receipts and
-feedback through their existing owners, restoring all three on failure.
-
-Selection includes exact metadata scope, support scope/dependencies and historic
-supersession predecessors. Existing receipts inherit statement/scope bindings
-from affected artifacts, and pruning retains those bindings in the existing
-tombstones. Removal can therefore find affected retained state after the response
-itself was evicted. It creates no removal artifact or tombstone. Unrelated
-artifacts, statistics, feedback and replay state remain unchanged. Drained
-request/proposal caches and unscoped session context are discarded after purge.
-`resume` requires successful local purge; Tapestry owns when to issue it after its
-other store owners have completed. Failure leaves Engram paused for exact retry.
-While paused, `plan` with the same operation and Scope may supply an empty
-dependency array to inspect the existing `maintenance_binding` and `purged`
-state. The coordinator uses that retained binding to recover after graph commit;
-prepare, purge and resume still require the complete exact binding. A conflicting
-nonempty dependency list is rejected.
-
-This is a trusted administrative mutation, subject to the same access controls
-as other mutation RPCs. Real gRPC tests cover the lifecycle, concurrent draining,
-late-request rejection, physical deletion, rollback, eviction/pruning retention,
-peer preservation and retry.
+Learned responses, conversations, receipts and feedback live only in process
+memory. Stopping Engram discards them; a started Engram holds only its static
+seed data until it learns again.
 
 ## Python client example
 

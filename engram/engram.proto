@@ -24,8 +24,6 @@ service EngramService {
   rpc LearnResponse(LearnResponseRequest) returns (google.protobuf.Struct);
   rpc RetireResponse(RetireResponseRequest) returns (google.protobuf.Struct);
   rpc ResponsesBySupport(ResponsesBySupportRequest) returns (google.protobuf.Struct);
-  // Trusted administrative barrier; no user/session label authorizes removal.
-  rpc MaintainEngagement(google.protobuf.Struct) returns (google.protobuf.Struct);
 
   rpc GetStatus(google.protobuf.Empty) returns (google.protobuf.Struct);
 }

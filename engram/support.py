@@ -102,25 +102,3 @@ def validate_support_references(value) -> tuple:
     if len(keys) != len(set(keys)):
         raise ValueError("support_references contain duplicate durable records")
     return references
-
-
-def validate_statement_scope_bindings(value) -> tuple:
-    """Keep removal ownership after accepted artifacts or full receipts expire."""
-    if not isinstance(value, tuple):
-        raise ValueError("statement scope bindings must be a tuple")
-    bindings = []
-    seen = set()
-    for item in value:
-        if not isinstance(item, dict) or set(item) != {"statement_id", "visibility_scope"}:
-            raise ValueError("statement scope binding fields are malformed")
-        identifier = require_any_text(item.get("statement_id", ""), "scope binding statement_id", MAX_METADATA_BYTES)
-        scope = validate_support_visibility(item.get("visibility_scope", {}))
-        # Absent identifiers are empty mappings; they key as "" beside real identifiers.
-        identifiers = tuple(scope.get(field, "") or "" for field in ("company_id", "customer_id", "engagement_id"))
-        key = (identifier, scope.get("kind", ""), *identifiers)
-        if key in seen:
-            raise ValueError("statement scope bindings contain a duplicate")
-        seen.add(key)
-        bindings.append({"statement_id": identifier, "visibility_scope": scope})
-    result = tuple(bindings)
-    return result

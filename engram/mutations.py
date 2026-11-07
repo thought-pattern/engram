@@ -32,7 +32,6 @@ from engram.constants_resolution import MAX_RESOURCE_COUNTER
 from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
 from engram.feedback_values import canonical_signature
 from engram.resolution_sizing import encoded_size
-from engram.support import validate_statement_scope_bindings
 from engram.validation import Characters, require_text, require_utc_timestamp
 
 
@@ -250,11 +249,6 @@ def mutation_receipt(
         raise InvalidRequestError("mutation result_code must be a MutationResultCode")
     ordered_generations = normalize_artifact_generation_changes(affected_generations)
     frozen_result = freeze_result(result)
-    if "scope_bindings" in frozen_result:
-        try:
-            frozen_result["scope_bindings"] = validate_statement_scope_bindings(frozen_result.get("scope_bindings", ()))
-        except ValueError as err:
-            raise InvalidRequestError(str(err)) from err
     if not isinstance(completion_state, ReceiptCompletionState):
         raise InvalidRequestError("receipt completion_state must be a ReceiptCompletionState")
     normalized_created_at = require_utc_timestamp(created_at, "mutation receipt created_at")
@@ -393,7 +387,6 @@ def receipt_tombstone(
     request_id: str,
     operation: MutationOperation,
     payload_signature: str,
-    scope_bindings: tuple = (),
 ) -> dict:
     """Build one validated receipt-tombstone dictionary."""
     normalized_sequence = positive_int(sequence, "receipt tombstone sequence")
@@ -401,16 +394,11 @@ def receipt_tombstone(
     if not isinstance(operation, MutationOperation):
         raise InvalidRequestError("mutation operation must be a MutationOperation")
     normalized_signature = internal_signature(payload_signature)
-    try:
-        bindings = validate_statement_scope_bindings(scope_bindings)
-    except ValueError as err:
-        raise InvalidRequestError(str(err)) from err
     result: dict = {
         "sequence": normalized_sequence,
         "request_id": normalized_request_id,
         "operation": operation,
         "payload_signature": normalized_signature,
-        "scope_bindings": bindings,
     }
     return result
 
@@ -426,10 +414,7 @@ def validate_receipt_tombstone(value: object) -> dict:
         raise InvalidRequestError("receipt tombstone fields are malformed")
     if not isinstance(operation, MutationOperation) or not isinstance(payload_signature, str):
         raise InvalidRequestError("receipt tombstone fields are malformed")
-    scope_bindings = data.get("scope_bindings", ())
-    if not isinstance(scope_bindings, tuple):
-        raise InvalidRequestError("receipt tombstone scope_bindings must be a tuple")
-    result = receipt_tombstone(sequence, request_id, operation, payload_signature, scope_bindings)
+    result = receipt_tombstone(sequence, request_id, operation, payload_signature)
     return result
 
 
@@ -441,7 +426,6 @@ def receipt_tombstone_to_dict(value: object) -> dict:
         "request_id": validated.get("request_id", ""),
         "operation": validated.get("operation", MutationOperation.COMMIT_RESPONSE).value,
         "payload_signature": validated.get("payload_signature", ""),
-        "scope_bindings": list(validated.get("scope_bindings", ())),
     }
     return result
 
@@ -453,15 +437,11 @@ def receipt_tombstone_from_dict(value: object) -> dict:
         operation = MutationOperation(data.get("operation", ""))
     except (TypeError, ValueError) as err:
         raise InvalidRequestError("receipt tombstone contains an unsupported operation") from err
-    scope_bindings = data.get("scope_bindings", [])
-    if not isinstance(scope_bindings, list):
-        raise InvalidRequestError("receipt tombstone scope_bindings must be an array")
     result = receipt_tombstone(
         sequence=positive_int(data.get("sequence", 0), "receipt tombstone sequence"),
         request_id=require_text(data.get("request_id", ""), "mutation request_id", MAX_REQUEST_ID_BYTES, allow_empty=False),
         operation=operation,
         payload_signature=internal_signature(data.get("payload_signature", "")),
-        scope_bindings=tuple(scope_bindings),
     )
     return result
 
@@ -734,7 +714,6 @@ class MutationReceiptLedger:
                 oldest_request_id,
                 oldest.get("operation", MutationOperation.COMMIT_RESPONSE),
                 oldest.get("payload_signature", ""),
-                tuple(oldest.get("result", {}).get("scope_bindings", ())),
             )
             self.internal_tombstones[oldest_request_id] = tombstone
         while len(self.internal_tombstones) > self.max_tombstones:

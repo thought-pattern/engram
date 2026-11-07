@@ -60,7 +60,7 @@ DESCRIPTOR = imported_descriptor_pool.Default().AddSerializedFile(
     b'R_OUTCOME_REJECTED_QUALITY\x10\x02\x12&\n"REGULATOR_OUTCOM'
     b"E_REJECTED_CONTEXT\x10\x03\x12$\n REGULATOR_OUTCOME_REJECT"
     b"ED_STALE\x10\x04\x12%\n!REGULATOR_OUTCOME_REJECTED_POLICY\x10"
-    b"\x052\x8e\x08\n\rEngramService\x12N\n\x11StartConversation\x12 .engra"
+    b"\x052\xc6\x07\n\rEngramService\x12N\n\x11StartConversation\x12 .engra"
     b"m.StartConversationRequest\x1a\x17.google.protobuf.Str"
     b"uct\x124\n\x04Chat\x12\x13.engram.ChatRequest\x1a\x17.google.protob"
     b"uf.Struct\x12C\n\x13InspectConversation\x12\x13.engram.UserRe"
@@ -78,12 +78,11 @@ DESCRIPTOR = imported_descriptor_pool.Default().AddSerializedFile(
     b"Request\x1a\x17.google.protobuf.Struct\x12H\n\x0eRetireRespon"
     b"se\x12\x1d.engram.RetireResponseRequest\x1a\x17.google.proto"
     b"buf.Struct\x12P\n\x12ResponsesBySupport\x12!.engram.Respon"
-    b"sesBySupportRequest\x1a\x17.google.protobuf.Struct\x12F\n\x12"
-    b"MaintainEngagement\x12\x17.google.protobuf.Struct\x1a\x17.go"
-    b"ogle.protobuf.Struct\x12<\n\tGetStatus\x12\x16.google.proto"
-    b"buf.Empty\x1a\x17.google.protobuf.Struct2d\n\x15EngramEvid"
-    b"enceService\x12K\n\x0fResolveEvidence\x12\x1e.engram.ResolveE"
-    b"videnceRequest\x1a\x18.engram.ResolutionResultb\x06proto3"
+    b"sesBySupportRequest\x1a\x17.google.protobuf.Struct\x12<\n\t"
+    b"GetStatus\x12\x16.google.protobuf.Empty\x1a\x17.google.proto"
+    b"buf.Struct2d\n\x15EngramEvidenceService\x12K\n\x0fResolveEv"
+    b"idence\x12\x1e.engram.ResolveEvidenceRequest\x1a\x18.engram."
+    b"ResolutionResultb\x06proto3"
 )
 
 module_globals = globals()

@@ -29,7 +29,6 @@ from engram.resolution_budget import resolution_budget, resolution_budget_to_dic
 from engram.service import EngramCore
 from tests.support_fixtures import ASSERTION_REFERENCE_A
 from tests.test_relation import RelationGraph
-from tests.test_scope_removal import RemovalExample
 
 
 class GrpcCore(EngramCore):
@@ -93,33 +92,6 @@ def internal_trailing_metadata(error) -> dict[str, str]:
             raise RuntimeError("gRPC trailing metadata is malformed")
         result[selected_key] = selected_value
     return result
-
-
-def test_engagement_maintenance_protocol_deletes_one_scope_and_keeps_peer_responses():
-    example = RemovalExample()
-    with running_server(example.core) as (_, _, stub):
-        for action in ("plan", "prepare", "purge", "purge", "resume"):
-            request = struct_pb2.Struct()
-            request.update({**example.binding, "action": action})
-            result = as_dict(stub.MaintainEngagement(request))
-            if action == "plan":
-                assert result.get("dry_run", False) is True
-                assert len(result.get("selected_statement_ids", [])) == 3
-            elif action == "prepare":
-                assert result.get("drained", False) is True
-                paused_status = as_dict(stub.GetStatus(empty_pb2.Empty()))
-                assert "ready" in paused_status
-                assert paused_status.get("ready", False) is False
-                with pytest_raises(grpc_RpcError) as paused:
-                    stub.LearnResponse(
-                        engram_pb2.LearnResponseRequest(request="late", response="late private response", request_id="late-wire")
-                    )
-                assert paused.value.code() == grpc_StatusCode.FAILED_PRECONDITION
-            elif action == "purge":
-                assert result.get("purged", False) is True
-        assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("ready", False) is True
-        artifacts = example.core.engram.response_repository.snapshot().get("artifacts", {})
-        assert set(artifacts) == {example.ids.get(name, "") for name in ("public", "company", "engagement_b")}
 
 
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:

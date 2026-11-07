@@ -67,8 +67,6 @@ class CoreState(StrEnum):
     """Lifecycle state of the single owned application core."""
 
     RUNNING = "running"
-    QUIESCING = "quiescing"
-    MAINTENANCE = "maintenance"
     CLOSING = "closing"
     CLOSED = "closed"
 

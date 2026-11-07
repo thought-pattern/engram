@@ -39,7 +39,6 @@ from engram.resolvers import ExactResolver, SparseResolver, StandaloneSemanticRe
 from engram.responses import AcceptedResponseService
 from engram.rewrite import RewriteEngine, load_default_rewrite_corpus
 from engram.rollout import rollout_status
-from engram.scope_removal import EngagementResponseRemoval, validate_removal_command
 from engram.service_conversations import (
     add_fact,
     chat,
@@ -182,8 +181,6 @@ class EngramCore:
         self.active_resolution_user_ids: set[str] = set()
         self.active_graph_operations = 0
         self.internal_state = CoreState.RUNNING
-        self.engagement_maintenance = {}
-        self.engagement_purged = False
         graph_client = self.engram.graph_client
         if graph_client:
             self.engram.internal_graph_client = IsolatedGraphClient(
@@ -203,7 +200,6 @@ class EngramCore:
             self.response_coordinator,
             tier_admission_policy(self.engram.config.get("capacity", 1)),
         )
-        self.response_removal = EngagementResponseRemoval(self.response_coordinator, self.engram.feedback_store)
         self.query_frame_builder = QueryFrameBuilder(self.engram, time_monotonic_ns, self.internal_clock)
         self.rewrite_engine: object = (
             RewriteEngine(load_default_rewrite_corpus()) if self.engram.config.get("retrieval_rewrites_enabled", False) else ()
@@ -425,85 +421,13 @@ class EngramCore:
                 LOGGER.error("Vector recall could not be initialized", exc_info=err)
                 raise InvalidRequestError("unable to initialize vector recall; the server log has the details") from err
 
-    def maintain_engagement(self, value: dict) -> dict:
-        """Trusted administrative pause, physical purge and explicit resumption."""
-        command = validate_removal_command(value)
-        action = command.get("action", "")
-        operation_id = command.get("operation_id", "")
-        visibility_scope = command.get("visibility_scope", {})
-        dependency_ids = command.get("dependency_ids", [])
-        binding = {key: item for key, item in command.items() if key != "action"}
-        with self.resolution_condition:
-            if action == "resume" and self.internal_state == CoreState.RUNNING:
-                return {"state": "running", "already_running": True}
-            if action == "plan":
-                retained = {}
-                if self.internal_state != CoreState.RUNNING:
-                    retained = self.engagement_maintenance
-                    if (
-                        self.internal_state not in {CoreState.QUIESCING, CoreState.MAINTENANCE}
-                        or retained.get("operation_id", "") != operation_id
-                        or retained.get("visibility_scope", {}) != visibility_scope
-                        or (dependency_ids and retained.get("dependency_ids", []) != dependency_ids)
-                    ):
-                        raise LifecycleError("removal plan conflicts with the current maintenance owner")
-                report = self.response_removal.execute(visibility_scope, retained.get("dependency_ids", dependency_ids))
-                result = {**report, "maintenance_binding": deepcopy(retained), "purged": self.engagement_purged}
-                return result
-            if action == "prepare":
-                if self.internal_state == CoreState.RUNNING:
-                    self.engagement_maintenance = deepcopy(binding)
-                    self.engagement_purged = False
-                    self.internal_state = CoreState.QUIESCING
-                    self.resolution_condition.notify_all()
-                elif (
-                    self.internal_state not in {CoreState.QUIESCING, CoreState.MAINTENANCE}
-                    or self.engagement_maintenance != binding
-                ):
-                    raise LifecycleError("engagement maintenance belongs to another operation or lifecycle")
-                while self.active_resolution_request_ids or self.active_graph_operations:
-                    self.resolution_condition.wait()
-                self.internal_state = CoreState.MAINTENANCE
-                return {"state": "maintenance", "drained": True, "purged": self.engagement_purged}
-            if self.internal_state != CoreState.MAINTENANCE or self.engagement_maintenance != binding:
-                raise LifecycleError("engagement removal requires its exact drained maintenance owner")
-            if action == "purge":
-                report = self.response_removal.execute(visibility_scope, dependency_ids, dry_run=False)
-                # Context is intentionally unscoped transport state, not an
-                # accepted-response owner. Drop it after the drained purge.
-                for records in (
-                    self.conversations,
-                    self.conversation_tokens,
-                    self.conversation_activity,
-                    self.resolution_requests,
-                    self.proposals,
-                    self.proposal_requests,
-                    self.learn_requests,
-                    self.retire_requests,
-                ):
-                    records.clear()
-                self.resolution_accounting.clear()
-                self.negative_resolutions.clear()
-                with self.engram.session_lock:
-                    self.engram.sessions.clear()
-                self.engagement_purged = True
-                result = {**report, "state": "maintenance", "purged": True}
-                return result
-            if not self.engagement_purged:
-                raise LifecycleError("engagement maintenance cannot resume before a successful purge")
-            self.engagement_maintenance = {}
-            self.engagement_purged = False
-            self.internal_state = CoreState.RUNNING
-            self.resolution_condition.notify_all()
-            return {"state": "running", "already_running": False}
-
     def close(self) -> bool:
         """Release all transport-independent runtime state."""
         with self.resolution_condition:
             if self.internal_state == CoreState.CLOSED:
                 result = False
                 return result
-            if self.internal_state not in {CoreState.RUNNING, CoreState.MAINTENANCE}:
+            if self.internal_state != CoreState.RUNNING:
                 raise LifecycleError(f"core cannot close while {self.internal_state.value}")
             self.internal_state = CoreState.CLOSING
             self.resolution_condition.notify_all()

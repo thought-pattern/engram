@@ -486,13 +486,6 @@ class EngramGrpcService(EngramServiceServicer):
         result = require_struct_message(message, "GetStatus")
         return result
 
-    def MaintainEngagement(self, request: struct_pb2.Struct, context) -> struct_pb2.Struct:
-        message = self.invoke(
-            context, "MaintainEngagement", lambda: to_struct(self.core.maintain_engagement(contract_from_struct(request)))
-        )
-        result = require_struct_message(message, "MaintainEngagement")
-        return result
-
 
 class EngramEvidenceGrpcService(EngramEvidenceServiceServicer):
     """Expose unified resolution as an additional Engram service."""

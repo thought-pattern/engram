@@ -327,8 +327,6 @@ primary operations are:
   `finish_conversation`, and `stop_conversation`;
 - `add_fact`, `set_predicate`, and `get_predicate`;
 - `propose`, `resolve`, `learn_response`, `supersede_response`, and `retire_response`;
-- `maintain_engagement` for an explicitly owned, drained administrative pause,
-  physical response removal and resumption;
 - `status` for transport-neutral readiness information; and
 - `close` for lifecycle ownership.
 
@@ -337,14 +335,8 @@ outcome="rejected_stale")` records the verdict and excludes that observed
 generation without mutating the response artifact. The caller that established
 global staleness then uses `retire_response` as the separate, auditable
 lifecycle operation. Contextual rejection never retires a response. Each
-retirement is its own call.
-
-Engagement removal instead deletes matching artifacts, affected mutation receipts
-and feedback together, with rollback on publication failure. Selection includes
-explicit response scope, opaque support dependencies, superseded predecessors,
-and scope bindings retained after capacity eviction and receipt pruning. Peer
-artifacts and their statistics and replay state are preserved. The administrative
-RPC contract is documented in [gRPC integration](documentation/grpc-integration.md).
+retirement is its own call. Every dynamic response, conversation and receipt
+lives in process memory and goes away when the core stops.
 
 One core retains multiple isolated user conversations, each person's own facts, and shared knowledge.
 Named conversation identifiers retain their exact spelling and user context.
