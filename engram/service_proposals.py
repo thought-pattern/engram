@@ -345,8 +345,9 @@ def resolve(core, proposal_id: str, outcome: str, statement_id: str = "", reason
         return result
 
 
-def record_recall(core, request_id: str, statement_ids: list) -> int:
-    """Count one recall of a held answer as a use of every artifact it was assembled from; return how many were counted.
+def record_recall(core, request_id: str, statement_ids: list) -> list:
+    """Count one recall of a held answer as a use of every artifact it was assembled from; return each artifact's use as
+    counted: `[{statement_id, hit_count, last_hit}]`.
 
     A recall answers a request with held text whose release was already judged, so it records each artifact's hit and
     last-hit time, which its least-recently-used eviction reads, and no verdict. Each hit is one idempotent accounting
@@ -362,7 +363,17 @@ def record_recall(core, request_id: str, statement_ids: list) -> int:
             core.response_mutations.record_response_hit(
                 statement_id, accounting_request_id("recall-hit", f"{request_id}\0{statement_id}")
             )
-    return len(statement_ids)
+        counted = []
+        for statement_id in statement_ids:
+            statistics = core.engram.response_repository.get_artifact(statement_id).get("statistics", {})
+            counted.append(
+                {
+                    "statement_id": statement_id,
+                    "hit_count": statistics.get("hit_count", 0),
+                    "last_hit": statistics.get("last_hit", "") if statistics.get("last_hit_available", False) else "",
+                }
+            )
+    return counted
 
 
 def current_proposal_candidate(core, record: dict, statement_id: str) -> dict:
