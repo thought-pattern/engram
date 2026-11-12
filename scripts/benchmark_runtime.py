@@ -51,7 +51,7 @@ def benchmark_engram_config(capacity: int) -> dict:
 
 
 # Benchmark double of the graph client: it accepts the engine's query arguments and returns fixed rows.
-class SyntheticVectorGraph:  # pylint: disable=unused-argument
+class SyntheticVectorGraph:
     """Offline fixed-result graph used to measure support intersection cost."""
 
     def __init__(self, proposition_id: str) -> None:
@@ -66,11 +66,11 @@ class SyntheticVectorGraph:  # pylint: disable=unused-argument
             }
         ]
 
-    def vector_search_propositions(self, embedding: list[float], **kwargs) -> list[dict]:
+    def vector_search_propositions(self, unused_embedding: list[float], **unused_keywords) -> list[dict]:
         result = list(self.rows)
         return result
 
-    def execute(self, query: str, parameters=()) -> list[dict]:
+    def execute(self, unused_query: str, unused_parameters=()) -> list[dict]:
         result = []
         return result
 

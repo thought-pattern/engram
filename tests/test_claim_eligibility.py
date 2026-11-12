@@ -119,7 +119,6 @@ def evaluation_clock() -> datetime:
             PropositionEligibilityReason.VALID_TIME_NO_LONGER_CURRENT,
         ),
         ({"predicate_canonical": False}, PropositionEligibilityReason.RETRIEVAL_ONLY),
-        ({"predicate_id": "generic_relation"}, PropositionEligibilityReason.RETRIEVAL_ONLY),
     ],
 )
 def test_current_proposition_eligibility_truth_table(changes, reason) -> None:

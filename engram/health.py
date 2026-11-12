@@ -362,8 +362,8 @@ class HealthPageHandler(BaseHTTPRequestHandler):
             self.send_body(404, b"Not found", "text/plain; charset=utf-8")
         return False
 
-    # BaseHTTPRequestHandler.log_message names its first parameter format; the override keeps the standard-library signature.
-    def log_message(self, format, *args):  # pylint: disable=redefined-builtin
+    # BaseHTTPRequestHandler passes the message format first and its arguments after it.
+    def log_message(self, unused_format, *args):
         """Page polling is not an audit event; the access log stays silent."""
         return False
 

@@ -800,7 +800,8 @@ class PropositionEligibilityEvaluator:
                 )
                 result = proposition_eligibility_decision(projection, False, reason)
                 return result
-        if not projection.get("predicate_canonical", False) or projection.get("predicate_id", "") == "generic_relation":
+        # The projection reads predicate_canonical false for a generic predicate's fact (D-1212).
+        if not projection.get("predicate_canonical", False):
             result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.RETRIEVAL_ONLY)
             return result
         if (

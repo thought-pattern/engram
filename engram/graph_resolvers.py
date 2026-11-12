@@ -84,7 +84,7 @@ class StructuredGraphResolver:
         self.internal_eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
     # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
-    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
+    def available(self, unused_frame: dict) -> bool:
         client = self.internal_engram.graph_client
         result = bool(client and getattr(client, "available", True))
         return result
@@ -523,7 +523,7 @@ class SupportSemanticResolver:
         self.internal_eligibility_evaluator: PropositionEligibilityEvaluator = selected_evaluator
 
     # The resolver protocol passes the request frame to every availability check; this resolver's readiness does not depend on it.
-    def available(self, frame: dict) -> bool:  # pylint: disable=unused-argument
+    def available(self, unused_frame: dict) -> bool:
         graph = self.internal_engram.config.get("graph", {})
         client = self.internal_engram.graph_client
         result = bool(

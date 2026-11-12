@@ -455,14 +455,18 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
 
     assert tuple(record.get("proposition_id", "") for record in evidence) == ("proposition-vertical",)
     assert evidence[0].get("features", {}).get("values", {}).get("semantic_similarity", 0.0) == pytest_approx(0.67)
-    assert len(calls) == 3
+    # Each vector read returns fewer rows than asked, so each is followed by its index reach read.
+    reach = {"index_name": "proposition_premise_embeddings", "query_embedding": [0.0, 1.0], "min_similarity": 0.45}
+    assert len(calls) == 5
     assert calls[0][1] == {
         "index_name": "proposition_premise_embeddings",
         "limit": frame_budget.get("max_candidates", 0),
+        "window": frame_budget.get("max_candidates", 0),
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
         "evaluation_time": evaluation_time,
     }
+    assert calls[1][1] == {**reach, "window": frame_budget.get("max_candidates", 0)}
     current_basis = {
         "basis_start": evaluation_time,
         "basis_start_available": True,
@@ -470,17 +474,17 @@ def test_support_semantic_vertical_fixed_query_to_full_record(monkeypatch) -> No
         "basis_end_available": True,
         "basis_end_inclusive": True,
     }
-    assert calls[1][1] == {
+    assert calls[2][1] == {
         "index_name": "proposition_premise_embeddings",
         "limit": frame_budget.get("max_vector_results", 0) - 1,
+        "window": frame_budget.get("max_vector_results", 0) - 1,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
         **current_basis,
     }
-    assert calls[2][1] == {"proposition_id": "proposition-vertical", **current_basis}
-    assert "Ada" not in calls[0][0]
-    assert "Ada" not in calls[1][0]
-    assert "Ada" not in calls[2][0]
+    assert calls[3][1] == {**reach, "window": frame_budget.get("max_vector_results", 0) - 1}
+    assert calls[4][1] == {"proposition_id": "proposition-vertical", **current_basis}
+    assert all("Ada" not in query for query, _ in calls)
 
 
 def test_support_semantic_proposition_discovery_fails_soft_and_cooperates_with_limits(monkeypatch) -> None:

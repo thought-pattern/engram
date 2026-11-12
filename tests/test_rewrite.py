@@ -424,4 +424,5 @@ def test_rewrite_configuration_is_opt_in_and_validated() -> None:
     assert default_config.get("retrieval_rewrites_enabled", False) is False
     assert engram_config(retrieval_rewrites_enabled=True).get("retrieval_rewrites_enabled", False) is True
     with pytest_raises(ValueError, match="must be a boolean"):
-        engram_config(retrieval_rewrites_enabled=1)  # type: ignore[arg-type]
+        # A decoded configuration document is where a non-boolean switch value arrives from.
+        engram_config(retrieval_rewrites_enabled=json_loads("1"))

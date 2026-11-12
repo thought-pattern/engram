@@ -54,7 +54,7 @@ def measure(operation, samples: int) -> dict[str, float]:
 
 
 # Benchmark double of the resolver protocol: it accepts the frame and budget every resolver receives and uses neither.
-class BenchmarkResolver:  # pylint: disable=unused-argument
+class BenchmarkResolver:
     """Configured benchmark resolver that records invocations across calls."""
 
     cost_class = CostClass.CHEAP
@@ -64,11 +64,11 @@ class BenchmarkResolver:  # pylint: disable=unused-argument
         self.fail = fail
         self.calls = 0
 
-    def available(self, frame) -> bool:
+    def available(self, unused_frame) -> bool:
         result = True
         return result
 
-    def resolve(self, frame, budget: dict, cooperative_check=()) -> dict:
+    def resolve(self, unused_frame, unused_budget: dict, cooperative_check=()) -> dict:
         if cooperative_check:
             cooperative_check()
         self.calls += 1

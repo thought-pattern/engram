@@ -30,10 +30,22 @@ GRAPH_FACT_VALID_AT_EVALUATION = (
     "AND (assertion.valid_time_end IS NULL "
     "OR datetime($evaluation_time) < assertion.valid_time_end) "
 )
+# The words a fact's predicate reads as: a generic predicate's fact carries the source's own
+# predicate wording as predicate_surface, and the generic Predicate's label ("generic relation")
+# says nothing of it; every other fact reads as its Predicate's label (D-1256).
+GRAPH_FACT_PREDICATE_TEXT = (
+    "CASE WHEN coalesce(proposition.predicate_surface, '') <> '' THEN proposition.predicate_surface "
+    "ELSE coalesce(predicate.label, predicate.canonical_id) END"
+)
+PROJECTION_PREDICATE_TEXT = (
+    "CASE WHEN coalesce(c.predicate_surface, '') <> '' THEN c.predicate_surface "
+    "ELSE coalesce(predicate.label, predicate.canonical_id) END"
+)
 GRAPH_FACT_RETURN = (
     "RETURN DISTINCT proposition.id AS proposition_id, "
     "subject.primary_label AS subject, "
-    "coalesce(predicate.label, predicate.canonical_id) AS predicate, "
+    + GRAPH_FACT_PREDICATE_TEXT
+    + " AS predicate, "
     "object.primary_label AS object"
 )
 GRAPH_ENTITY_FACTS_QUERY = (
@@ -54,27 +66,40 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     + GRAPH_FACT_ARGUMENTS
     + "AND (toLower(subject.primary_label) CONTAINS toLower($keyword) "
     "OR toLower(object.primary_label) CONTAINS toLower($keyword) "
-    "OR toLower(coalesce(predicate.label, predicate.canonical_id)) CONTAINS toLower($keyword)) "
+    "OR toLower(" + GRAPH_FACT_PREDICATE_TEXT + ") CONTAINS toLower($keyword)) "
     + GRAPH_FACT_ACTIVE
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
     + GRAPH_FACT_RETURN
     + " LIMIT 3"
 )
+# The similarity of a vector index row. A cosine distance cannot fall below 0, but the index's single-precision
+# arithmetic returns one a float32 epsilon below 0 for a query equal to a stored embedding, and the similarity read
+# from it would exceed 1 (D-1257); the distance is read as 0 there.
+VECTOR_SIMILARITY = "1.0 - CASE WHEN distance < 0.0 THEN 0.0 ELSE distance END"
 # The ANN fact read: the vector procedure call is why graph.execute exempts it from
-# the write-clause check, which matches CALL.
+# the write-clause check, which matches CALL. The index returns the $window nearest
+# Propositions of every shape and the filters follow, so the caller widens $window
+# until $limit facts pass or VECTOR_INDEX_REACH_QUERY shows the index holds no further
+# row at or above the similarity floor (engram.graph.nearest_passing_rows).
 VECTOR_SEARCH_PROPOSITIONS_QUERY = (
-    "CALL vector_search.search($index_name, $limit, $query_embedding) YIELD node, distance "
-    "WITH node AS proposition, 1.0 - distance AS similarity "
+    "CALL vector_search.search($index_name, $window, $query_embedding) YIELD node, distance "
+    "WITH node AS proposition, " + VECTOR_SIMILARITY + " AS similarity "
     "MATCH (proposition)-[:USES_PREDICATE]->(predicate:Predicate) "
     + GRAPH_FACT_ARGUMENTS
     + "AND similarity >= $min_similarity "
     + GRAPH_FACT_ACTIVE
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
-    + "AND predicate.canonical_id <> 'generic_relation' "
     + GRAPH_FACT_RETURN
-    + ", similarity ORDER BY similarity DESC, proposition.id"
+    + ", similarity ORDER BY similarity DESC, proposition.id LIMIT $limit"
+)
+# How many of the $window nearest index rows reach the similarity floor: fewer than
+# $window means the index holds no further row at or above the floor.
+VECTOR_INDEX_REACH_QUERY = (
+    "CALL vector_search.search($index_name, $window, $query_embedding) YIELD node, distance "
+    "WITH " + VECTOR_SIMILARITY + " AS similarity WHERE similarity >= $min_similarity "
+    "RETURN count(*) AS reached"
 )
 TRIPLE_QUERY_OBJECT = (
     "MATCH (proposition:Proposition)-[:HAS_ARGUMENT]->(sb:SemanticBinding)-[:BINDS_ENTITY]->(s:Entity), "
@@ -213,6 +238,10 @@ CANONICAL_PREDICATE_MATCH_QUERY = (
     "synonyms, coalesce(predicate.object_type, 'UNKNOWN') AS object_type "
     "ORDER BY predicate.canonical_id LIMIT $limit"
 )
+# A Proposition carries a nonempty predicate_surface, the source's own predicate wording,
+# exactly when its Predicate is a generic one (generic_relation, generic_event), which is
+# retrieval-only and never proof evidence. A Predicate vertex holds its catalog identifier,
+# not the generic symbol, so the surface is what tells a generic fact (D-1212).
 PROPOSITION_PROJECTION_RETURN = (
     "RETURN DISTINCT c.id AS proposition_id, "
     "subject.canonical_id AS subject_entity_id, "
@@ -232,7 +261,7 @@ PROPOSITION_PROJECTION_RETURN = (
     "assertion.valid_time_start IS NOT NULL AS valid_from_available, "
     "assertion.valid_time_end AS valid_to, "
     "assertion.valid_time_end IS NOT NULL AS valid_to_available, "
-    "true AS predicate_canonical, "
+    "coalesce(c.predicate_surface, '') = '' AS predicate_canonical, "
     "c.ownership_category AS ownership_category, "
     "assertion.trust_category AS trust_category, "
     "assertion.trust_category IS NOT NULL AS trust_category_available, "
@@ -285,7 +314,7 @@ STRUCTURED_ENTITY_PROPOSITION_PROJECTION_QUERY = (
     "OR toLower($value) IN [alias IN coalesce(object.aliases, []) | toLower(alias)]) "
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND support.retired_at IS NULL "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
@@ -300,20 +329,21 @@ STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY = (
     "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
     "AND (toLower(subject.primary_label) CONTAINS toLower($value) "
     "OR toLower(object.primary_label) CONTAINS toLower($value) "
-    "OR toLower(coalesce(predicate.label, predicate.canonical_id)) "
+    "OR toLower(" + PROJECTION_PREDICATE_TEXT + ") "
     "CONTAINS toLower($value)) "
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND support.retired_at IS NULL "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "
     "0.0 AS semantic_similarity, false AS semantic_similarity_available "
     "ORDER BY c.id LIMIT $limit"
 )
+# Widened by its caller like VECTOR_SEARCH_PROPOSITIONS_QUERY.
 VECTOR_PROPOSITION_PROJECTION_QUERY = (
-    "CALL vector_search.search($index_name, $limit, $query_embedding) YIELD node, distance "
-    "WITH node AS c, 1.0 - distance AS similarity "
+    "CALL vector_search.search($index_name, $window, $query_embedding) YIELD node, distance "
+    "WITH node AS c, " + VECTOR_SIMILARITY + " AS similarity "
     "MATCH (c)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
     "MATCH (c)-[:USES_PREDICATE]->(predicate:Predicate) "
     "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
@@ -324,12 +354,11 @@ VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL "
     "AND " + ASSERTION_BASIS_ELIGIBLE + " "
-    "AND predicate.canonical_id <> 'generic_relation' "
     + VECTOR_PROPOSITION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "0.0 AS structured_match, false AS structured_match_available, "
     "similarity AS semantic_similarity, true AS semantic_similarity_available "
-    "ORDER BY semantic_similarity DESC, c.id"
+    "ORDER BY semantic_similarity DESC, c.id LIMIT $limit"
 )
 PROPOSITION_PROJECTION_BY_ID_QUERY = (
     "MATCH (c:Proposition)-[:HAS_ARGUMENT]->(subject_binding:SemanticBinding)-[:BINDS_ENTITY]->(subject:Entity) "
@@ -355,7 +384,7 @@ RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY = (
     "AND subject.canonical_id = $subject_entity_id AND predicate.canonical_id = $predicate_id "
     "AND ($include_historical = true OR (c.lifecycle_disposition = 'active' AND c.retired_at IS NULL)) "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
-    "AND support.retired_at IS NULL AND predicate.canonical_id <> 'generic_relation' "
+    "AND support.retired_at IS NULL "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "1.0 AS structured_match, true AS structured_match_available, "

@@ -62,6 +62,7 @@ from engram.constants_graph import (
     STRUCTURED_KEYWORD_PROPOSITION_PROJECTION_QUERY,
     UNCONSTRAINED_ASSERTION_BASIS,
     VECTOR_INDEX_NAME,
+    VECTOR_INDEX_REACH_QUERY,
     VECTOR_PROPOSITION_PROJECTION_QUERY,
     VECTOR_SEARCH_PROPOSITIONS_QUERY,
     WRITE_CLAUSE,
@@ -88,7 +89,7 @@ from engram.validation import parse_utc_timestamp, require_bool, require_identif
 logger = logging_getLogger(__name__)
 
 
-FIXED_READ_PROCEDURE_QUERIES = (VECTOR_PROPOSITION_PROJECTION_QUERY, VECTOR_SEARCH_PROPOSITIONS_QUERY)
+FIXED_READ_PROCEDURE_QUERIES = (VECTOR_PROPOSITION_PROJECTION_QUERY, VECTOR_SEARCH_PROPOSITIONS_QUERY, VECTOR_INDEX_REACH_QUERY)
 
 
 def is_connection_error(err: BaseException) -> bool:
@@ -620,6 +621,43 @@ def decode_relation_projection_rows(rows: object, limit: int) -> list[dict]:
     return result
 
 
+def nearest_passing_rows(connection, statement: str, parameters: dict, limit: int) -> list:
+    """Read up to ``limit`` rows of a fixed vector statement whose filters follow the index's nearest window.
+
+    The index answers with the window's nearest Propositions of every shape and the statement's filters drop those
+    that do not pass, so the window starts at ``limit`` and doubles until ``limit`` rows pass or fewer of the window's
+    index rows than the window reach the similarity floor, when the index holds no further candidate. The rows are
+    then the nearest passing ones, as if the filters applied before the nearest were taken (D-1211).
+    """
+    reach_parameters = {
+        "index_name": parameters.get("index_name", ""),
+        "query_embedding": parameters.get("query_embedding", []),
+        "min_similarity": parameters.get("min_similarity", 0.0),
+    }
+    window = limit
+    reads = 0
+    while True:
+        rows = connection.execute(statement, {**parameters, "window": window, "limit": limit})
+        reads += 1
+        if len(rows) >= limit:
+            break
+        reach = connection.execute(VECTOR_INDEX_REACH_QUERY, {**reach_parameters, "window": window})
+        reached = reach[0].get("reached", 0) if reach and isinstance(reach[0], dict) else 0
+        if not isinstance(reached, int) or reached < window:
+            break
+        window *= 2
+    if reads > 1:
+        logger.info(
+            "code=graph_vector_window_widened Vector read widened its index window to %d rows over %d reads and returned %d of %d rows asked",
+            window,
+            reads,
+            len(rows),
+            limit,
+        )
+    result = rows
+    return result
+
+
 def is_write_cypher(cypher: str) -> bool:
     """Return True if the Cypher can mutate the graph.
 
@@ -944,7 +982,7 @@ class MemGraphConnection:
         limit: int = DEFAULT_GRAPH_VECTOR_LIMIT,
         min_similarity: float = DEFAULT_VECTOR_MIN_SIMILARITY,
     ) -> list:
-        """Search active proof-canonical Propositions through one fixed ANN query.
+        """Search active two-entity fact Propositions through the fixed ANN read, widened until ``limit`` pass.
 
         Generic ``CALL`` remains forbidden on :meth:`execute`. This method
         exposes no caller-supplied Cypher; only a validated vector-index
@@ -964,15 +1002,16 @@ class MemGraphConnection:
         ):
             raise ValueError("min_similarity must be between 0 and 1")
         projection_timestamp(evaluation_time, True, "graph vector evaluation time")
-        result = self.execute(
+        result = nearest_passing_rows(
+            self,
             VECTOR_SEARCH_PROPOSITIONS_QUERY,
             {
                 "index_name": index_name,
-                "limit": limit,
                 "query_embedding": embedding,
                 "min_similarity": float(min_similarity),
                 "evaluation_time": evaluation_time,
             },
+            limit,
         )
         return result
 
@@ -1083,15 +1122,16 @@ class MemGraphConnection:
                 raise InvalidRequestError("Proposition projection embedding must contain finite numeric values")
         row_limit = projection_int(limit, "Proposition projection vector limit", 1, MAX_PROPOSITION_PROJECTION_ROWS)
         similarity = projection_score(min_similarity, True, "Proposition projection min_similarity")
-        rows = self.execute(
+        rows = nearest_passing_rows(
+            self,
             VECTOR_PROPOSITION_PROJECTION_QUERY,
             {
                 "index_name": index_name,
-                "limit": row_limit,
                 "query_embedding": embedding,
                 "min_similarity": similarity,
                 **assertion_basis_parameters(basis_window),
             },
+            row_limit,
         )
         result = decode_projection_rows(rows, PropositionProjectionQuery.VECTOR, index_name, row_limit)
         return result

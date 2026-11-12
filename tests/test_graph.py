@@ -458,12 +458,15 @@ def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call
         )
 
         assert rows == []
-        query, params = stub.queries[-1]
+        # The fact read, then the index reach read that finds no further row at the floor.
+        query, params = stub.queries[0]
         assert "CALL vector_search.search" in query
         assert params.get("limit", 0) == 25
+        assert params.get("window", 0) == 25
+        sent = len(stub.queries)
         with pytest_raises(ValueError, match="read-only"):
             client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
-        assert len(stub.queries) == 1
+        assert len(stub.queries) == sent == 2
     finally:
         client.disconnect()
         stub.close()

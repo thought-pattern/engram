@@ -102,7 +102,9 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
     captured = {}
 
     def execute(query: str, parameters=()) -> list[dict[str, object]]:
-        captured.update({"query": query, "parameters": parameters})
+        # The projection read comes first; a short window is followed by the index reach read.
+        captured.setdefault("query", query)
+        captured.setdefault("parameters", parameters)
         result = [dict(SEMANTIC_PROPOSITION_ROW)]
         return result
 
@@ -133,6 +135,7 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
     assert captured.get("parameters", {}) == {
         "index_name": "proposition_embeddings",
         "limit": 7,
+        "window": 7,
         "query_embedding": [0.0, 1.0],
         "min_similarity": 0.45,
         **point_window,

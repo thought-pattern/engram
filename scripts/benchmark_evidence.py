@@ -76,7 +76,7 @@ def measure(operation, samples: int) -> dict[str, float]:
 
 
 # Benchmark double of the resolver protocol: it accepts the frame and budget every resolver receives and uses neither.
-class SyntheticResolver:  # pylint: disable=unused-argument
+class SyntheticResolver:
     """Bounded synthetic resolver used only by the offline benchmark."""
 
     cost_class = next(iter(resolution_budget().get("allowed_cost_classes", tuple(CostClass))))
@@ -86,11 +86,11 @@ class SyntheticResolver:  # pylint: disable=unused-argument
         self.internal_result = result
         self.internal_fail = fail
 
-    def available(self, frame: dict) -> bool:
+    def available(self, unused_frame: dict) -> bool:
         result = True
         return result
 
-    def resolve(self, frame: dict, budget: dict, cooperative_check=()) -> dict:
+    def resolve(self, unused_frame: dict, unused_budget: dict, cooperative_check=()) -> dict:
         if cooperative_check:
             cooperative_check()
         if self.internal_fail:
