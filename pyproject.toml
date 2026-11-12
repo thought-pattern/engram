@@ -22,16 +22,16 @@ classifiers = [
 # requirements.txt, which carries the pinned versions.
 dependencies = [
     "PyYAML>=6.0.3",
-    "msgpack==1.2.3",
+    "msgpack==1.2.4",
     "nltk>=3.10.4",
-    "spacy>=3.8.16",
+    "spacy>=3.8.18",
     "sentence-transformers>=6.2.0",
     "neo4j>=6.4.1,<7",
     "mcp>=2.3.0,<3",
-    "grpcio>=1.85.0,<1.86",
-    "grpcio-health-checking>=1.85.0,<1.86",
+    "grpcio>=1.85.1,<1.86",
+    "grpcio-health-checking>=1.85.1,<1.86",
     "protobuf>=7.36.2,<8",
-    "tzdata==2026.5",
+    "tzdata==2026.6",
 ]
 
 [project.scripts]
@@ -45,10 +45,10 @@ dev = [
     "isort",
     "pip-audit>=2.10.1",
     "psutil",
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "ruff",
-    "grpcio-tools==1.85.0",
+    "grpcio-tools==1.85.1",
     "vulture",
 ]
 
