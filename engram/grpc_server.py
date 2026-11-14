@@ -1,7 +1,6 @@
 """Single-instance gRPC adapter for :class:`engram.service.EngramCore`."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from gc import collect as gc_collect, freeze as gc_freeze
 from logging import (
@@ -52,7 +51,7 @@ from engram.errors import (
     ResourceNotFoundError,
     failure_origin,
 )
-from engram.health import EngramHealth, HealthInterceptor, HealthPage
+from engram.health import CountedExecutor, EngramHealth, HealthInterceptor, HealthPage
 from engram.identity import query_identity_from_dict
 from engram.resolution import resolution_result_to_dict
 from engram.resolution_budget import resolution_budget_from_dict
@@ -562,7 +561,8 @@ class EngramGrpcServer:
         self.health_servicer = health.HealthServicer()
         self.service = EngramGrpcService(core, self.health_servicer, self.health_page)
         self.evidence_service = EngramEvidenceGrpcService(self.service)
-        executor = ThreadPoolExecutor(max_workers=max_workers)
+        # A call that waits for one of these threads is in Engram's queue until a thread starts it.
+        executor = CountedExecutor(self.health_metrics, max_workers)
         # A host that carries larger messages than gRPC's own defaults names its message limit; 0 keeps gRPC's.
         options = list(GRPC_SERVER_OPTIONS)
         if message_limit_bytes:

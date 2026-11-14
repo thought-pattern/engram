@@ -333,21 +333,37 @@ class EngramCore:
         self.close()
 
     def status(self) -> dict:
-        """Return transport-neutral process lifecycle readiness."""
-        with self.lock:
-            accepting_requests = self.internal_state == CoreState.RUNNING
-            self.internal_component_status = self.engram.component_status_snapshot()
-            result = {
-                "state": self.internal_state.value,
-                "ready": accepting_requests,
-                "healthy": accepting_requests,
-                "memory_only": True,
-                "active_conversations": len(self.conversations),
-                "components": deepcopy(self.internal_component_status),
-                "rollout": rollout_status(self.engram.config),
-                "telemetry": self.operational_telemetry(),
-            }
+        """Return transport-neutral process lifecycle readiness without waiting for the core lock (D-1349).
+
+        When the lock is free the component readiness and the regulated-cache counts are read under it and kept. While
+        another call holds it, as a chat turn does across its graph read, the status answers at once with the lifecycle,
+        the conversation count and the process counters read now and the component readiness and regulated-cache counts
+        last read under the lock.
+        """
+        if not self.lock.acquire(blocking=False):
+            result = self.status_fields(deepcopy(self.internal_component_status), self.published_telemetry())
             return result
+        try:
+            self.internal_component_status = self.engram.component_status_snapshot()
+            result = self.status_fields(deepcopy(self.internal_component_status), self.operational_telemetry())
+            return result
+        finally:
+            self.lock.release()
+
+    def status_fields(self, components: dict, telemetry: dict) -> dict:
+        """GetStatus's fields from the lifecycle read now and the `components` and `telemetry` given."""
+        accepting_requests = self.internal_state == CoreState.RUNNING
+        result = {
+            "state": self.internal_state.value,
+            "ready": accepting_requests,
+            "healthy": accepting_requests,
+            "memory_only": True,
+            "active_conversations": len(self.conversations),
+            "components": components,
+            "rollout": rollout_status(self.engram.config),
+            "telemetry": telemetry,
+        }
+        return result
 
     def cache_resolution(
         self,
@@ -379,25 +395,45 @@ class EngramCore:
         return result_copy
 
     def operational_telemetry(self) -> dict:
-        """Return fixed-cardinality process metrics without request-scoped values."""
-        with self.lock:
-            result = self.engram.operational_telemetry_snapshot()
-            result["matcher"] = {
-                "queries": self.engram.query_count,
-                "hits": self.engram.hit_count,
-                "evictions": self.engram.eviction_count,
-            }
-            result["regulated_cache"] = {
-                "proposals": self.regulated_metrics.get("proposals", 0),
-                "misses": self.regulated_metrics.get("misses", 0),
-                "accepted": self.regulated_metrics.get("accepted", 0),
-                "learned_created": self.regulated_metrics.get("learned_created", 0),
-                "retired": self.regulated_metrics.get("retired", 0),
-                "idempotent_retries": self.regulated_metrics.get("idempotent_retries", 0),
-                "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
-                "retained_proposals": len(self.proposals),
-            }
+        """Return fixed-cardinality process metrics without request-scoped values, without waiting for the core lock.
+
+        When the lock is free the regulated-cache counts are read under it and kept; while another call holds it they
+        are the counts last read under it (D-1349).
+        """
+        if not self.lock.acquire(blocking=False):
+            result = self.published_telemetry()
             return result
+        try:
+            self.published_regulated_cache = self.regulated_cache_counts()
+            result = self.published_telemetry()
+            return result
+        finally:
+            self.lock.release()
+
+    def regulated_cache_counts(self) -> dict:
+        """The regulated-cache counts the telemetry carries, read by a caller holding the core lock."""
+        result = {
+            "proposals": self.regulated_metrics.get("proposals", 0),
+            "misses": self.regulated_metrics.get("misses", 0),
+            "accepted": self.regulated_metrics.get("accepted", 0),
+            "learned_created": self.regulated_metrics.get("learned_created", 0),
+            "retired": self.regulated_metrics.get("retired", 0),
+            "idempotent_retries": self.regulated_metrics.get("idempotent_retries", 0),
+            "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
+            "retained_proposals": len(self.proposals),
+        }
+        return result
+
+    def published_telemetry(self) -> dict:
+        """The process counters read now, under the count lock, with the regulated-cache counts last kept."""
+        result = self.engram.operational_telemetry_snapshot()
+        result["matcher"] = {
+            "queries": self.engram.query_count,
+            "hits": self.engram.hit_count,
+            "evictions": self.engram.eviction_count,
+        }
+        result["regulated_cache"] = dict(self.published_regulated_cache)
+        return result
 
     def record_resolution_telemetry(self, result: dict, *, replayed: bool) -> None:
         with self.engram.count_lock:
@@ -482,6 +518,7 @@ class EngramCore:
             "retired": 0,
             "idempotent_retries": 0,
         }
+        self.published_regulated_cache = self.regulated_cache_counts()
 
     def require_running(self) -> None:
         if self.internal_state != CoreState.RUNNING:

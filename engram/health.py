@@ -3,7 +3,9 @@
 `EngramHealth` counts every Engram RPC by call and outcome as `HealthInterceptor` sees it arrive and answer, keeps the
 calls in progress, the latest finished calls, the errors by kind and a sample of recent activity every
 HEALTH_SAMPLE_SECONDS. Only call names, outcomes, times and counts are kept, never request or conversation content,
-user names or IDs; the standard gRPC health checks are not counted. Every figure covers the running process only.
+user names or IDs; the standard gRPC health checks are not counted. Every figure covers the running process only. A
+counted call that waits for one of the gRPC server's threads is in the queue from its arrival at the server until a
+thread starts it: `CountedExecutor` is the server's thread pool and holds the wait in `EngramHealth`.
 
 `HealthPage` serves the page (`/`, `/health.js`, `/health-common.js`, `/health.css`), the snapshot (`/api/health`),
 liveness (`/health/live`) and readiness (`/health/ready`) on its own listener. The assets in `health_assets/` are copies
@@ -13,6 +15,7 @@ listener that cannot bind is logged and reported in the snapshot's `http` state 
 """
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from errno import errorcode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +63,8 @@ class EngramHealth:
     A call runs from its arrival unless its service places it on an input queue: `waiting` then holds it in the queue
     until `running` starts its work and `worked` ends it, so the snapshot shows the queue and the work running apart, and
     a call whose work is done is only being answered. `current_key` is the key of the call the calling thread is serving.
+    Before that, a call waits for a gRPC thread: `thread_wait` holds it from its arrival at the server until
+    `thread_started` runs it on the thread that took it, and `received` then accepts it at that arrival.
     """
 
     def __init__(self, incarnation: str):
@@ -70,6 +75,8 @@ class EngramHealth:
         self.started_at = datetime.now(UTC).isoformat()
         self.items = {}
         self.next_key = 0
+        self.thread_waits = {}
+        self.next_wait = 0
         self.requests = {"received": 0, "responses": 0, "last_received_at": "", "last_response_at": "", "by_operation": {}}
         self.timing = {"total_seconds": 0.0, "terminal_count": 0, "execution_seconds": 0.0, "execution_count": 0}
         self.timing.update(queue_only_seconds=0.0, queue_only_count=0)
@@ -80,18 +87,53 @@ class EngramHealth:
         self.last_sample = self.began - HEALTH_SAMPLE_SECONDS
 
     def received(self, operation: str) -> int:
-        """Count one call arriving and hold it as running until `finished`; return its key."""
+        """Count one call arriving and hold it as running until `finished`; return its key. A call that waited for a gRPC
+        thread is accepted at its arrival at the server (`thread_started`) and starts now."""
         observed_at = datetime.now(UTC).isoformat()
         arrived = monotonic()
+        arrival = getattr(self.calls, "arrival", {})
+        accepted = arrival.get("accepted", arrived)
+        accepted_at = arrival.get("accepted_at", observed_at)
         with self.lock:
             self.next_key += 1
             key = self.next_key
-            self.items[key] = {"operation": operation, "accepted": arrived, "accepted_at": observed_at, "started": arrived}
+            self.items[key] = {"operation": operation, "accepted": accepted, "accepted_at": accepted_at, "started": arrived}
             self.requests["received"] = self.requests.get("received", 0) + 1
             self.requests["last_received_at"] = observed_at
             row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
             row["received"] = row.get("received", 0) + 1
         return key
+
+    def arriving(self, operation: str) -> bool:
+        """Name the call the serving thread hands to the gRPC thread pool next; "" for a call that is not counted."""
+        self.calls.arriving = operation
+        return True
+
+    def thread_wait(self) -> int:
+        """Hold the call this serving thread named (`arriving`) as waiting for a gRPC thread; return its token, 0 for
+        none."""
+        operation = getattr(self.calls, "arriving", "")
+        self.calls.arriving = ""
+        if not operation:
+            return 0
+        observed_at = datetime.now(UTC).isoformat()
+        with self.lock:
+            self.next_wait += 1
+            token = self.next_wait
+            self.thread_waits[token] = {"operation": operation, "accepted": monotonic(), "accepted_at": observed_at}
+        return token
+
+    def thread_started(self, token: int, work, *args, **kwargs):
+        """Run `work` on the gRPC thread that took it, its wait for a thread over; the call it serves is accepted at its
+        arrival at the server."""
+        with self.lock:
+            arrival = self.thread_waits.pop(token, {})
+        self.calls.arrival = arrival
+        try:
+            result = work(*args, **kwargs)
+        finally:
+            self.calls.arrival = {}
+        return result
 
     def current_key(self) -> int:
         """The key of the call this thread is serving, 0 outside a counted call."""
@@ -183,7 +225,7 @@ class EngramHealth:
                 {
                     "observed_at": datetime.now(UTC).isoformat(),
                     "elapsed_seconds": now - self.began,
-                    "queue_depth": sum(1 for item in self.items.values() if "started" not in item),
+                    "queue_depth": sum(1 for item in self.items.values() if "started" not in item) + len(self.thread_waits),
                     "finished": self.finished_count,
                     "responses": self.requests.get("responses", 0),
                     "provider_calls": 0,
@@ -196,21 +238,25 @@ class EngramHealth:
     def snapshot(self, status: dict, *, stopping: bool, http: dict, grpc: dict, refresh_seconds: float) -> dict:
         """The standard snapshot every Tapestry page shows, then the GetStatus fields in STATUS_FIELDS.
 
-        The queue is the calls held in an input queue, oldest first; a call waiting for a gRPC worker inside the gRPC
-        library cannot be seen and is not in it.
+        The queue is the calls held in an input queue and the calls waiting for a gRPC thread, oldest first; a gRPC
+        health check is not in it.
         """
         now = monotonic()
         with self.lock:
-            queue = [
-                {
-                    "operation": item.get("operation", ""),
-                    "wait_seconds": max(0.0, now - item.get("accepted", now)),
-                    "accepted_at": item.get("accepted_at", ""),
-                    "ids": {},
-                }
-                for item in self.items.values()
-                if "started" not in item
-            ]
+            waiting = [item for item in self.items.values() if "started" not in item] + list(self.thread_waits.values())
+            queue = sorted(
+                (
+                    {
+                        "operation": item.get("operation", ""),
+                        "wait_seconds": max(0.0, now - item.get("accepted", now)),
+                        "accepted_at": item.get("accepted_at", ""),
+                        "ids": {},
+                    }
+                    for item in waiting
+                ),
+                key=lambda entry: entry.get("wait_seconds", 0.0),
+                reverse=True,
+            )
             active = [
                 {
                     "operation": item.get("operation", ""),
@@ -282,6 +328,8 @@ class HealthInterceptor(ServerInterceptor):
         self.metrics = metrics
 
     def intercept_service(self, continuation, handler_call_details):
+        # gRPC hands the call to its thread pool on this thread right after this returns (CountedExecutor.submit).
+        self.metrics.arriving("")
         handler = continuation(handler_call_details)
         method = handler_call_details.method
         behavior = getattr(handler, "unary_unary", False)
@@ -310,7 +358,22 @@ class HealthInterceptor(ServerInterceptor):
             request_deserializer=handler.request_deserializer,
             response_serializer=handler.response_serializer,
         )
+        metrics.arriving(operation)
         return wrapped
+
+
+class CountedExecutor(ThreadPoolExecutor):
+    """The gRPC server's thread pool: a counted call (`HealthInterceptor`) waits in `metrics` from its arrival at the
+    server until one of the pool's threads starts it."""
+
+    def __init__(self, metrics: EngramHealth, max_workers: int):
+        super().__init__(max_workers=max_workers)
+        self.metrics = metrics
+
+    def submit(self, fn, /, *args, **kwargs):
+        token = self.metrics.thread_wait()
+        future = super().submit(self.metrics.thread_started, token, fn, *args, **kwargs)
+        return future
 
 
 class HealthPageServer(ThreadingHTTPServer):
