@@ -28,7 +28,6 @@ from engram.identity import (
     query_identity,
     query_identity_from_dict,
     query_identity_to_dict,
-    query_identity_to_json,
     relation_reference,
     retrieval_representation,
     retrieval_representation_bindings,
@@ -41,7 +40,6 @@ from engram.identity import (
     scoped_retrieval_key_from_dict,
     scoped_retrieval_key_from_text,
     scoped_retrieval_key_to_dict,
-    scoped_retrieval_key_to_json,
     validate_authoritative_identity,
     validate_entity_reference,
     validate_identity_qualifier,
@@ -133,9 +131,8 @@ def test_identity_contracts_component_and_query_identity_codecs_round_trip() -> 
     restored = query_identity_from_dict(query_identity_to_dict(query))
 
     assert restored == query
-    assert query_identity_to_json(restored) == query_identity_to_json(query)
+    assert query_identity_to_dict(restored) == query_identity_to_dict(query)
     assert none_paths(query_identity_to_dict(query)) == []
-    assert "null" not in query_identity_to_json(query)
 
 
 def test_identity_contracts_unknown_operator_and_empty_relation_are_concrete() -> None:
@@ -272,7 +269,7 @@ def test_scoped_retrieval_and_representations_representation_deduplicates_by_nor
         "What's the default PostgreSQL port?",
         "Postgres default port",
     ]
-    assert len({scoped_retrieval_key_to_json(binding.get("key", {})) for binding in bindings}) == 2
+    assert len({json_dumps(scoped_retrieval_key_to_dict(binding.get("key", {})), sort_keys=True) for binding in bindings}) == 2
     assert retrieval_representation_from_dict(retrieval_representation_to_dict(retrieval)) == retrieval
     assert "pattern_aliases" not in retrieval_representation_to_dict(retrieval)
     assert "response" not in retrieval_representation_to_dict(retrieval)
@@ -482,7 +479,7 @@ def test_identity_conformance_corpus_generated_scoped_key_properties() -> None:
 
     for request in requests:
         keys = tuple(scoped_retrieval_key_from_text(scope, request) for scope in scopes)
-        assert len({scoped_retrieval_key_to_json(key) for key in keys}) == len(scopes)
+        assert len({json_dumps(scoped_retrieval_key_to_dict(key), sort_keys=True) for key in keys}) == len(scopes)
         for key in keys:
             assert scoped_retrieval_key_from_dict(scoped_retrieval_key_to_dict(key)) == key
             assert scoped_retrieval_key_from_text(key.get("scope", {}), key.get("normalized_key", "")) == key

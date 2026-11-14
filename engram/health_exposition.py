@@ -187,7 +187,6 @@ def health_exposition(snapshot: dict) -> str:
             )
     cache = snapshot.get("cache", {})
     for field, metric, kind in (
-        ("enabled", "enabled", "gauge"),
         ("reads", "reads_total", "counter"),
         ("lifetime_hits", "hits_total", "counter"),
         ("lifetime_misses", "misses_total", "counter"),

@@ -27,9 +27,7 @@ from engram.resolution_evidence import (
     feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
-    proposition_evidence_record_from_json,
     proposition_evidence_record_to_dict,
-    proposition_evidence_record_to_json,
     proposition_evidence_record_with_changes,
     proposition_trust_inputs,
     proposition_validity_inputs,
@@ -44,11 +42,10 @@ from engram.resolution_package import (
     empty_evidence_package,
     evidence_package,
     evidence_package_from_dict,
-    evidence_package_from_json,
     evidence_package_to_dict,
-    evidence_package_to_json,
     validate_evidence_package,
 )
+from engram.resolution_sizing import encoded_size
 
 # Read-only inputs: proposition_evidence_record and the *_with_changes revalidation copy every nested component.
 STRUCTURED_RECORD_VALUES = {
@@ -103,14 +100,11 @@ POLICY_RECORD_FEATURES = feature_set(
 
 def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> None:
     record = proposition_evidence_record(**STRUCTURED_RECORD_VALUES)
-    encoded = proposition_evidence_record_to_json(record)
 
     serialized = proposition_evidence_record_to_dict(record)
     assert type(record) is dict
     assert proposition_evidence_record_from_dict(serialized) == record
-    assert proposition_evidence_record_from_json(encoded) == record
-    assert encoded == json_dumps(serialized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    assert "null" not in encoded
+    assert "null" not in json_dumps(serialized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert set(serialized) == {
         "proposition_id",
         "source_resolver",
@@ -571,8 +565,8 @@ def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero
     assert unavailable_trust.get("supplied_trust", 0.0) == measured_zero_trust.get("supplied_trust", 0.0) == 0.0
     assert unavailable_trust.get("supplied_trust_available", False) is False
     assert measured_zero_trust.get("supplied_trust_available", False) is True
-    assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(unavailable)) == unavailable
-    assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(measured_zero)) == measured_zero
+    assert proposition_evidence_record_from_dict(proposition_evidence_record_to_dict(unavailable)) == unavailable
+    assert proposition_evidence_record_from_dict(proposition_evidence_record_to_dict(measured_zero)) == measured_zero
 
 
 @pytest_mark.parametrize(
@@ -662,7 +656,7 @@ def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
         proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"disclosure": disclosure}
     )
 
-    assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(record)) == record
+    assert proposition_evidence_record_from_dict(proposition_evidence_record_to_dict(record)) == record
     assert record.get("disclosure", {}).get("scope", {}) == scope_key(namespace="support", context_fingerprint="tenant:acme")
 
 
@@ -702,11 +696,9 @@ def test_evidence_package_codec_canonicalizes_and_deduplicates() -> None:
     assert package.get("truncated", False) is True
     assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.DUPLICATE_PROPOSITION_ID,)
     serialized = evidence_package_to_dict(package)
-    encoded = evidence_package_to_json(package)
     assert evidence_package_from_dict(serialized) == package
-    assert evidence_package_from_json(encoded) == package
-    assert "null" not in encoded
-    assert evidence_package_to_json(empty_evidence_package()) == evidence_package_to_json(build_evidence_package(()))
+    assert "null" not in json_dumps(serialized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert evidence_package_to_dict(empty_evidence_package()) == evidence_package_to_dict(build_evidence_package(()))
     copied = validate_evidence_package(package)
     assert copied == package
     assert copied is not package
@@ -739,7 +731,7 @@ def test_evidence_package_applies_count_limit_after_canonical_ordering() -> None
         f"proposition:{index:02d}" for index in range(10)
     )
     assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.RECORD_LIMIT,)
-    assert len(evidence_package_to_json(package).encode("utf-8")) <= 65_536
+    assert encoded_size(evidence_package_to_dict(package)) <= 65_536
 
 
 def test_evidence_package_applies_complete_serialized_byte_limit() -> None:
@@ -761,7 +753,7 @@ def test_evidence_package_applies_complete_serialized_byte_limit() -> None:
     assert 0 < retained_count < len(records)
     assert package.get("omitted_count", 0) == len(records) - retained_count
     assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
-    assert len(evidence_package_to_json(package).encode("utf-8")) <= 5_000
+    assert encoded_size(evidence_package_to_dict(package)) <= 5_000
 
 
 def test_evidence_package_hard_byte_limit_truncates_before_construction() -> None:
@@ -786,7 +778,7 @@ def test_evidence_package_hard_byte_limit_truncates_before_construction() -> Non
     assert retained_count < len(records)
     assert package.get("omitted_count", 0) == len(records) - retained_count
     assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT,)
-    assert len(evidence_package_to_json(package).encode("utf-8")) <= 65_536
+    assert encoded_size(evidence_package_to_dict(package)) <= 65_536
     with pytest_raises(InvalidRequestError, match="65536 UTF-8 bytes"):
         evidence_package(records, 10, 0, False, ())
 
@@ -832,8 +824,3 @@ def test_evidence_package_builder_validates_requested_limits() -> None:
         build_evidence_package((record,), max_bytes=255)
     with pytest_raises(InvalidRequestError, match="input exceeds the limit of 1000"):
         build_evidence_package((record,) * 1_001)
-
-
-def test_evidence_package_json_decoder_rejects_oversized_input_before_parsing() -> None:
-    with pytest_raises(InvalidRequestError, match="65536 UTF-8 bytes"):
-        evidence_package_from_json("{" + " " * 65_536 + "}")

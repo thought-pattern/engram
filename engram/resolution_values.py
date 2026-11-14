@@ -1,6 +1,5 @@
-"""Native validation, isolated contract values, and public JSON codecs for resolution."""
+"""Native validation and isolated contract values for resolution."""
 
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 
 from engram.constants_resolution import (
@@ -106,23 +105,6 @@ def thaw_json(value: object) -> object:
         result = [thaw_json(item) for item in value]
         return result
     return value
-
-
-def json_text(value: dict[str, object]) -> str:
-    result = json_dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    return result
-
-
-def load_json_mapping(value: str, name: str) -> dict[str, object]:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    try:
-        decoded = json_loads(value)
-    except json_JSONDecodeError as err:
-        raise InvalidRequestError(f"{name} must be valid JSON") from err
-    if not isinstance(decoded, dict):
-        raise InvalidRequestError(f"{name} must contain an object")
-    return decoded
 
 
 def enum_tuple(values: object, enum_type, name: str, maximum: int) -> tuple:

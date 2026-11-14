@@ -161,11 +161,10 @@ export function chart(id, samples, field, rate = false) {
   flush();
 }
 
-// The local inference cache figures a component keeps: its state, reads and hit rate, writes and size.
+// The local inference cache figures a component keeps: its reads and hit rate, writes and size.
 export function cacheFacts(id, cache) {
   const figures = cache || {};
   facts(id, [
-    ["State", figures.enabled ? "Enabled" : "Disabled"],
     ["Reads / hit rate", figures.reads ? count(figures.reads) + " · " + ((100 * figures.lifetime_hits) / figures.reads).toFixed(1) + "% hits" : "No reads yet"],
     ["Hits / misses", count(figures.lifetime_hits) + " / " + count(figures.lifetime_misses)],
     ["Writes / replacements", count(figures.writes) + " / " + count(figures.replacements)],

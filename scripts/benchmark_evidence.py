@@ -22,7 +22,7 @@ from engram.evidence import (
 )
 from engram.identity import scope_key
 from engram.repository import tier_admission_policy
-from engram.resolution import resolution_result_to_json, resolver_result
+from engram.resolution import resolution_result_to_dict, resolver_result
 from engram.resolution_accounting import ResolutionAccountingFinalizer
 from engram.resolution_budget import budget_consumption_to_dict, capture_resolution_budget, resolution_budget
 from engram.resolution_evidence import (
@@ -30,15 +30,15 @@ from engram.resolution_evidence import (
     disclosure_decision,
     feature_set,
     proposition_evidence_record,
-    proposition_evidence_record_from_json,
+    proposition_evidence_record_from_dict,
     proposition_evidence_record_to_dict,
-    proposition_evidence_record_to_json,
     proposition_trust_inputs,
     proposition_validity_inputs,
 )
 from engram.resolution_frame import QueryFrameBuilder
 from engram.resolution_orchestrator import ResolutionOrchestrator
-from engram.resolution_package import build_evidence_package, evidence_package_from_json, evidence_package_to_json
+from engram.resolution_package import build_evidence_package, evidence_package_from_dict, evidence_package_to_dict
+from engram.resolution_sizing import encoded_size
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import ResolverRegistry
 from engram.responses import AcceptedResponseService
@@ -138,11 +138,11 @@ def measure_evidence(samples: int) -> dict:
     records = tuple(synthetic_records)
     ten_records = records[:10]
     policy = evidence_usefulness_policy()
-    encoded_record = proposition_evidence_record_to_json(records[0])
+    encoded_record = proposition_evidence_record_to_dict(records[0])
 
-    codec = measure(lambda: proposition_evidence_record_to_json(proposition_evidence_record_from_json(encoded_record)), samples)
+    codec = measure(lambda: proposition_evidence_record_to_dict(proposition_evidence_record_from_dict(encoded_record)), samples)
     package = measure(
-        lambda: evidence_package_from_json(evidence_package_to_json(build_evidence_package(ten_records))),
+        lambda: evidence_package_from_dict(evidence_package_to_dict(build_evidence_package(ten_records))),
         samples,
     )
     normalization_samples = max(10, samples // 5)
@@ -216,7 +216,7 @@ def measure_evidence(samples: int) -> dict:
     orchestration = measure(resolve_partial_failure, samples)
     partial_result, partial_finalization = resolve_partial_failure()
     package_value = build_evidence_package(ten_records)
-    package_bytes = len(evidence_package_to_json(package_value).encode("utf-8"))
+    package_bytes = encoded_size(evidence_package_to_dict(package_value))
     all_included = all(evaluate_evidence_usefulness(policy, value).get("included", False) for value in records)
     gates = {
         "thousand_record_peak_under_64_mib": peak_bytes < 67_108_864,
@@ -238,7 +238,7 @@ def measure_evidence(samples: int) -> dict:
         ),
         "complete_output_accounting_is_exact": (
             partial_result.get("budget", {}).get("output_bytes", 0)
-            == len(resolution_result_to_json(partial_result).encode("utf-8"))
+            == encoded_size(resolution_result_to_dict(partial_result))
         ),
         "working_memory_within_frame_budget": (
             partial_result.get("budget", {}).get("working_memory_bytes", 0)

@@ -22,7 +22,7 @@ from engram.resolution_evidence import (
     validate_proposition_evidence_record,
 )
 from engram.resolution_sizing import encoded_size
-from engram.resolution_values import exact_mapping, freeze_mapping, json_text, load_json_mapping, require_int, require_list
+from engram.resolution_values import exact_mapping, freeze_mapping, require_int, require_list
 from engram.validation import require_any_text, require_bool
 
 
@@ -220,29 +220,4 @@ def evidence_package_from_dict(value: object) -> dict:
         data.get("truncated", False),
         tuple(reasons),
     )
-    return result
-
-
-def evidence_package_to_json(value: object) -> str:
-    """Serialize one evidence package deterministically."""
-    payload = evidence_package_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def trusted_evidence_package_to_json(value: dict) -> str:
-    """Serialize an orchestrator-owned evidence package."""
-    payload = evidence_package_payload(value)
-    result = json_text(payload)
-    return result
-
-
-def evidence_package_from_json(value: str) -> dict:
-    """Decode one bounded evidence package from deterministic JSON."""
-    if not isinstance(value, str):
-        raise InvalidRequestError("EvidencePackage JSON must be a string")
-    if len(value.encode("utf-8")) > MAX_EVIDENCE_PACKAGE_BYTES:
-        raise InvalidRequestError(f"evidence package exceeds the limit of {MAX_EVIDENCE_PACKAGE_BYTES} UTF-8 bytes")
-    data = load_json_mapping(value, "EvidencePackage JSON")
-    result = evidence_package_from_dict(data)
     return result

@@ -29,7 +29,6 @@ from engram.identity import scope_key
 from engram.repository import tier_admission_policy
 from engram.resolution import (
     resolution_result_to_dict,
-    resolution_result_to_json,
     resolver_result,
     validate_candidate,
 )
@@ -43,7 +42,8 @@ from engram.resolution_evidence import (
 )
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 from engram.resolution_orchestrator import ResolutionOrchestrator
-from engram.resolution_package import build_evidence_package, empty_evidence_package, evidence_package_to_json
+from engram.resolution_package import build_evidence_package, empty_evidence_package, evidence_package_to_dict
+from engram.resolution_sizing import encoded_size
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import (
     ResolverRegistry,
@@ -182,11 +182,11 @@ def test_orchestrator_emits_only_bounded_package_for_proposition_only_evidence(m
     assert tuple(record.get("proposition_id", "") for record in package.get("records", ())) == ("proposition-orchestrated",)
     assert all(not value.get("proposition_evidence", ()) for value in result.get("resolver_results", ()))
     assert budget.get("evidence", 0) == 1
-    assert budget.get("evidence_bytes", 0) == len(evidence_package_to_json(package).encode("utf-8"))
+    assert budget.get("evidence_bytes", 0) == encoded_size(evidence_package_to_dict(package))
     assert budget.get("evidence_bytes", 0) <= frame_budget.get("max_evidence_bytes", 0)
     assert budget.get("graph_rows", 0) == 2
     assert budget.get("vector_results", 0) == 0
-    assert budget.get("output_bytes", 0) == len(resolution_result_to_json(result).encode("utf-8"))
+    assert budget.get("output_bytes", 0) == encoded_size(resolution_result_to_dict(result))
     assert budget.get("diagnostic_bytes", 0) <= frame_budget.get("max_diagnostic_bytes", 0)
     assert budget.get("working_memory_bytes", 0) <= frame_budget.get("max_working_memory_bytes", 0)
     proposition_diagnostics = result.get("frame_diagnostics", {}).get("proposition_evidence", {})
@@ -270,7 +270,7 @@ def test_orchestrator_keeps_miss_when_proposition_fails_usefulness_policy(monkey
     }
     assert all(not value.get("proposition_evidence", ()) for value in result.get("resolver_results", ()))
     assert budget.get("evidence", 0) == 0
-    assert budget.get("evidence_bytes", 0) == len(evidence_package_to_json(package).encode("utf-8"))
+    assert budget.get("evidence_bytes", 0) == encoded_size(evidence_package_to_dict(package))
     assert budget.get("graph_rows", 0) == 1
     assert budget.get("vector_results", 0) == 1
     assert finalization.get("candidate_statement_ids", ()) == ()
@@ -390,8 +390,8 @@ def test_orchestrator_canonically_truncates_proposition_package_to_ten_records(m
     assert package.get("truncated", False) is True
     assert package.get("truncation_reasons", ()) == (EvidencePackageTruncationReason.RECORD_LIMIT,)
     assert budget.get("evidence", 0) == 10
-    assert budget.get("evidence_bytes", 0) == len(evidence_package_to_json(package).encode("utf-8"))
-    assert budget.get("output_bytes", 0) == len(resolution_result_to_json(result).encode("utf-8"))
+    assert budget.get("evidence_bytes", 0) == encoded_size(evidence_package_to_dict(package))
+    assert budget.get("output_bytes", 0) == encoded_size(resolution_result_to_dict(result))
     assert finalization.get("candidate_statement_ids", ()) == ()
 
 
@@ -449,7 +449,7 @@ def test_orchestrator_trims_proposition_package_to_complete_output_budget(monkey
     assert package.get("truncated", False) is True
     assert "output_truncated" in result.get("reason_codes", ())
     assert "output_bytes" in budget.get("exhausted_dimensions", ())
-    assert budget.get("output_bytes", 0) == len(resolution_result_to_json(result).encode("utf-8"))
+    assert budget.get("output_bytes", 0) == encoded_size(resolution_result_to_dict(result))
     assert budget.get("output_bytes", 0) <= selected_budget.get("max_output_bytes", 0)
     assert all(not value.get("proposition_evidence", ()) for value in result.get("resolver_results", ()))
     assert finalization.get("candidate_statement_ids", ()) == ()
@@ -482,7 +482,7 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
         validate_resolver_budget({name: probe_frame.get("budget", {}).get(name, 0) for name in RESOLVER_BUDGET_FIELDS}),
     )
     probe_record = probe_result.get("proposition_evidence", ())[0]
-    single_package_bytes = len(evidence_package_to_json(build_evidence_package((probe_record,))).encode("utf-8"))
+    single_package_bytes = encoded_size(evidence_package_to_dict(build_evidence_package((probe_record,))))
 
     discovered = tuple(
         proposition_projection_from_graph_row(
@@ -532,7 +532,7 @@ def test_orchestrator_fits_package_to_aggregate_evidence_byte_budget(monkeypatch
     assert result.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.EVIDENCE
     assert tuple(record.get("proposition_id", "") for record in package.get("records", ())) == ("proposition-byte-00",)
     assert budget.get("evidence", 0) == 1
-    assert budget.get("evidence_bytes", 0) == len(evidence_package_to_json(package).encode("utf-8"))
+    assert budget.get("evidence_bytes", 0) == encoded_size(evidence_package_to_dict(package))
     assert budget.get("evidence_bytes", 0) <= single_package_bytes
     assert "evidence_bytes" in budget.get("exhausted_dimensions", ())
     assert finalization.get("candidate_statement_ids", ()) == ()

@@ -15,13 +15,14 @@ from engram.core import Engram
 from engram.feedback import (
     feedback_observation,
     feedback_state,
-    feedback_state_from_json,
-    feedback_state_to_json,
+    feedback_state_from_dict,
+    feedback_state_to_dict,
 )
 from engram.feedback_store import FeedbackStore
 from engram.feedback_values import canonical_fingerprint, constraint_fingerprint
 from engram.identity import extract_standalone_identity, scope_key
 from engram.negative_resolution import NegativeResolutionStore, negative_resolution_key
+from engram.resolution_sizing import encoded_size
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
@@ -133,10 +134,10 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         history.append(elapsed)
 
     state = store.snapshot()
-    encoded = feedback_state_to_json(state)
+    encoded = feedback_state_to_dict(state)
     round_trip = []
     for _ in range(samples):
-        _, elapsed = internal_time(lambda: feedback_state_from_json(encoded))
+        _, elapsed = internal_time(lambda: feedback_state_from_dict(encoded))
         round_trip.append(elapsed)
 
     scale_store = FeedbackStore()
@@ -160,8 +161,8 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     scale_probe = scale_store.prepare("scale-probe", (scale_verdict,))
     scale_prepare_ms = (time_perf_counter_ns() - scale_started_ns) / 1_000_000
     scale_state = scale_probe.get("after", {})
-    scale_encoded = feedback_state_to_json(scale_state)
-    _, scale_round_trip_ms = internal_time(lambda: feedback_state_from_json(scale_encoded))
+    scale_encoded = feedback_state_to_dict(scale_state)
+    _, scale_round_trip_ms = internal_time(lambda: feedback_state_from_dict(scale_encoded))
 
     ordinary_engine = Engram()
     ordinary = EngramCore(ordinary_engine, clock=lambda: NOW)
@@ -233,7 +234,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
     gates = {
         "feedback_peak_under_64_mib": feedback_peak < 64 * 1024 * 1024,
         "negative_peak_under_32_mib": negative_peak < 32 * 1024 * 1024,
-        "scale_state_under_64_mib": len(scale_encoded.encode("utf-8")) < 64 * 1024 * 1024,
+        "scale_state_under_64_mib": encoded_size(scale_encoded) < 64 * 1024 * 1024,
     }
     result = {
         "benchmark_id": "section6-feedback-negative",
@@ -248,7 +249,7 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         "latency": {
             "feedback_ingestion": ingestion_latency,
             "feedback_history_lookup": history_latency,
-            "feedback_state_json_round_trip": round_trip_latency,
+            "feedback_state_round_trip": round_trip_latency,
             "ordinary_completed_exact_miss": ordinary_latency,
             "negative_resolution_hit": negative_latency,
             "negative_hit_p95_ratio": negative_hit_p95_ratio,
@@ -257,12 +258,12 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         },
         "timing_assessment": "reported observations; no pass/fail threshold",
         "serialization": {
-            "empty_feedback_state_bytes": len(feedback_state_to_json(feedback_state()).encode("utf-8")),
-            "populated_feedback_state_bytes": len(encoded.encode("utf-8")),
+            "empty_feedback_state_bytes": encoded_size(feedback_state_to_dict(feedback_state())),
+            "populated_feedback_state_bytes": encoded_size(encoded),
             "statement_records": len(state.get("statement_records", ())),
             "relationship_records": len(state.get("relationship_records", ())),
             "receipts": store.inspect().get("receipt_count", 0),
-            "scale_feedback_state_bytes": len(scale_encoded.encode("utf-8")),
+            "scale_feedback_state_bytes": encoded_size(scale_encoded),
             "scale_statement_records": len(scale_state.get("statement_records", ())),
             "scale_relationship_records": len(scale_state.get("relationship_records", ())),
         },

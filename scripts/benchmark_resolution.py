@@ -15,7 +15,7 @@ from engram.constants_resolution import CostClass, ResolverState
 from engram.core import Engram
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
-from engram.resolution import resolver_result, resolver_result_from_json, resolver_result_to_json
+from engram.resolution import resolver_result, resolver_result_from_dict, resolver_result_to_dict
 from engram.resolution_budget import budget_consumption
 from engram.resolution_frame import QueryFrameBuilder
 from engram.resolver_execution import ResolverExecutor
@@ -194,7 +194,7 @@ def run_benchmark(samples: int, corpus_size: int) -> dict:
         "sparse_adapter": measure(sparse_resolution, samples),
         "executor_completed": measure(lambda: executor.execute(lexical_frame, completed_plan), samples),
         "executor_failed": measure(lambda: executor.execute(lexical_frame, failed_plan), samples),
-        "result_codec": measure(lambda: resolver_result_from_json(resolver_result_to_json(exact_result)), samples),
+        "result_codec": measure(lambda: resolver_result_from_dict(resolver_result_to_dict(exact_result)), samples),
     }
 
     tracemalloc_start()

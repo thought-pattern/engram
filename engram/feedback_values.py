@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime
 from hashlib import sha256 as hashlib_sha256
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 
 from msgpack import ExtType as msgpack_ExtType, packb as msgpack_packb
@@ -38,11 +37,6 @@ def exact_mapping(value: object, name: str, fields: set[str]) -> dict:
     return value
 
 
-def json_text(value: object) -> str:
-    result = json_dumps(thaw_native_value(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    return result
-
-
 def thaw_native_value(value: object) -> object:
     """Give frozen tuples and their thawed lists one shared native form."""
     if isinstance(value, dict):
@@ -52,18 +46,6 @@ def thaw_native_value(value: object) -> object:
         result = [thaw_native_value(item) for item in value]
         return result
     return value
-
-
-def load_json_mapping(value: str, name: str) -> dict:
-    if not isinstance(value, str):
-        raise InvalidRequestError(f"{name} must be a string")
-    try:
-        decoded = json_loads(value)
-    except json_JSONDecodeError as err:
-        raise InvalidRequestError(f"{name} must be valid JSON") from err
-    if not isinstance(decoded, dict):
-        raise InvalidRequestError(f"{name} must contain an object")
-    return decoded
 
 
 def canonical_binary_value(value: object, *, allow_null: bool = False) -> object:

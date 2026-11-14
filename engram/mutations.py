@@ -1,7 +1,6 @@
 """Idempotent mutation receipt contracts and bounded process-memory ledger."""
 
 from copy import deepcopy
-from json import JSONDecodeError as json_JSONDecodeError, dumps as json_dumps, loads as json_loads
 from math import isfinite as math_isfinite
 from threading import RLock as threading_RLock
 
@@ -134,11 +133,6 @@ def freeze_result(value: object) -> dict:
     if encoded_size(frozen) > MAX_RESULT_BYTES:
         raise InvalidRequestError(f"mutation result exceeds the UTF-8 limit of {MAX_RESULT_BYTES} bytes")
     return frozen
-
-
-def json_text(value: object) -> str:
-    text = json_dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return text
 
 
 def canonical_payload_signature(payload: object) -> str:
@@ -331,13 +325,6 @@ def trusted_mutation_receipt_to_dict(receipt: dict) -> dict:
     return result
 
 
-def mutation_receipt_to_json(value: object) -> str:
-    """Return the canonical JSON representation of one mutation receipt."""
-    data = mutation_receipt_to_dict(value)
-    text = json_text(data)
-    return text
-
-
 def mutation_receipt_from_dict(value: object) -> dict:
     """Decode one mutation receipt from its exact persistent dictionary."""
     data = exact_mapping(value, "MutationReceipt", MUTATION_RECEIPT_FIELDS)
@@ -365,20 +352,6 @@ def mutation_receipt_from_dict(value: object) -> dict:
         completion_state=completion_state,
         created_at=require_utc_timestamp(data.get("created_at", ""), "mutation receipt created_at"),
     )
-    return receipt
-
-
-def mutation_receipt_from_json(value: str) -> dict:
-    """Decode one mutation receipt from canonical JSON."""
-    if not isinstance(value, str):
-        raise InvalidRequestError("MutationReceipt JSON must be a string")
-    try:
-        decoded = json_loads(value)
-    except json_JSONDecodeError as err:
-        raise InvalidRequestError("MutationReceipt JSON is malformed") from err
-    if not isinstance(decoded, dict):
-        raise InvalidRequestError("MutationReceipt JSON must contain an object")
-    receipt = mutation_receipt_from_dict(decoded)
     return receipt
 
 

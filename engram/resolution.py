@@ -52,8 +52,6 @@ from engram.resolution_package import (
 from engram.resolution_values import (
     exact_mapping,
     freeze_mapping,
-    json_text,
-    load_json_mapping,
     require_float,
     require_list,
     thaw_json,
@@ -138,12 +136,6 @@ def evidence_reference_from_dict(value: object) -> dict:
         freeze_mapping(data.get("provenance", {}), "evidence provenance"),
         freeze_mapping(data.get("diagnostics", {}), "evidence diagnostics"),
     )
-    return result
-
-
-def evidence_reference_to_json(value: object) -> str:
-    payload = evidence_reference_to_dict(value)
-    result = json_text(payload)
     return result
 
 
@@ -306,12 +298,6 @@ def candidate_from_dict(value: object) -> dict:
     )
     return result
 
-
-def trusted_candidate_to_json(value: dict) -> str:
-    """Serialize a candidate already validated at a public boundary."""
-    payload = trusted_candidate_to_dict(value)
-    result = json_text(payload)
-    return result
 
 
 def empty_candidate() -> dict:
@@ -505,12 +491,6 @@ def trusted_resolver_result_to_dict(current: dict) -> dict[str, object]:
     return result
 
 
-def resolver_result_to_json(value: object) -> str:
-    payload = resolver_result_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
 def resolver_result_from_dict(value: object) -> dict:
     data = exact_mapping(value, "ResolverResult", RESOLVER_RESULT_FIELDS)
     try:
@@ -539,12 +519,6 @@ def resolver_result_from_dict(value: object) -> dict:
         diagnostics=freeze_mapping(data.get("diagnostics", {}), "resolver diagnostics"),
         consumption=budget_consumption_from_dict(freeze_mapping(data.get("consumption", {}), "resolver consumption")),
     )
-    return result
-
-
-def resolver_result_from_json(value: str) -> dict:
-    decoded = load_json_mapping(value, "ResolverResult JSON")
-    result = resolver_result_from_dict(decoded)
     return result
 
 
@@ -762,19 +736,6 @@ def trusted_resolution_result_to_dict(current: dict) -> dict:
         "evidence_package_available": current.get("evidence_package_available", False),
         "evidence_package": evidence_package_payload(current.get("evidence_package", {})),
     }
-    return result
-
-
-def resolution_result_to_json(value: object) -> str:
-    payload = resolution_result_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def trusted_resolution_result_to_json(value: dict) -> str:
-    """Serialize an orchestrator-owned result without redundant revalidation."""
-    payload = trusted_resolution_result_to_dict(value)
-    result = json_text(payload)
     return result
 
 

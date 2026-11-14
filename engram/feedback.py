@@ -50,8 +50,6 @@ from engram.feedback_values import (
     internal_fingerprint,
     internal_integer,
     internal_number,
-    json_text,
-    load_json_mapping,
     thaw_native_value,
 )
 from engram.identity import (
@@ -1142,12 +1140,6 @@ def feedback_state_to_dict(value: object) -> dict:
     return result
 
 
-def feedback_state_to_json(value: object) -> str:
-    data = feedback_state_to_dict(value)
-    result = json_text(data)
-    return result
-
-
 def feedback_state_from_dict(value: object) -> dict:
     data = exact_mapping(value, "FeedbackState", FEEDBACK_STATE_FIELDS)
     for name in ("policy", "receipts"):
@@ -1188,10 +1180,4 @@ def feedback_state_from_dict(value: object) -> dict:
         data.get("policy_suppression_evictions", 0),
         data.get("stale_exclusion_evictions", 0),
     )
-    return result
-
-
-def feedback_state_from_json(value: str) -> dict:
-    data = load_json_mapping(value, "FeedbackState JSON")
-    result = feedback_state_from_dict(data)
     return result

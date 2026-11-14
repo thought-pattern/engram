@@ -155,8 +155,8 @@ package_available = result["evidence_package_available"]
 proposition_records = result["evidence_package"]["records"]
 ```
 
-`resolution_result_to_dict`, `resolution_result_to_json`, and their strict
-decoders preserve concrete absence, exact accepted text, and
+`resolution_result_to_dict` and its strict decoder,
+`resolution_result_from_dict`, preserve concrete absence, exact accepted text, and
 bounded evidence. Full Proposition records occur
 inside `evidence_package`; fusion authorizes an Engram answer.
 

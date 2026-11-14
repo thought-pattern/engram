@@ -22,7 +22,7 @@ from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.resolution import (
     accounting_observation,
     evidence_reference,
-    resolution_result_to_json,
+    resolution_result_to_dict,
     resolver_result,
     validate_candidate,
 )
@@ -33,6 +33,7 @@ from engram.resolution_evidence import (
 )
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
 from engram.resolution_orchestrator import ResolutionOrchestrator
+from engram.resolution_sizing import encoded_size as encoded_bytes
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import (
     ResolverRegistry,
@@ -302,7 +303,7 @@ def test_complete_result_serialization_obeys_and_reports_output_budget() -> None
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-envelope")
-    encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
+    encoded_size = encoded_bytes(resolution_result_to_dict(result))
 
     assert encoded_size <= query_frame.get("budget", {}).get("max_output_bytes", 0)
     assert result.get("budget", {}).get("output_bytes", 0) == encoded_size
@@ -340,7 +341,7 @@ def test_complete_result_truncates_variable_payload_to_output_budget() -> None:
     )
 
     result, _ = orchestrator.resolve(query_frame, "request-output-payload")
-    encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
+    encoded_size = encoded_bytes(resolution_result_to_dict(result))
     budget = result.get("budget", {})
 
     assert encoded_size <= query_frame.get("budget", {}).get("max_output_bytes", 0)
@@ -406,7 +407,7 @@ def test_resolution_never_fails_after_accounting_at_the_output_boundary(max_outp
         except InvalidRequestError:
             assert engine.response_repository.get_artifact(statement_id) == before
             return ("failed",)
-        encoded_size = len(resolution_result_to_json(result).encode("utf-8"))
+        encoded_size = encoded_bytes(resolution_result_to_dict(result))
         assert encoded_size <= max_output_bytes
         assert set(result) == RESOLUTION_RESULT_FIELDS
         assert result.get("budget", {}).get("output_bytes", 0) == encoded_size

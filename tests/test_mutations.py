@@ -13,9 +13,8 @@ from engram.mutations import (
     artifact_generation_change_to_dict,
     canonical_payload_signature,
     mutation_receipt,
-    mutation_receipt_from_json,
+    mutation_receipt_from_dict,
     mutation_receipt_to_dict,
-    mutation_receipt_to_json,
     receipt_lookup_receipt,
 )
 
@@ -59,14 +58,13 @@ def test_receipt_codec_round_trip_is_deterministic_and_deeply_isolated() -> None
     source_items = [1, "é"]
     source = {"statement_id": "stmt-1", "nested": {"items": source_items}}
     receipt = mutation_receipt(**{**COMPLETED_RECEIPT_FIELDS, "result": source})
-    encoded = mutation_receipt_to_json(receipt)
+    encoded = mutation_receipt_to_dict(receipt)
     source_items.append("late")
-    restored = mutation_receipt_from_json(encoded)
+    restored = mutation_receipt_from_dict(encoded)
 
     assert restored == receipt
-    assert mutation_receipt_to_json(restored) == encoded
+    assert mutation_receipt_to_dict(restored) == encoded
     assert mutation_receipt_to_dict(restored).get("result", {}) == {"nested": {"items": [1, "é"]}, "statement_id": "stmt-1"}
-    assert "\\u00e9" not in encoded
     assert "result" in receipt
     assert "result" in restored
     receipt_result = receipt.get("result", {})
@@ -257,10 +255,6 @@ def test_affected_generations_are_concrete_unique_and_ordered() -> None:
     [
         (lambda: MutationReceiptLedger(max_receipts=0), "positive bounded integer"),
         (lambda: MutationReceiptLedger(receipts=[]), "tuple"),
-        (
-            lambda: mutation_receipt_from_json("[]"),
-            "must contain an object",
-        ),
         (
             lambda: mutation_receipt(**{**COMPLETED_RECEIPT_FIELDS, "payload_signature": "sha256:BAD"}),
             "lowercase SHA-256",

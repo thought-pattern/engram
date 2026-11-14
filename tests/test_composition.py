@@ -34,13 +34,13 @@ from engram.identity import scope_key
 from engram.relation import RelationQuestion, canonical_resolution, resolve_canonical_subject
 from engram.resolution_evidence import (
     proposition_evidence_path_step,
-    proposition_evidence_record_from_json,
-    proposition_evidence_record_to_json,
+    proposition_evidence_record_from_dict,
+    proposition_evidence_record_to_dict,
     proposition_evidence_record_with_changes,
     validate_proposition_evidence_path_step,
 )
 from engram.resolution_frame import QueryFrameBuilder
-from engram.resolution_package import build_evidence_package, evidence_package_from_json, evidence_package_to_json
+from engram.resolution_package import build_evidence_package, evidence_package_from_dict, evidence_package_to_dict
 from engram.resolver_plan import resolver_budget, resolver_budget_with_changes
 from engram.service import EngramCore
 
@@ -638,9 +638,9 @@ def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -
     composed = proposition_evidence_record_with_changes(base, {"path": tuple(steps)})
     composed_ids = [validate_proposition_evidence_path_step(step).get("proposition_id", "") for step in composed.get("path", ())]
 
-    assert proposition_evidence_record_from_json(proposition_evidence_record_to_json(composed)) == composed
+    assert proposition_evidence_record_from_dict(proposition_evidence_record_to_dict(composed)) == composed
     package = build_evidence_package((composed,))
-    assert evidence_package_from_json(evidence_package_to_json(package)) == package
+    assert evidence_package_from_dict(evidence_package_to_dict(package)) == package
     assert composed_ids == ["proposition:microsoft-founder", "proposition:founder-born-in"]
     with pytest_raises(InvalidRequestError, match="ordered"):
         proposition_evidence_record_with_changes(base, {"path": tuple(reversed(steps))})

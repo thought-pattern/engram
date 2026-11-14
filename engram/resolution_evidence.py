@@ -43,8 +43,6 @@ from engram.identity import scope_key_from_dict, validate_scope_key
 from engram.resolution_values import (
     exact_mapping,
     freeze_mapping,
-    json_text,
-    load_json_mapping,
     require_float,
     require_int,
     require_list,
@@ -843,20 +841,4 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
         normalized_path,
         normalized_reasons,
     )
-    return result
-
-
-def proposition_evidence_record_to_json(value: object) -> str:
-    """Serialize one full-Proposition evidence record deterministically."""
-    payload = proposition_evidence_record_to_dict(value)
-    result = json_text(payload)
-    return result
-
-
-def proposition_evidence_record_from_json(value: object) -> dict:
-    """Decode one full-Proposition evidence record from deterministic JSON."""
-    if not isinstance(value, str):
-        raise InvalidRequestError("PropositionEvidenceRecord JSON must be a string")
-    data = load_json_mapping(value, "PropositionEvidenceRecord JSON")
-    result = proposition_evidence_record_from_dict(data)
     return result

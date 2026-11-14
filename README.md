@@ -563,8 +563,9 @@ with `_` remain scoped to the current template.
 
 The built-in NLTK extractor handles plain copula sentences (`X is/are Y`).
 Conversational learning applies hedged, transient, vague, and chat-meta filters;
-explicit `add_fact` calls ingest directly. Existing facts
-produce confirmation or contradiction responses. With spaCy,
+explicit `add_fact` calls ingest directly. A restated fact is not learned
+again, and a new fact about a subject replaces the fact its owner already
+taught about it. With spaCy,
 `engram.facts_spacy.extract_facts` extracts subject-predicate-object triples:
 
 | Sentence                                    | Triple                                      |

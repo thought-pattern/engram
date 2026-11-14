@@ -5,7 +5,6 @@ literal constants and error types. Identity construction therefore performs no
 graph access, model loading, resource download, or transport work.
 """
 
-from json import dumps as json_dumps
 from re import Match, fullmatch as re_fullmatch, search as re_search
 from unicodedata import normalize as unicodedata_normalize
 
@@ -103,11 +102,6 @@ def require_exact_keys(data: dict, expected: set[str], name: str) -> None:
         raise IdentityValidationError(f"{name} is missing fields: {', '.join(sorted(missing))}")
     if extra:
         raise IdentityValidationError(f"{name} has unsupported fields: {', '.join(sorted(str(key) for key in extra))}")
-
-
-def dump_json(data: dict) -> str:
-    result = json_dumps(data, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
-    return result
 
 
 def expand_contraction(match: Match) -> str:
@@ -440,14 +434,6 @@ def scoped_retrieval_key_to_dict(value: object) -> dict:
     return result
 
 
-def scoped_retrieval_key_to_json(value: object) -> str:
-    """Serialize one exact-index retrieval key to canonical JSON."""
-
-    serialized = scoped_retrieval_key_to_dict(value)
-    result = dump_json(serialized)
-    return result
-
-
 def scoped_retrieval_key_from_dict(value: object) -> dict:
     """Decode one exact-index retrieval key from its dictionary form."""
 
@@ -716,14 +702,6 @@ def query_identity_to_dict(value: object) -> dict:
         "lexical_terms": list(validated.get("lexical_terms", ())),
         "scope": scope_key_to_dict(validated.get("scope", {})),
     }
-    return result
-
-
-def query_identity_to_json(value: object) -> str:
-    """Serialize one validated query identity to canonical JSON."""
-
-    serialized = query_identity_to_dict(value)
-    result = dump_json(serialized)
     return result
 
 
