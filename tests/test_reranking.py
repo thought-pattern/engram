@@ -63,10 +63,10 @@ def test_reranker_bounds_shortlist_and_input_bytes_with_baseline_fallback() -> N
     assert input_limited.health().get("fallbacks", 0) == 1
 
 
-def test_reranker_reports_elapsed_target_without_changing_the_result() -> None:
+def test_reranker_reports_elapsed_time_without_changing_the_result() -> None:
     ticks = iter((0, 2_000_000))
     reranker = TransparentLogisticReranker(
-        reranker_config(enabled=True, max_model_time_ms=1),
+        reranker_config(enabled=True),
         clock_ns=lambda: next(ticks),
     )
 
@@ -75,7 +75,6 @@ def test_reranker_reports_elapsed_target_without_changing_the_result() -> None:
     assert result.get("applied", False) is True
     assert result.get("reason", "") == "completed"
     assert result.get("elapsed_ns", 0) == 2_000_000
-    assert result.get("model_time_target_exceeded", False) is True
     assert reranker.health().get("last_reason", "") == "completed"
 
 
@@ -197,7 +196,7 @@ def test_fusion_does_not_use_reranker_elapsed_time_as_answer_policy() -> None:
     )
     ticks = iter((0, 2_000_000))
     reranker = TransparentLogisticReranker(
-        reranker_config(enabled=True, max_model_time_ms=1),
+        reranker_config(enabled=True),
         clock_ns=lambda: next(ticks),
     )
 
@@ -207,7 +206,6 @@ def test_fusion_does_not_use_reranker_elapsed_time_as_answer_policy() -> None:
 
     assert reranker_report.get("applied", False) is True
     assert reranker_report.get("reason", "") == "completed"
-    assert reranker_report.get("model_time_target_exceeded", False) is True
     assert selected.get("statement_id", "") == "exact-statement"
 
 

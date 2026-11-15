@@ -41,7 +41,6 @@ from engram.constants import (
     DEFAULT_MAX_SYNONYMS_PER_WORD,
     DEFAULT_RECENCY_HALF_LIFE_SECONDS,
     DEFAULT_RERANKER_MAX_INPUT_BYTES,
-    DEFAULT_RERANKER_MAX_MODEL_TIME_MS,
     DEFAULT_RERANKER_SHORTLIST_SIZE,
     DEFAULT_SEMANTIC_BATCH_SIZE,
     DEFAULT_SEMANTIC_MAX_INPUT_BYTES,
@@ -62,7 +61,6 @@ from engram.constants import (
     MAX_GRAPH_VECTOR_LIMIT,
     MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
     MAX_RERANKER_INPUT_BYTES,
-    MAX_RERANKER_MODEL_TIME_MS,
     MAX_RERANKER_SHORTLIST_SIZE,
     MAX_SEMANTIC_BATCH_SIZE,
     MAX_SEMANTIC_DIMENSION,
@@ -274,7 +272,6 @@ def reranker_config(
     implementation: str = RERANKER_IMPLEMENTATION,
     shortlist_size: int = DEFAULT_RERANKER_SHORTLIST_SIZE,
     max_input_bytes: int = DEFAULT_RERANKER_MAX_INPUT_BYTES,
-    max_model_time_ms: int = DEFAULT_RERANKER_MAX_MODEL_TIME_MS,
 ) -> dict:
     """Validate the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
@@ -284,7 +281,6 @@ def reranker_config(
     for name, value, maximum in (
         ("shortlist_size", shortlist_size, MAX_RERANKER_SHORTLIST_SIZE),
         ("max_input_bytes", max_input_bytes, MAX_RERANKER_INPUT_BYTES),
-        ("max_model_time_ms", max_model_time_ms, MAX_RERANKER_MODEL_TIME_MS),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"reranker {name} must be an integer from 1 through {maximum}")
@@ -293,7 +289,6 @@ def reranker_config(
         "implementation": implementation,
         "shortlist_size": shortlist_size,
         "max_input_bytes": max_input_bytes,
-        "max_model_time_ms": max_model_time_ms,
     }
     return result
 

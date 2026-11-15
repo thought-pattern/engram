@@ -1325,7 +1325,6 @@ class CandidateFusionEngine:
             "applied": False,
             "reason": "not_configured",
             "elapsed_ns": 0,
-            "model_time_target_exceeded": False,
             "input_bytes": 0,
             "scores": [],
         }
@@ -1362,7 +1361,6 @@ class CandidateFusionEngine:
                     "reason": "reranker_exception",
                     "exception_type": type(err).__name__,
                     "elapsed_ns": 0,
-                    "model_time_target_exceeded": False,
                     "input_bytes": 0,
                     "scores": [],
                 }

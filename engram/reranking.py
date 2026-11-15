@@ -110,7 +110,6 @@ class TransparentLogisticReranker:
                 "applied": False,
                 "reason": "shortlist_budget",
                 "elapsed_ns": max(0, self.clock_ns() - started),
-                "model_time_target_exceeded": False,
                 "input_bytes": 0,
                 "scores": [],
             }
@@ -142,7 +141,6 @@ class TransparentLogisticReranker:
                 "applied": False,
                 "reason": "disabled",
                 "elapsed_ns": 0,
-                "model_time_target_exceeded": False,
                 "input_bytes": 0,
                 "scores": [],
             }
@@ -160,7 +158,6 @@ class TransparentLogisticReranker:
                 "applied": False,
                 "reason": "input_budget",
                 "elapsed_ns": elapsed,
-                "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
                 "input_bytes": input_bytes,
                 "scores": [],
             }
@@ -200,7 +197,6 @@ class TransparentLogisticReranker:
             "applied": True,
             "reason": "completed",
             "elapsed_ns": elapsed,
-            "model_time_target_exceeded": elapsed > self.settings.get("max_model_time_ms", 0) * 1_000_000,
             "input_bytes": input_bytes,
             "scores": scored,
         }

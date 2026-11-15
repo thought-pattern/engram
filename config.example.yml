@@ -81,7 +81,6 @@ reranker:
   implementation: transparent_logistic
   shortlist_size: 8
   max_input_bytes: 65536
-  max_model_time_ms: 25
 
 # --- Namespace rollout ---
 # The default preserves normal regulated answers. Exact namespace overrides may
