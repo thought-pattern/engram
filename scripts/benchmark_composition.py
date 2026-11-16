@@ -66,7 +66,6 @@ def internal_relation(raw: list[object]):
             "valid_to": "",
             "valid_to_available": False,
             "predicate_canonical": True,
-            "ownership_category": "PUBLIC",
             "trust_category": "source_supplied",
             "trust_category_available": True,
             "supplied_trust": 0.8,

@@ -209,13 +209,12 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
     config["graph"] = graph_config(enabled=False, vector_enabled=False)
     engram = Engram(config=config)
     selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
-    # The six-field opaque support reference, as the Tapestry producer emits it.
+    # The five-field opaque support reference.
     support_reference = {
         "record_kind": "proposition",
         "id": proposition_id,
         "state_revision": 0,
         "support_revision": 0,
-        "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
         "dependency_state_digest": "dep_" + "a" * 64,
     }
     artifacts = []

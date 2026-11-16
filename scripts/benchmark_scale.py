@@ -317,7 +317,6 @@ def trim_scenario(records: int, iterations: int) -> dict:
                 "valid_to": "",
                 "valid_to_available": False,
                 "predicate_canonical": True,
-                "ownership_category": "PUBLIC",
                 "trust_category": "",
                 "trust_category_available": False,
                 "supplied_trust": 0.0,

@@ -76,7 +76,7 @@ class StructuredGraphResolver:
         self.internal_engram = engram
         self.internal_clock_ns = clock_ns
         if eligibility_evaluator == ():
-            selected_evaluator = PropositionEligibilityEvaluator(getattr(engram, "proposition_visibility_authority", ()))
+            selected_evaluator = PropositionEligibilityEvaluator()
         elif isinstance(eligibility_evaluator, PropositionEligibilityEvaluator):
             selected_evaluator = eligibility_evaluator
         else:
@@ -515,7 +515,7 @@ class SupportSemanticResolver:
         self.internal_engram = engram
         self.internal_clock_ns = clock_ns
         if eligibility_evaluator == ():
-            selected_evaluator = PropositionEligibilityEvaluator(getattr(engram, "proposition_visibility_authority", ()))
+            selected_evaluator = PropositionEligibilityEvaluator()
         elif isinstance(eligibility_evaluator, PropositionEligibilityEvaluator):
             selected_evaluator = eligibility_evaluator
         else:

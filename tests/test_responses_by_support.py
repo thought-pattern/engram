@@ -22,7 +22,6 @@ def learned(core: EngramCore, request_id: str, identifier: str) -> str:
         "id": identifier,
         "state_revision": 1,
         "support_revision": 1,
-        "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
         "dependency_state_digest": "dep_" + "c" * 64,
     }
     result = core.learn_response(f"request {request_id}", "answer", request_id, metadata={"support": [support]})

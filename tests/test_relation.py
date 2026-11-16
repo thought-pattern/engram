@@ -54,7 +54,6 @@ ADA_BIRTHPLACE_ROW = {
     "valid_to": "",
     "valid_to_available": False,
     "predicate_canonical": True,
-    "ownership_category": "PUBLIC",
     "trust_category": "",
     "trust_category_available": False,
     "supplied_trust": 0.8,
@@ -85,7 +84,6 @@ ADA_ENTITY_MATCH = {
     "canonical_id": "entity:ada-lovelace",
     "primary_label": "Ada Lovelace",
     "aliases": ("Ada",),
-    "edge_surfaces": ("Lovelace",),
     "entity_type": ExpectedObjectType.PERSON,
 }
 BIRTH_PLACE_PREDICATE_MATCH = {
@@ -190,24 +188,6 @@ def test_subject_resolution_uses_named_entity_and_alias_evidence(monkeypatch) ->
     assert result.get("status", CanonicalResolutionStatus.MISS) == CanonicalResolutionStatus.SELECTED
     assert result.get("canonical_id", "") == "entity:ada-lovelace"
     assert {"alias", "named_entity"}.issubset(result.get("evidence", ()))
-
-
-def test_subject_resolution_accepts_proposition_edge_surface_evidence() -> None:
-    frame = enrich_query_frame(
-        QueryFrameBuilder(Engram(), lambda: START_NS, lambda: NOW).build(
-            "Where was Lovelace born?", TENANT_A_SCOPE, budget=capture_resolution_budget(lambda: START_NS)
-        ),
-        current_turn=1,
-    )
-
-    result = resolve_canonical_subject(
-        frame,
-        lambda internal_surface, **internal_kwargs: [dict(ADA_ENTITY_MATCH)],
-        question=RelationQuestion(frame.get("resolved_text", "")),
-    )
-
-    assert result.get("status", CanonicalResolutionStatus.MISS) == CanonicalResolutionStatus.SELECTED
-    assert "edge_surface" in result.get("evidence", ())
 
 
 def test_explicit_subject_identity_bypasses_surface_lookup() -> None:
@@ -378,7 +358,6 @@ def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> No
                 "canonical_id": "entity:ada-lovelace",
                 "primary_label": "Ada Lovelace",
                 "aliases": ["Ada"],
-                "edge_surfaces": ["Lovelace"],
                 "entity_type": "PERSON",
             }
         ]
@@ -395,7 +374,7 @@ def test_graph_identity_resolution_uses_fixed_parameterized_capabilities() -> No
         {"surface": "born", "limit": 2},
     ]
     assert all(parameters.get("surface", "") not in query for query, parameters in captured)
-    assert "binding.surface_form" in captured[0][0]
+    assert "entity.aliases" in captured[0][0]
     assert "predicate.synonyms" in captured[1][0]
     assert "predicate.label" in captured[1][0]
 

@@ -1,23 +1,19 @@
-"""Current disclosure and publication revalidation tests for EGR-705."""
+"""Current eligibility and publication revalidation tests for EGR-705."""
 
 from datetime import UTC, datetime
-from unittest.mock import Mock
 
 from pytest import mark as pytest_mark, raises as pytest_raises
 
-from engram.constants_evidence import PropositionEligibilityReason, PropositionOwnership
+from engram.constants_evidence import PropositionEligibilityReason
 from engram.constants_graph import PropositionProjectionQuery
 from engram.constants_relation import TemporalAxis, TemporalQueryOperator
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.evidence import (
-    ExactScopeVisibilityAuthority,
     PropositionEligibilityEvaluator,
     proposition_evidence_record,
     proposition_validity_inputs_from_eligibility,
     validate_proposition_eligibility_decision,
-    visibility_authorization,
-    visibility_grant,
 )
 from engram.graph import proposition_projection_from_graph_row, validate_proposition_projection
 from engram.identity import scope_key
@@ -27,7 +23,6 @@ EVALUATION_TIME = "2026-08-16T12:00:00Z"
 EVALUATION_INSTANT = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 CURRENT_REQUEST = "What is the account status?"
 DEFAULT_SCOPE = scope_key(namespace="support", context_fingerprint="tenant:acme")
-OTHER_TENANT_SCOPE = scope_key(namespace="support", context_fingerprint="tenant:other")
 
 # Read-only fixtures: the evaluator and the projection validator copy them, and changed projections
 # are new dictionaries revalidated through validate_proposition_projection.
@@ -54,7 +49,6 @@ ACCOUNT_STATUS_ROW = {
     "valid_to": "",
     "valid_to_available": False,
     "predicate_canonical": True,
-    "ownership_category": "PUBLIC",
     "trust_category": "",
     "trust_category_available": False,
     "supplied_trust": 0.0,
@@ -65,12 +59,6 @@ ACCOUNT_STATUS_ROW = {
     "semantic_similarity_available": False,
 }
 PUBLIC_PROJECTION = proposition_projection_from_graph_row(dict(ACCOUNT_STATUS_ROW), PropositionProjectionQuery.STRUCTURED_ENTITY)
-COMPANY_PROJECTION = proposition_projection_from_graph_row(
-    {**ACCOUNT_STATUS_ROW, "ownership_category": "COMPANY"}, PropositionProjectionQuery.STRUCTURED_ENTITY
-)
-CUSTOMER_PROJECTION = proposition_projection_from_graph_row(
-    {**ACCOUNT_STATUS_ROW, "ownership_category": "CUSTOMER"}, PropositionProjectionQuery.STRUCTURED_ENTITY
-)
 # The fixed by-ID read returns the current record without discovery measurements.
 BY_ID_REVALIDATION_FIELDS = {
     "projection_id": PropositionProjectionQuery.BY_ID,
@@ -128,8 +116,6 @@ def test_current_proposition_eligibility_truth_table(changes, reason) -> None:
 
     assert "eligible" in decision
     assert decision.get("eligible", False) is False
-    assert "disclosure_available" in decision
-    assert decision.get("disclosure_available", False) is False
     assert decision.get("reason", "") == reason
 
 
@@ -219,29 +205,6 @@ def test_unresolved_temporal_expression_fails_closed() -> None:
     assert decision.get("eligible", False) is False
 
 
-def test_historical_queries_reuse_the_same_exact_scope_visibility_decision() -> None:
-    projection = validate_proposition_projection(
-        {
-            **COMPANY_PROJECTION,
-            "valid_from": "2024-01-01T00:00:00Z",
-            "valid_from_available": True,
-            "valid_to": "2025-01-01T00:00:00Z",
-            "valid_to_available": True,
-        }
-    )
-    frame = QueryFrameBuilder(Engram(), fixed_monotonic_ns, evaluation_clock).build("What was the status in 2024?", DEFAULT_SCOPE)
-    authority = ExactScopeVisibilityAuthority(
-        "visibility-authority",
-        (visibility_grant(frame.get("scope", {}), PropositionOwnership.COMPANY),),
-    )
-
-    unavailable = PropositionEligibilityEvaluator().evaluate(projection, frame)
-    allowed = PropositionEligibilityEvaluator(authority).evaluate(projection, frame)
-
-    assert unavailable.get("reason", "") == PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
-    assert allowed.get("reason", "") == PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
-
-
 def test_latest_valid_time_excludes_propositions_that_have_not_started() -> None:
     future = validate_proposition_projection(
         {**PUBLIC_PROJECTION, "valid_from": "2027-01-01T00:00:00Z", "valid_from_available": True}
@@ -305,107 +268,18 @@ def test_historical_evidence_reports_request_match_without_marking_the_propositi
     assert system_inputs.get("valid_time_match", False) is system_inputs.get("valid_time_match_available", False) is False
 
 
-def test_public_proposition_uses_explicit_public_rule_without_authority() -> None:
+def test_a_current_represented_proposition_is_eligible_and_its_decision_copies() -> None:
     frame = QueryFrameBuilder(Engram(), fixed_monotonic_ns, evaluation_clock).build(CURRENT_REQUEST, DEFAULT_SCOPE)
     decision = PropositionEligibilityEvaluator().evaluate(PUBLIC_PROJECTION, frame)
-    disclosure = decision.get("disclosure", {})
 
     assert type(decision) is dict
     assert decision.get("eligible", False) is True
-    assert decision.get("reason", "") == PropositionEligibilityReason.ELIGIBLE_PUBLIC
-    assert "scope" in frame
-    assert disclosure.get("scope", {}) == frame.get("scope", {})
-    assert "authority_available" in disclosure
-    assert disclosure.get("authority_available", False) is False
+    assert decision.get("reason", "") == PropositionEligibilityReason.ELIGIBLE
     copied = validate_proposition_eligibility_decision(decision)
     assert copied == decision
     assert copied is not decision
     assert "projection" in decision
     assert copied.get("projection", {}) is not decision.get("projection", {})
-    assert "disclosure" in decision
-    assert copied.get("disclosure", {}) is not disclosure
-
-
-def test_private_proposition_requires_configured_exact_scope_and_ownership() -> None:
-    projection = COMPANY_PROJECTION
-    frame = QueryFrameBuilder(Engram(), fixed_monotonic_ns, evaluation_clock).build(CURRENT_REQUEST, DEFAULT_SCOPE)
-    other_frame = QueryFrameBuilder(Engram(), fixed_monotonic_ns, evaluation_clock).build(CURRENT_REQUEST, OTHER_TENANT_SCOPE)
-    unavailable = PropositionEligibilityEvaluator().evaluate(projection, frame)
-    authority = ExactScopeVisibilityAuthority(
-        "visibility-authority",
-        (visibility_grant(frame.get("scope", {}), PropositionOwnership.COMPANY),),
-    )
-    allowed = PropositionEligibilityEvaluator(authority).evaluate(projection, frame)
-    wrong_context = PropositionEligibilityEvaluator(authority).evaluate(projection, other_frame)
-    wrong_ownership = PropositionEligibilityEvaluator(authority).evaluate(CUSTOMER_PROJECTION, frame)
-    allowed_disclosure = allowed.get("disclosure", {})
-    allowed_projection = allowed.get("projection", {})
-
-    assert unavailable.get("reason", "") == PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
-    assert allowed.get("eligible", False) is True
-    assert allowed.get("reason", "") == PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE
-    assert allowed_disclosure.get("authority", "") == "visibility-authority"
-    assert "scope" in frame
-    assert allowed_disclosure.get("scope", {}) == frame.get("scope", {})
-    assert wrong_context.get("reason", "") == PropositionEligibilityReason.VISIBILITY_DENIED
-    assert wrong_ownership.get("reason", "") == PropositionEligibilityReason.VISIBILITY_DENIED
-    assert "supplied_trust" in allowed_projection
-    assert allowed_projection.get("supplied_trust", 0.0) == 0.0
-    assert "supplied_trust_available" in allowed_projection
-    assert allowed_projection.get("supplied_trust_available", False) is False
-
-
-def test_visibility_authority_configuration_is_bounded() -> None:
-    grant = visibility_grant(DEFAULT_SCOPE, PropositionOwnership.COMPANY)
-
-    with pytest_raises(InvalidRequestError, match="4096"):
-        ExactScopeVisibilityAuthority("authority", (grant,) * 4_097)
-
-
-def test_visibility_evaluator_rejects_falsey_invalid_authority() -> None:
-    with pytest_raises(InvalidRequestError, match="must implement evaluate"):
-        PropositionEligibilityEvaluator(False)
-
-
-def test_visibility_authority_result_must_match_exact_input() -> None:
-    def wrong_scope(internal_scope, ownership):
-        del internal_scope
-        result = visibility_authorization(
-            True,
-            OTHER_TENANT_SCOPE,
-            ownership,
-            "wrong-scope",
-            "granted",
-        )
-        return result
-
-    def wrong_ownership(scope, internal_ownership):
-        del internal_ownership
-        result = visibility_authorization(
-            True,
-            scope,
-            PropositionOwnership.CUSTOMER,
-            "wrong-owner",
-            "granted",
-        )
-        return result
-
-    wrong_scope_authority = Mock()
-    wrong_scope_authority.evaluate.side_effect = wrong_scope
-    wrong_ownership_authority = Mock()
-    wrong_ownership_authority.evaluate.side_effect = wrong_ownership
-
-    projection = COMPANY_PROJECTION
-    frame = QueryFrameBuilder(Engram(), fixed_monotonic_ns, evaluation_clock).build(CURRENT_REQUEST, DEFAULT_SCOPE)
-
-    assert (
-        PropositionEligibilityEvaluator(wrong_scope_authority).evaluate(projection, frame).get("reason", "")
-        == PropositionEligibilityReason.VISIBILITY_SCOPE_MISMATCH
-    )
-    assert (
-        PropositionEligibilityEvaluator(wrong_ownership_authority).evaluate(projection, frame).get("reason", "")
-        == PropositionEligibilityReason.VISIBILITY_OWNERSHIP_MISMATCH
-    )
 
 
 def test_evaluation_time_unavailability_fails_closed() -> None:

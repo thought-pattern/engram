@@ -108,7 +108,6 @@ PUBLIC_RELATION_ROW = {
     "valid_to": "",
     "valid_to_available": False,
     "predicate_canonical": True,
-    "ownership_category": "PUBLIC",
     "trust_category": "",
     "trust_category_available": False,
     "supplied_trust": 0.8,
@@ -632,7 +631,7 @@ def test_composed_evidence_path_round_trips_ordered_propositions_and_filters() -
                 GraphCompositionOperator.LOOKUP,
                 step.get("subject_binding", ""),
                 step.get("object_binding", ""),
-                ("canonical_identity", "publication_revalidation", "temporal_eligibility", "visibility"),
+                ("canonical_identity", "publication_revalidation", "temporal_eligibility"),
             )
         )
     composed = proposition_evidence_record_with_changes(base, {"path": tuple(steps)})
@@ -701,7 +700,6 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
                 "canonical_id": "entity:microsoft",
                 "primary_label": "Microsoft",
                 "aliases": ("Microsoft",),
-                "edge_surfaces": (),
                 "entity_type": ExpectedObjectType.ENTITY,
             }
             result = [row][:limit] if surface.casefold() == "microsoft" else []

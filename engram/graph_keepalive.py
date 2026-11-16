@@ -13,6 +13,7 @@ duplicating or closing one terminates the process.
 """
 
 from os import fstat as os_fstat, listdir as os_listdir
+import socket as socket_options
 from socket import (
     IPPROTO_TCP,
     SO_KEEPALIVE,
@@ -24,7 +25,6 @@ from socket import (
     socket as socket_socket,
 )
 from stat import S_ISSOCK
-import socket as socket_options
 
 from engram.constants_graph import GRAPH_KEEPALIVE_IDLE_SECONDS, GRAPH_KEEPALIVE_INTERVAL_SECONDS, GRAPH_KEEPALIVE_PROBES
 

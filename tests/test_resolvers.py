@@ -171,8 +171,8 @@ def test_structured_graph_adapter_emits_full_proposition_in_current_core_result(
     assert record.get("canonical_references", {}).get("subject_entity_id", "") == "entity:ada"
     assert record_features.get("values", {}).get("structured_match", 0.0) == 1.0
     assert record_features.get("unavailable", ()) == ("semantic_similarity", "source_agreement", "supplied_trust")
-    assert "scope" in record.get("disclosure", {})
-    assert record.get("disclosure", {}).get("scope", {}) == query_frame.get("scope", {})
+    assert "scope" in record
+    assert record.get("scope", {}) == query_frame.get("scope", {})
     serialized = proposition_evidence_record_to_dict(record)
     assert "response" not in serialized
     assert not {"subject", "predicate", "object", "proof", "cypher", "embedding"}.intersection(serialized)

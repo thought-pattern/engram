@@ -5,33 +5,42 @@ on:
     paths:
       - "**/*.py"
       - "pyproject.toml"
+      - ".github/workflows/python-formatting.yml"
   push:
-    branches: [main, develop]
+    branches: [develop, main]
     paths:
       - "**/*.py"
       - "pyproject.toml"
+      - ".github/workflows/python-formatting.yml"
+  workflow_dispatch:
 
 permissions:
-  pull-requests: write
   contents: write
+  pull-requests: write
+
+concurrency:
+  group: python-formatting-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   format-python:
+    name: Format Python
     # GitHub does not grant a write token to fork or Dependabot pull requests.
-    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.12
+      - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install formatting tools
-        run: pip install --upgrade black isort ruff
+        run: python -m pip install --upgrade black isort ruff
 
       - name: Configure Git
         env:
@@ -46,14 +55,14 @@ jobs:
       - name: Run code formatters
         run: |
           isort .
-          ruff check --fix --exit-zero --line-length 132 .
+          ruff check --fix --exit-zero .
           black -l 132 -t py311 .
 
       - name: Check for changes
         id: git-check
         run: |
-          git add -- '*.py'
-          if git diff-index --quiet HEAD; then
+          git add -u -- '*.py'
+          if git diff --cached --quiet; then
             echo "changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "changes=true" >> "$GITHUB_OUTPUT"

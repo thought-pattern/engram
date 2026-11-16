@@ -1,4 +1,4 @@
-"""Current-time disclosure eligibility for response-less Proposition evidence."""
+"""Current-time eligibility for response-less Proposition evidence."""
 
 from datetime import datetime
 from logging import getLogger as logging_getLogger
@@ -10,50 +10,37 @@ from engram.constants_evidence import (
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
-    MAX_VISIBILITY_GRANTS,
     PROPOSITION_ELIGIBILITY_DECISION_FIELDS,
     SEMANTIC_SIMILARITY_FLOOR,
     SOURCE_AGREEMENT_FLOOR,
     STRUCTURED_MATCH_FLOOR,
-    VISIBILITY_AUTHORIZATION_FIELDS,
-    VISIBILITY_GRANT_FIELDS,
-    DisclosureBasis,
     EvidenceUsefulnessReason,
     PropositionEligibilityReason,
-    PropositionOwnership,
 )
 from engram.constants_graph import PROPOSITION_SEMANTIC_PROJECTION_FIELDS, UNCONSTRAINED_ASSERTION_BASIS, PropositionProjectionQuery
-from engram.constants_identity import EMPTY_SCOPE_KEY
 from engram.constants_relation import TemporalAxis, TemporalQueryOperator
 from engram.constants_resolution import (
-    MAX_REASON_CODE_BYTES,
     MAX_RESOLUTION_VALUES,
     MAX_RESOLVER_NAME_BYTES,
     PROPOSITION_EVIDENCE_PRODUCERS,
     STRUCTURED_GRAPH_RESOLVER_NAME,
     SUPPORT_SEMANTIC_RESOLVER_NAME,
 )
-from engram.errors import IdentityValidationError, InvalidRequestError, failure_origin
+from engram.errors import InvalidRequestError, failure_origin
 from engram.graph import validate_proposition_projection
-from engram.identity import scope_key_signature, validate_scope_key
 from engram.resolution_evidence import (
     canonical_proposition_references,
-    disclosure_decision,
     feature_set,
     proposition_evidence_record as build_proposition_evidence_record,
     proposition_evidence_record_with_changes,
     proposition_trust_inputs,
     proposition_validity_inputs,
-    validate_disclosure_decision,
     validate_proposition_evidence_record,
 )
 from engram.resolution_frame import validate_query_frame
 from engram.validation import require_identifier, require_utc_datetime
 
 logger = logging_getLogger(__name__)
-# The concrete unavailable disclosure decision. Read-only: eligibility
-# validation copies it and otherwise only compares against it.
-EMPTY_DISCLOSURE_DECISION = disclosure_decision(PropositionOwnership.PUBLIC, DisclosureBasis.PUBLIC_RULE, EMPTY_SCOPE_KEY)
 
 
 def no_cooperative_check() -> bool:
@@ -238,120 +225,10 @@ def evaluate_evidence_usefulness(policy: object, record: object) -> dict:
     return result
 
 
-def visibility_authorization(
-    allowed: object,
-    scope: object,
-    ownership: object,
-    authority_id: object,
-    reason_code: object,
-) -> dict:
-    """Validate one trusted exact-scope decision for a non-public ownership category."""
-    if not isinstance(allowed, bool):
-        raise InvalidRequestError("visibility authorization allowed must be a boolean")
-    try:
-        validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as err:
-        raise InvalidRequestError("visibility authorization scope must be a ScopeKey") from err
-    if not isinstance(ownership, PropositionOwnership) or ownership not in {
-        PropositionOwnership.COMPANY,
-        PropositionOwnership.CUSTOMER,
-    }:
-        raise InvalidRequestError("visibility authorization ownership must be COMPANY or CUSTOMER")
-    normalized_authority = require_identifier(
-        authority_id, "visibility authorization authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
-    )
-    normalized_reason = require_identifier(reason_code, "visibility authorization reason_code", MAX_REASON_CODE_BYTES)
-    result: dict = {
-        "allowed": allowed,
-        "scope": validated_scope,
-        "ownership": ownership,
-        "authority_id": normalized_authority,
-        "reason_code": normalized_reason,
-    }
-    return result
-
-
-def validate_visibility_authorization(value: object) -> dict:
-    data = exact_mapping(value, "VisibilityAuthorization", VISIBILITY_AUTHORIZATION_FIELDS)
-    result = visibility_authorization(
-        data.get("allowed", False),
-        data.get("scope", {}),
-        data.get("ownership", PropositionOwnership.PUBLIC),
-        data.get("authority_id", ""),
-        data.get("reason_code", ""),
-    )
-    return result
-
-
-def visibility_grant(scope: object, ownership: object) -> dict:
-    """Validate one exact typed scope/ownership authorization."""
-    try:
-        validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as err:
-        raise InvalidRequestError("visibility grant scope must be a ScopeKey") from err
-    if not isinstance(ownership, PropositionOwnership) or ownership not in {
-        PropositionOwnership.COMPANY,
-        PropositionOwnership.CUSTOMER,
-    }:
-        raise InvalidRequestError("visibility grant ownership must be COMPANY or CUSTOMER")
-    result: dict = {"scope": validated_scope, "ownership": ownership}
-    return result
-
-
-def validate_visibility_grant(value: object) -> dict:
-    data = exact_mapping(value, "VisibilityGrant", VISIBILITY_GRANT_FIELDS)
-    result = visibility_grant(data.get("scope", {}), data.get("ownership", PropositionOwnership.PUBLIC))
-    return result
-
-
-class ExactScopeVisibilityAuthority:
-    """Configured allow-list that compares complete ScopeKey values by equality."""
-
-    def __init__(self, authority_id: str, grants: tuple[dict, ...]) -> None:
-        self.authority_id = require_identifier(
-            authority_id, "visibility authority_id", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES
-        )
-        if not isinstance(grants, tuple):
-            raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values")
-        if len(grants) > MAX_VISIBILITY_GRANTS:
-            raise InvalidRequestError(f"visibility grants exceeds the limit of {MAX_VISIBILITY_GRANTS}")
-        try:
-            validated_grants = tuple(validate_visibility_grant(grant) for grant in grants)
-        except InvalidRequestError as err:
-            raise InvalidRequestError("visibility grants must be a tuple of VisibilityGrant values") from err
-        keys = tuple(
-            (scope_key_signature(grant.get("scope", {})), grant.get("ownership", PropositionOwnership.PUBLIC))
-            for grant in validated_grants
-        )
-        if len(keys) != len(set(keys)):
-            raise InvalidRequestError("visibility grants must be unique")
-        self.internal_grants = set(keys)
-
-    def evaluate(self, scope: dict, ownership: PropositionOwnership) -> dict:
-        try:
-            scope = validate_scope_key(scope)
-        except IdentityValidationError as err:
-            raise InvalidRequestError("visibility evaluation scope must be a ScopeKey") from err
-        if ownership not in {PropositionOwnership.COMPANY, PropositionOwnership.CUSTOMER}:
-            raise InvalidRequestError("visibility evaluation ownership must be COMPANY or CUSTOMER")
-        allowed = (scope_key_signature(scope), ownership) in self.internal_grants
-        reason_code = "exact_scope_granted" if allowed else "exact_scope_denied"
-        result = visibility_authorization(
-            allowed,
-            scope,
-            ownership,
-            self.authority_id,
-            reason_code,
-        )
-        return result
-
-
 def proposition_eligibility_decision(
     projection: object,
     eligible: object,
     reason: object,
-    disclosure: object = EMPTY_DISCLOSURE_DECISION,
-    disclosure_available: object = False,
     revalidated: object = False,
 ) -> dict:
     """Validate one fail-closed Proposition projection eligibility decision."""
@@ -360,30 +237,14 @@ def proposition_eligibility_decision(
         raise InvalidRequestError("Proposition eligibility eligible must be a boolean")
     if not isinstance(reason, PropositionEligibilityReason):
         raise InvalidRequestError("Proposition eligibility reason must be a PropositionEligibilityReason")
-    try:
-        validated_disclosure = validate_disclosure_decision(disclosure)
-    except InvalidRequestError as err:
-        raise InvalidRequestError("Proposition eligibility disclosure must be a DisclosureDecision") from err
-    if not isinstance(disclosure_available, bool):
-        raise InvalidRequestError("Proposition eligibility disclosure_available must be a boolean")
     if not isinstance(revalidated, bool):
         raise InvalidRequestError("Proposition eligibility revalidated must be a boolean")
-    if eligible != disclosure_available:
-        raise InvalidRequestError("eligible Proposition decisions require an available disclosure decision")
-    if not disclosure_available and validated_disclosure != EMPTY_DISCLOSURE_DECISION:
-        raise InvalidRequestError("unavailable Proposition disclosure must use the concrete empty decision")
-    eligible_reasons = {
-        PropositionEligibilityReason.ELIGIBLE_PUBLIC,
-        PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE,
-    }
-    if eligible != (reason in eligible_reasons):
+    if eligible != (reason == PropositionEligibilityReason.ELIGIBLE):
         raise InvalidRequestError("Proposition eligibility reason conflicts with eligible state")
     result: dict = {
         "projection": validated_projection,
         "eligible": eligible,
         "reason": reason,
-        "disclosure": validated_disclosure,
-        "disclosure_available": disclosure_available,
         "revalidated": revalidated,
     }
     return result
@@ -395,8 +256,6 @@ def validate_proposition_eligibility_decision(value: object) -> dict:
         data.get("projection", {}),
         data.get("eligible", False),
         data.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE),
-        data.get("disclosure", {}),
-        data.get("disclosure_available", False),
         data.get("revalidated", False),
     )
     return result
@@ -425,11 +284,7 @@ def proposition_validity_inputs_from_eligibility(
     ``trusted`` skips revalidating a decision the evaluator just produced.
     """
     decision = decision if trusted else validate_proposition_eligibility_decision(decision)
-    if (
-        not decision.get("eligible", False)
-        or not decision.get("revalidated", False)
-        or not decision.get("disclosure_available", False)
-    ):
+    if not decision.get("eligible", False) or not decision.get("revalidated", False):
         raise InvalidRequestError("Proposition validity inputs require an eligible revalidated decision")
     projection = decision.get("projection", {})
     temporal = frame.get("temporal_query", {})
@@ -654,16 +509,11 @@ def semantic_projection_values(projection: dict) -> dict:
 
 
 class PropositionEligibilityEvaluator:
-    """Shared temporal and disclosure policy over strict Proposition projections."""
+    """Shared temporal and meaning policy over strict Proposition projections.
 
-    def __init__(self, visibility_authority: object = ()) -> None:
-        if type(visibility_authority) is tuple and not visibility_authority:
-            selected_authority = ()
-        elif callable(getattr(visibility_authority, "evaluate", ())):
-            selected_authority = visibility_authority
-        else:
-            raise InvalidRequestError("visibility authority must implement evaluate")
-        self.internal_visibility_authority = selected_authority
+    No content flag (PUBLIC, COMPANY or a customer's label) takes part: a projection that passes the time and
+    meaning checks is eligible.
+    """
 
     def evaluate(self, projection: dict, frame: dict, *, trusted_frame: bool = False) -> dict:
         """Decide whether one projection may be used for this request.
@@ -816,66 +666,7 @@ class PropositionEligibilityEvaluator:
             reason = PropositionEligibilityReason.SEMANTIC_MEANING_UNREPRESENTED
             result = proposition_eligibility_decision(projection, False, reason)
             return result
-
-        ownership = PropositionOwnership(projection.get("ownership_category", PropositionOwnership.PUBLIC))
-        if ownership == PropositionOwnership.PUBLIC:
-            disclosure = disclosure_decision(
-                ownership,
-                DisclosureBasis.PUBLIC_RULE,
-                frame.get("scope", {}),
-            )
-            result = proposition_eligibility_decision(
-                projection,
-                True,
-                PropositionEligibilityReason.ELIGIBLE_PUBLIC,
-                disclosure,
-                True,
-            )
-            return result
-
-        authority_method = getattr(self.internal_visibility_authority, "evaluate", ())
-        if not callable(authority_method):
-            reason = PropositionEligibilityReason.VISIBILITY_AUTHORITY_UNAVAILABLE
-            result = proposition_eligibility_decision(projection, False, reason)
-            return result
-        # An unavailable or refusing authority backend excludes the projection; cancellation
-        # and programming errors propagate.
-        try:
-            authorization = authority_method(frame.get("scope", {}), ownership)
-        except (RuntimeError, ValueError) as err:
-            logger.warning("Visibility authority failed (%s)", failure_origin(err))
-            result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
-            return result
-        try:
-            authorization = validate_visibility_authorization(authorization)
-        except InvalidRequestError as err:
-            logger.warning("Visibility authority returned an invalid authorization (%s)", failure_origin(err))
-            result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_AUTHORITY_FAILED)
-            return result
-        if authorization.get("scope", {}) != frame.get("scope", {}):
-            result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_SCOPE_MISMATCH)
-            return result
-        if authorization.get("ownership", PropositionOwnership.PUBLIC) != ownership:
-            reason = PropositionEligibilityReason.VISIBILITY_OWNERSHIP_MISMATCH
-            result = proposition_eligibility_decision(projection, False, reason)
-            return result
-        if not authorization.get("allowed", False):
-            result = proposition_eligibility_decision(projection, False, PropositionEligibilityReason.VISIBILITY_DENIED)
-            return result
-        disclosure = disclosure_decision(
-            ownership,
-            DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
-            frame.get("scope", {}),
-            authorization.get("authority_id", ""),
-            True,
-        )
-        result = proposition_eligibility_decision(
-            projection,
-            True,
-            PropositionEligibilityReason.ELIGIBLE_TRUSTED_SCOPE,
-            disclosure,
-            True,
-        )
+        result = proposition_eligibility_decision(projection, True, PropositionEligibilityReason.ELIGIBLE)
         return result
 
     def revalidate(
@@ -977,11 +768,7 @@ def proposition_evidence_record(
         and discovered.get("projection_id", PropositionProjectionQuery.BY_ID) != PropositionProjectionQuery.VECTOR
     ):
         raise InvalidRequestError("semantic Proposition evidence requires a vector discovery projection")
-    if (
-        not decision.get("eligible", False)
-        or not decision.get("revalidated", False)
-        or not decision.get("disclosure_available", False)
-    ):
+    if not decision.get("eligible", False) or not decision.get("revalidated", False):
         raise InvalidRequestError("Proposition evidence construction requires an eligible revalidated decision")
     current = decision.get("projection", {})
     discovered_identity = (
@@ -1039,7 +826,7 @@ def proposition_evidence_record(
             supplied_trust,
             supplied_trust_available,
         ),
-        disclosure=decision.get("disclosure", {}),
+        scope=frame.get("scope", {}),
         path=(proposition_id,),
         selection_reasons=tuple(sorted(reasons)),
         # Every component above was just built by its validating constructor.
@@ -1052,7 +839,7 @@ def proposition_evidence_merge_order(record: dict) -> tuple:
     """Return the deterministic native merge-order key of one validated record.
 
     Records merged for one Proposition must agree on identity, validity, trust
-    and disclosure, so the key orders by producer and then by the fields that
+    and scope, so the key orders by producer and then by the fields that
     may differ, in the order of their serialized names: features, path,
     selection reasons and contributing sources.
     """
@@ -1098,12 +885,12 @@ def merge_proposition_evidence_group(records: tuple[dict, ...]) -> dict:
     # discovery's singleton ID or a composition's typed steps. Alternative
     # paths are provenance, not current state, so the merged record keeps the
     # first record's path in this deterministic order and every contributing
-    # source; only identity, validity, trust and disclosure must agree.
-    base_state = (base.get("validity", {}), base.get("trust", {}), base.get("disclosure", {}))
+    # source; only identity, validity, trust and scope must agree.
+    base_state = (base.get("validity", {}), base.get("trust", {}), base.get("scope", {}))
     for record in ordered[1:]:
         if record.get("canonical_references", {}) != base.get("canonical_references", {}):
             raise InvalidRequestError(f"conflicting canonical references for Proposition evidence ID: {proposition_id}")
-        current_state = (record.get("validity", {}), record.get("trust", {}), record.get("disclosure", {}))
+        current_state = (record.get("validity", {}), record.get("trust", {}), record.get("scope", {}))
         if current_state != base_state:
             raise InvalidRequestError(f"conflicting current evidence state for Proposition evidence ID: {proposition_id}")
 

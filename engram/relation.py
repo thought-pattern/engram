@@ -243,13 +243,12 @@ def resolve_canonical_subject(
             primary_label = row.get("primary_label", "")
             label = normalize_retrieval_key(primary_label)
             aliases = {normalize_retrieval_key(value) for value in row.get("aliases", ())}
-            edges = {normalize_retrieval_key(value) for value in row.get("edge_surfaces", ())}
-            base = 1.0 if normalized == label else 0.92 if normalized in aliases else 0.82 if normalized in edges else 0.0
+            base = 1.0 if normalized == label else 0.92 if normalized in aliases else 0.0
             if not base:
                 continue
             score = max(0.0, base - penalty)
             prior = scored.get(canonical_id, ())
-            evidence_values = {evidence, "primary_label" if base == 1.0 else "alias" if base == 0.92 else "edge_surface"}
+            evidence_values = {evidence, "primary_label" if base == 1.0 else "alias"}
             if prior and prior[0] >= score:
                 prior[3].update(evidence_values)
             else:

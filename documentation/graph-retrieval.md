@@ -48,8 +48,11 @@ unavailable identity produces typed diagnostics and an `EVIDENCE` or `MISS` outc
 The relation path compiles one canonical subject and predicate into the fixed
 `relation_one_hop_proposition_projections` capability. Returned rows are strict
 `PropositionProjection` values plus a bounded object label and type. Current lifecycle,
-system time, valid time, trust inputs, ownership, scope, and publication identity are
-revalidated before a row becomes evidence.
+system time, valid time, trust inputs, scope, and publication identity are
+revalidated before a row becomes evidence. A projection carries no content flag
+(PUBLIC, COMPANY or a customer's label): every row that passes the time and meaning
+checks is eligible with the one reason `eligible`, and the evidence record carries
+the request frame's `scope` that the orchestrator checks against the current frame.
 
 Tapestry's open `Entity.entity_type` taxonomy is normalized at this boundary.
 Engram's scalar and coarse types retain their exact values; domain types such as
@@ -77,7 +80,7 @@ evidence; conflicting `SINGLE` rows abstain.
 Composition accepts a conservative possessive or `of` form that resolves one root
 entity and exactly two ordered predicates. The compiler emits only a closed two-step
 plan over the one-hop capability. Execution is bounded by request budgets and uses
-the same temporal, trust, visibility, and revalidation rules at both steps.
+the same temporal, trust, and revalidation rules at both steps.
 
 A composed `PropositionEvidenceRecord` path holds one or two typed steps instead of
 the Proposition's own ID. Cycles, excessive fan-out,

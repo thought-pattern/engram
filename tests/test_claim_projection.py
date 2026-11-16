@@ -39,7 +39,6 @@ STRUCTURED_PROPOSITION_ROW = {
     "valid_to": "",
     "valid_to_available": False,
     "predicate_canonical": True,
-    "ownership_category": "PUBLIC",
     "trust_category": "verified_public",
     "trust_category_available": True,
     "supplied_trust": 0.84,
@@ -149,7 +148,6 @@ def test_vector_projection_preserves_fixed_index_and_raw_similarity() -> None:
         (lambda row: row.update({"raw_proposition": "secret"}), "invalid fields"),
         (lambda row: row.update({"proposition_id": "x" * 257}), "256 UTF-8 bytes"),
         (lambda row: row.update({"proposition_id": "proposition id"}), "whitespace"),
-        (lambda row: row.update({"ownership_category": "INTERNAL"}), "unsupported"),
         (lambda row: row.update({"system_to": "2026-08-02T00:00:00Z"}), "empty when unavailable"),
         (lambda row: row.update({"valid_from": "2026-08-01T00:00:00+00:00"}), "ending in Z"),
         (

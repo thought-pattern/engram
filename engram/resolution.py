@@ -299,7 +299,6 @@ def candidate_from_dict(value: object) -> dict:
     return result
 
 
-
 def empty_candidate() -> dict:
     """Return one isolated concrete empty candidate, the null object for an unavailable selection."""
     result = candidate(

@@ -475,9 +475,7 @@ class EngramCandidateAuthority:
                 (FusionPolicyReason.OBJECT_TYPE_FEATURE_MISMATCH,),
             )
             return result
-        decision = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ())).evaluate(
-            current, frame
-        )
+        decision = PropositionEligibilityEvaluator().evaluate(current, frame)
         if not decision.get("eligible", False):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.ARTIFACT_INELIGIBLE,))
             return result
@@ -501,7 +499,7 @@ class EngramCandidateAuthority:
         except ValueError:
             result = {}
             return result
-        evaluator = PropositionEligibilityEvaluator(getattr(self.internal_engram, "proposition_visibility_authority", ()))
+        evaluator = PropositionEligibilityEvaluator()
         for proposition_id, identity_value, trust in zip(proposition_ids, identity_chain, trust_chain, strict=True):
             identity = identity_value if isinstance(identity_value, tuple) else ()
             chain_valid = (

@@ -6,7 +6,6 @@ from json import loads as json_loads
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.constants_artifacts import LifecycleState
-from engram.constants_evidence import DisclosureBasis, PropositionOwnership
 from engram.constants_relation import ExpectedObjectType
 from engram.constants_resolution import (
     BUDGET_CONSUMPTION_FIELDS,
@@ -57,7 +56,6 @@ from engram.resolution_budget import (
 )
 from engram.resolution_evidence import (
     canonical_proposition_references,
-    disclosure_decision,
     feature_set,
     feature_set_from_dict,
     feature_set_to_dict,
@@ -138,11 +136,7 @@ PROPOSITION_RECORD = proposition_evidence_record(
         valid_time_current=True,
     ),
     trust=proposition_trust_inputs(),
-    disclosure=disclosure_decision(
-        ownership=PropositionOwnership.PUBLIC,
-        basis=DisclosureBasis.PUBLIC_RULE,
-        scope=SUPPORT_SCOPE,
-    ),
+    scope=SUPPORT_SCOPE,
     path=("proposition-full",),
     selection_reasons=("canonical_complete", "structured_match"),
 )

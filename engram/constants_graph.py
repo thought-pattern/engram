@@ -43,9 +43,7 @@ PROJECTION_PREDICATE_TEXT = (
 )
 GRAPH_FACT_RETURN = (
     "RETURN DISTINCT proposition.id AS proposition_id, "
-    "subject.primary_label AS subject, "
-    + GRAPH_FACT_PREDICATE_TEXT
-    + " AS predicate, "
+    "subject.primary_label AS subject, " + GRAPH_FACT_PREDICATE_TEXT + " AS predicate, "
     "object.primary_label AS object"
 )
 GRAPH_ENTITY_FACTS_QUERY = (
@@ -66,7 +64,9 @@ GRAPH_KEYWORD_FACTS_QUERY = (
     + GRAPH_FACT_ARGUMENTS
     + "AND (toLower(subject.primary_label) CONTAINS toLower($keyword) "
     "OR toLower(object.primary_label) CONTAINS toLower($keyword) "
-    "OR toLower(" + GRAPH_FACT_PREDICATE_TEXT + ") CONTAINS toLower($keyword)) "
+    "OR toLower("
+    + GRAPH_FACT_PREDICATE_TEXT
+    + ") CONTAINS toLower($keyword)) "
     + GRAPH_FACT_ACTIVE
     + GRAPH_SPO_MEANING_GUARD
     + GRAPH_FACT_VALID_AT_EVALUATION
@@ -200,7 +200,6 @@ PROPOSITION_PROJECTION_FIELDS = set(
         "valid_to",
         "valid_to_available",
         "predicate_canonical",
-        "ownership_category",
         "trust_category",
         "trust_category_available",
         "supplied_trust",
@@ -217,14 +216,11 @@ PROPOSITION_PROJECTION_RECORD_FIELDS = PROPOSITION_PROJECTION_FIELDS | set(
 RELATION_ONE_HOP_RESULT_FIELDS = PROPOSITION_PROJECTION_FIELDS | {"object_label", "object_type", "predicate_cardinality"}
 CANONICAL_ENTITY_MATCH_QUERY = (
     "MATCH (entity:Entity) "
-    "OPTIONAL MATCH (:Proposition)-[:HAS_ARGUMENT]->(binding:SemanticBinding)-[:BINDS_ENTITY]->(entity) "
-    "WITH entity, coalesce(entity.aliases, [])[0..12] AS aliases, "
-    "[surface IN collect(DISTINCT binding.surface_form) WHERE surface IS NOT NULL][0..12] AS edge_surfaces "
+    "WITH entity, coalesce(entity.aliases, [])[0..12] AS aliases "
     "WHERE toLower(entity.primary_label) = toLower($surface) "
     "OR toLower($surface) IN [alias IN aliases | toLower(alias)] "
-    "OR toLower($surface) IN [value IN edge_surfaces | toLower(value)] "
     "RETURN entity.canonical_id AS canonical_id, entity.primary_label AS primary_label, "
-    "aliases, edge_surfaces, coalesce(entity.entity_type, 'UNKNOWN') AS entity_type "
+    "aliases, coalesce(entity.entity_type, 'UNKNOWN') AS entity_type "
     "ORDER BY entity.canonical_id LIMIT $limit"
 )
 CANONICAL_PREDICATE_MATCH_QUERY = (
@@ -262,7 +258,6 @@ PROPOSITION_PROJECTION_RETURN = (
     "assertion.valid_time_end AS valid_to, "
     "assertion.valid_time_end IS NOT NULL AS valid_to_available, "
     "coalesce(c.predicate_surface, '') = '' AS predicate_canonical, "
-    "c.ownership_category AS ownership_category, "
     "assertion.trust_category AS trust_category, "
     "assertion.trust_category IS NOT NULL AS trust_category_available, "
     "assertion.trust_score AS supplied_trust, "
@@ -353,7 +348,9 @@ VECTOR_PROPOSITION_PROJECTION_QUERY = (
     "AND c.lifecycle_disposition = 'active' AND c.retired_at IS NULL "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL "
-    "AND " + ASSERTION_BASIS_ELIGIBLE + " "
+    "AND "
+    + ASSERTION_BASIS_ELIGIBLE
+    + " "
     + VECTOR_PROPOSITION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
     + "0.0 AS structured_match, false AS structured_match_available, "

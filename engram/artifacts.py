@@ -50,7 +50,7 @@ from engram.identity import (
     validate_scope_key,
 )
 from engram.resolution_sizing import encoded_size
-from engram.support import validate_support_references, validate_support_visibility
+from engram.support import validate_support_references
 from engram.validation import (
     Characters,
     require_available_utc_timestamp,
@@ -178,11 +178,6 @@ def freeze_metadata(value: object) -> dict:
     """
     if not isinstance(value, dict):
         raise InvalidRequestError("artifact metadata must be an object")
-    if "visibility_scope" in value:
-        try:
-            validate_support_visibility(value.get("visibility_scope", {}))
-        except ValueError as err:
-            raise InvalidRequestError(str(err)) from err
     # Caller metadata carries the item and byte limits; the reserved lifecycle audit is
     # bounded by its own fields, so writing it never pushes an admitted artifact over.
     caller_metadata = {key: item for key, item in value.items() if key != LIFECYCLE_AUDIT_KEY}

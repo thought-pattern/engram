@@ -158,7 +158,7 @@ representation to produce a non-empty key in the supplied scope. It returns the
 supplied identity unchanged after validation.
 
 Canonical IDs receive syntax validation. Contextual resolution and eligibility
-evaluate graph existence, visibility, trust, and temporal state.
+evaluate graph existence, trust, and temporal state.
 
 ## Verification
 

@@ -19,12 +19,12 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps
 from math import nextafter as math_nextafter
 
+from probe_vector_window import QUERY_SAMPLE_QUERY, graph_connection
+
 from engram.constants import DEFAULT_VECTOR_MIN_SIMILARITY, PROPOSITION_VECTOR_INDEX_NAME
 from engram.constants_graph import VECTOR_INDEX_REACH_QUERY, VECTOR_PROPOSITION_PROJECTION_QUERY, PropositionProjectionQuery
 from engram.errors import InvalidRequestError
 from engram.graph import decode_projection_rows
-
-from probe_vector_window import QUERY_SAMPLE_QUERY, graph_connection
 
 INDEX_INFO_QUERY = "SHOW VECTOR INDEX INFO"
 ABOVE_ONE = math_nextafter(1.0, 2.0)
@@ -86,10 +86,18 @@ def graph_report(config_path: str, queries: int, window: int, asked: int) -> dic
             reach = client.execute(VECTOR_INDEX_REACH_QUERY, {**parameters, "window": window, "min_similarity": ABOVE_ONE})
             above_in_index = int(reach[0].get("reached", 0) or 0) if reach else 0
             report["index_rows_above_one"] = report.get("index_rows_above_one", 0) + above_in_index
-            report["queries_with_index_row_above_one"] = report.get("queries_with_index_row_above_one", 0) + (1 if above_in_index else 0)
+            report["queries_with_index_row_above_one"] = report.get("queries_with_index_row_above_one", 0) + (
+                1 if above_in_index else 0
+            )
             nearest = client.execute(
                 VECTOR_PROPOSITION_PROJECTION_QUERY,
-                {**parameters, "min_similarity": DEFAULT_VECTOR_MIN_SIMILARITY, **PROJECTION_BASIS, "window": window, "limit": window},
+                {
+                    **parameters,
+                    "min_similarity": DEFAULT_VECTOR_MIN_SIMILARITY,
+                    **PROJECTION_BASIS,
+                    "window": window,
+                    "limit": window,
+                },
             )
             above = [row for row in nearest if float(row.get("semantic_similarity", 0.0)) > 1.0]
             own = sample.get("proposition_id", "")
@@ -103,7 +111,9 @@ def graph_report(config_path: str, queries: int, window: int, asked: int) -> dic
             for row in above:
                 report["largest_excess"] = max(report.get("largest_excess", 0.0), float(row.get("semantic_similarity", 0.0)) - 1.0)
             projection_parameters = {**parameters, "min_similarity": DEFAULT_VECTOR_MIN_SIMILARITY, **PROJECTION_BASIS}
-            first_window = client.execute(VECTOR_PROPOSITION_PROJECTION_QUERY, {**projection_parameters, "window": asked, "limit": asked})
+            first_window = client.execute(
+                VECTOR_PROPOSITION_PROJECTION_QUERY, {**projection_parameters, "window": asked, "limit": asked}
+            )
             if not decodes(first_window, asked):
                 report["first_window_refused"] = report.get("first_window_refused", 0) + 1
             try:
@@ -123,7 +133,9 @@ def main() -> None:
     parser.add_argument("--window", type=int, default=100)
     parser.add_argument("--asked", type=int, default=5)
     arguments = parser.parse_args()
-    print(json_dumps(graph_report(arguments.config, arguments.queries, arguments.window, arguments.asked), indent=2, sort_keys=True))
+    print(
+        json_dumps(graph_report(arguments.config, arguments.queries, arguments.window, arguments.asked), indent=2, sort_keys=True)
+    )
 
 
 if __name__ == "__main__":

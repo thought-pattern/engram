@@ -7,9 +7,6 @@ candidate selection, request execution, or Channel release judgment.
 from engram.constants import EMPTY_MAPPING
 from engram.constants_evidence import (
     CANONICAL_PROPOSITION_REFERENCES_FIELDS,
-    DISCLOSURE_DECISION_FIELDS,
-    MAX_DISCLOSURE_AUTHORITY_BYTES,
-    MAX_DISCLOSURE_ENUM_BYTES,
     MAX_PROPOSITION_IDENTIFIER_BYTES,
     MAX_PROPOSITION_SELECTION_REASONS,
     MAX_PROPOSITION_SOURCE_CONTRIBUTIONS,
@@ -19,8 +16,6 @@ from engram.constants_evidence import (
     PROPOSITION_PATH_FILTERS,
     PROPOSITION_TRUST_INPUTS_FIELDS,
     PROPOSITION_VALIDITY_INPUTS_FIELDS,
-    DisclosureBasis,
-    PropositionOwnership,
 )
 from engram.constants_identity import MAX_ENUM_WIRE_BYTES
 from engram.constants_relation import (
@@ -398,84 +393,6 @@ def proposition_trust_inputs_from_dict(value: object) -> dict:
     return result
 
 
-def disclosure_decision(
-    ownership: object,
-    basis: object,
-    scope: object,
-    authority: object = "",
-    authority_available: object = False,
-) -> dict:
-    """Build an exact scoped Proposition-disclosure decision."""
-    if not isinstance(ownership, PropositionOwnership):
-        raise InvalidRequestError("disclosure ownership must be a PropositionOwnership")
-    if not isinstance(basis, DisclosureBasis):
-        raise InvalidRequestError("disclosure basis must be a DisclosureBasis")
-    try:
-        validated_scope = validate_scope_key(scope)
-    except IdentityValidationError as err:
-        raise InvalidRequestError("disclosure scope must be a ScopeKey") from err
-    normalized_authority_available = require_bool(authority_available, "disclosure authority_available")
-    if normalized_authority_available:
-        normalized_authority = require_identifier(authority, "disclosure authority", maximum_bytes=MAX_PROPOSITION_IDENTIFIER_BYTES)
-    else:
-        normalized_authority = require_any_text(
-            authority,
-            "disclosure authority",
-            MAX_DISCLOSURE_AUTHORITY_BYTES,
-            allow_empty=True,
-        )
-    if not normalized_authority_available and normalized_authority:
-        raise InvalidRequestError("disclosure authority must be empty when unavailable")
-    if ownership == PropositionOwnership.PUBLIC:
-        if basis != DisclosureBasis.PUBLIC_RULE or normalized_authority_available:
-            raise InvalidRequestError("PUBLIC Proposition disclosure requires the public rule without an authority")
-    elif basis != DisclosureBasis.TRUSTED_SCOPE_AUTHORITY or not normalized_authority_available:
-        raise InvalidRequestError("non-PUBLIC Proposition disclosure requires an available trusted scope authority")
-    result: dict = {
-        "ownership": ownership,
-        "basis": basis,
-        "scope": validated_scope,
-        "authority": normalized_authority,
-        "authority_available": normalized_authority_available,
-    }
-    return result
-
-
-def validate_disclosure_decision(value: object) -> dict:
-    """Revalidate and copy one disclosure-decision dictionary."""
-    data = exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
-    result = disclosure_decision(
-        data.get("ownership", PropositionOwnership.PUBLIC),
-        data.get("basis", DisclosureBasis.PUBLIC_RULE),
-        data.get("scope", {}),
-        data.get("authority", ""),
-        data.get("authority_available", False),
-    )
-    return result
-
-
-def disclosure_decision_from_dict(value: object) -> dict:
-    """Decode one disclosure decision from its exact serialized form."""
-    data = exact_mapping(value, "DisclosureDecision", DISCLOSURE_DECISION_FIELDS)
-    try:
-        ownership = PropositionOwnership(
-            require_any_text(data.get("ownership", ""), "disclosure ownership", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
-        )
-        basis = DisclosureBasis(
-            require_any_text(data.get("basis", ""), "disclosure basis", MAX_DISCLOSURE_ENUM_BYTES, allow_empty=False)
-        )
-    except ValueError as err:
-        raise InvalidRequestError("unsupported disclosure ownership or basis") from err
-    result = disclosure_decision(
-        ownership,
-        basis,
-        scope_key_from_dict(freeze_mapping(data.get("scope", {}), "disclosure scope")),
-        data.get("authority", ""),
-        data.get("authority_available", False),
-    )
-    return result
-
-
 def path_binding(value: object, name: str) -> str:
     binding = require_identifier(value, name, MAX_COMPOSITION_BINDING_BYTES)
     if not binding.startswith("$") or len(binding) == 1:
@@ -608,7 +525,7 @@ def proposition_evidence_record(
     canonical_references: object,
     validity: object,
     trust: object,
-    disclosure: object,
+    scope: object,
     path: object,
     selection_reasons: object,
     *,
@@ -616,8 +533,9 @@ def proposition_evidence_record(
 ) -> dict:
     """Build strict wire-safe full-Proposition evidence without unrestricted graph content.
 
+    ``scope`` is the ScopeKey of the request frame the record was produced for.
     ``trusted_components`` is for a caller that has just built ``features``,
-    ``canonical_references``, ``validity``, ``trust``, and ``disclosure`` with
+    ``canonical_references``, ``validity``, ``trust``, and ``scope`` with
     their validating constructors; they are not validated again. Identifiers,
     ordering, and path checks always run.
     """
@@ -644,7 +562,7 @@ def proposition_evidence_record(
         validated_references = canonical_references
         validated_validity = validity
         validated_trust = trust
-        validated_disclosure = disclosure
+        validated_scope = scope
     else:
         try:
             validated_features = validate_feature_set(features)
@@ -663,9 +581,9 @@ def proposition_evidence_record(
         except InvalidRequestError as err:
             raise InvalidRequestError("Proposition evidence trust must be PropositionTrustInputs") from err
         try:
-            validated_disclosure = validate_disclosure_decision(disclosure)
-        except InvalidRequestError as err:
-            raise InvalidRequestError("Proposition evidence disclosure must be DisclosureDecision") from err
+            validated_scope = validate_scope_key(scope)
+        except IdentityValidationError as err:
+            raise InvalidRequestError("Proposition evidence scope must be a ScopeKey") from err
     if not isinstance(path, tuple):
         raise InvalidRequestError("Proposition evidence path must be a tuple")
     # A direct record's path is its own Proposition ID; a composed record's path is its steps.
@@ -719,7 +637,7 @@ def proposition_evidence_record(
         "canonical_references": validated_references,
         "validity": validated_validity,
         "trust": validated_trust,
-        "disclosure": validated_disclosure,
+        "scope": validated_scope,
         "path": normalized_path,
         "selection_reasons": reasons,
     }
@@ -737,7 +655,7 @@ def validate_proposition_evidence_record(value: object) -> dict:
         data.get("canonical_references", {}),
         data.get("validity", {}),
         data.get("trust", {}),
-        data.get("disclosure", {}),
+        data.get("scope", {}),
         data.get("path", ()),
         data.get("selection_reasons", ()),
     )
@@ -767,7 +685,6 @@ def proposition_evidence_record_to_dict(value: object) -> dict[str, object]:
 def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, object]:
     """Serialize a Proposition-evidence record already validated at a public boundary."""
     features = record.get("features", {})
-    disclosure = record.get("disclosure", {})
     result = {
         "proposition_id": record.get("proposition_id", ""),
         "source_resolver": record.get("source_resolver", ""),
@@ -779,13 +696,7 @@ def trusted_proposition_evidence_record_to_dict(record: dict) -> dict[str, objec
         "canonical_references": dict(record.get("canonical_references", {})),
         "validity": trusted_proposition_validity_inputs_to_dict(record.get("validity", {})),
         "trust": dict(record.get("trust", {})),
-        "disclosure": {
-            "ownership": disclosure.get("ownership", PropositionOwnership.PUBLIC).value,
-            "basis": disclosure.get("basis", DisclosureBasis.PUBLIC_RULE).value,
-            "scope": dict(disclosure.get("scope", {})),
-            "authority": disclosure.get("authority", ""),
-            "authority_available": disclosure.get("authority_available", False),
-        },
+        "scope": dict(record.get("scope", {})),
         "path": (
             list(record.get("path", ()))
             if all(isinstance(step, str) for step in record.get("path", ()))
@@ -826,9 +737,7 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
         freeze_mapping(data.get("validity", {}), "Proposition evidence validity")
     )
     validated_trust = proposition_trust_inputs_from_dict(freeze_mapping(data.get("trust", {}), "Proposition evidence trust"))
-    validated_disclosure = disclosure_decision_from_dict(
-        freeze_mapping(data.get("disclosure", {}), "Proposition evidence disclosure")
-    )
+    validated_scope = scope_key_from_dict(freeze_mapping(data.get("scope", {}), "Proposition evidence scope"))
     result = proposition_evidence_record(
         data.get("proposition_id", ""),
         data.get("source_resolver", ""),
@@ -837,7 +746,7 @@ def proposition_evidence_record_from_dict(value: object) -> dict:
         validated_references,
         validated_validity,
         validated_trust,
-        validated_disclosure,
+        validated_scope,
         normalized_path,
         normalized_reasons,
     )

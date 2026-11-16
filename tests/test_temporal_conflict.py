@@ -31,7 +31,6 @@ ACTIVE_STATUS_ROW = {
     "valid_to": "2030-01-01T00:00:00Z",
     "valid_to_available": True,
     "predicate_canonical": True,
-    "ownership_category": "PUBLIC",
     "trust_category": "source_supplied",
     "trust_category_available": True,
     "supplied_trust": 0.8,

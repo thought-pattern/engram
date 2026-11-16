@@ -5,10 +5,8 @@ from json import dumps as json_dumps
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram.constants_evidence import (
-    DisclosureBasis,
     EvidencePackageTruncationReason,
     EvidenceUsefulnessReason,
-    PropositionOwnership,
 )
 from engram.errors import InvalidRequestError
 from engram.evidence import (
@@ -23,7 +21,6 @@ from engram.evidence import (
 from engram.identity import scope_key
 from engram.resolution_evidence import (
     canonical_proposition_references,
-    disclosure_decision,
     feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
@@ -32,7 +29,6 @@ from engram.resolution_evidence import (
     proposition_trust_inputs,
     proposition_validity_inputs,
     validate_canonical_proposition_references,
-    validate_disclosure_decision,
     validate_proposition_evidence_record,
     validate_proposition_trust_inputs,
     validate_proposition_validity_inputs,
@@ -75,11 +71,7 @@ STRUCTURED_RECORD_VALUES = {
         supplied_trust=0.84,
         supplied_trust_available=True,
     ),
-    "disclosure": disclosure_decision(
-        ownership=PropositionOwnership.PUBLIC,
-        basis=DisclosureBasis.PUBLIC_RULE,
-        scope=scope_key(namespace="support", context_fingerprint="account:one"),
-    ),
+    "scope": scope_key(namespace="support", context_fingerprint="account:one"),
     "path": ("proposition:01J5M6Q9J8",),
     "selection_reasons": ("canonical_complete", "structured_match"),
 }
@@ -113,18 +105,18 @@ def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> No
         "canonical_references",
         "validity",
         "trust",
-        "disclosure",
+        "scope",
         "path",
         "selection_reasons",
     }
     copied = validate_proposition_evidence_record(record)
     assert copied == record
     assert copied is not record
-    assert {"canonical_references", "validity", "trust", "disclosure", "features"} <= set(record)
+    assert {"canonical_references", "validity", "trust", "scope", "features"} <= set(record)
     assert copied.get("canonical_references", {}) is not record.get("canonical_references", {})
     assert copied.get("validity", {}) is not record.get("validity", {})
     assert copied.get("trust", {}) is not record.get("trust", {})
-    assert copied.get("disclosure", {}) is not record.get("disclosure", {})
+    assert copied.get("scope", {}) is not record.get("scope", {})
     assert copied.get("features", {}) is not record.get("features", {})
 
     malformed = dict(record)
@@ -137,7 +129,6 @@ def test_proposition_evidence_record_codec_is_deterministic_and_concrete() -> No
 
 
 def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() -> None:
-    scope = scope_key(namespace="support", context_fingerprint="account:one")
     references = canonical_proposition_references("entity:subject", "predicate:relation", "entity:object")
     validity = proposition_validity_inputs(
         evaluation_time="2026-08-16T12:00:00Z",
@@ -149,17 +140,11 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
         supplied_trust=0.0,
         supplied_trust_available=True,
     )
-    disclosure = disclosure_decision(
-        ownership=PropositionOwnership.PUBLIC,
-        basis=DisclosureBasis.PUBLIC_RULE,
-        scope=scope,
-    )
 
     contracts = (
         (references, validate_canonical_proposition_references),
         (validity, validate_proposition_validity_inputs),
         (trust, validate_proposition_trust_inputs),
-        (disclosure, validate_disclosure_decision),
     )
     for value, validator in contracts:
         copied = validator(value)
@@ -169,12 +154,6 @@ def test_proposition_evidence_leaf_contracts_are_exact_validated_dictionaries() 
         malformed["unexpected"] = True
         with pytest_raises(InvalidRequestError):
             validator(malformed)
-
-    scope["namespace"] = "mutated"
-    assert disclosure.get("scope", {}).get("namespace", "") == "support"
-    disclosure["authority_available"] = True
-    with pytest_raises(InvalidRequestError):
-        validate_disclosure_decision(disclosure)
 
 
 def test_proposition_evidence_normalization_merges_sources_features_and_reasons_deterministically() -> None:
@@ -256,11 +235,7 @@ def test_proposition_evidence_normalization_orders_distinct_propositions_by_stab
                 proposition_evidence_record_with_changes(
                     proposition_evidence_record(**STRUCTURED_RECORD_VALUES), SEMANTIC_RECORD_CHANGES
                 ),
-                {
-                    "disclosure": validate_disclosure_decision(
-                        {**STRUCTURED_RECORD_VALUES.get("disclosure", {}), "scope": scope_key(namespace="different")}
-                    ),
-                },
+                {"scope": scope_key(namespace="different")},
             ),
             "conflicting current evidence state",
         ),
@@ -624,40 +599,11 @@ def test_proposition_evidence_distinguishes_unavailable_trust_from_measured_zero
             ),
             "must be zero when unavailable",
         ),
-        (
-            lambda record: proposition_evidence_record_with_changes(
-                record,
-                {
-                    "disclosure": disclosure_decision(
-                        ownership=PropositionOwnership.COMPANY,
-                        basis=DisclosureBasis.PUBLIC_RULE,
-                        scope=scope_key(namespace="support"),
-                    )
-                },
-            ),
-            "trusted scope authority",
-        ),
     ],
 )
 def test_proposition_evidence_rejects_malformed_or_ambiguous_values(apply_invalid_change, internal_message) -> None:
     with pytest_raises(InvalidRequestError, match=internal_message):
         apply_invalid_change(proposition_evidence_record(**STRUCTURED_RECORD_VALUES))
-
-
-def test_company_disclosure_requires_exact_scope_authority_provenance() -> None:
-    disclosure = disclosure_decision(
-        ownership=PropositionOwnership.COMPANY,
-        basis=DisclosureBasis.TRUSTED_SCOPE_AUTHORITY,
-        scope=scope_key(namespace="support", context_fingerprint="tenant:acme"),
-        authority="visibility-authority",
-        authority_available=True,
-    )
-    record = proposition_evidence_record_with_changes(
-        proposition_evidence_record(**STRUCTURED_RECORD_VALUES), {"disclosure": disclosure}
-    )
-
-    assert proposition_evidence_record_from_dict(proposition_evidence_record_to_dict(record)) == record
-    assert record.get("disclosure", {}).get("scope", {}) == scope_key(namespace="support", context_fingerprint="tenant:acme")
 
 
 @pytest_mark.parametrize("field", ["raw_proposition", "passage", "proof", "credential", "cypher", "embedding", "properties"])

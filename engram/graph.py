@@ -38,7 +38,7 @@ from engram.constants import (
     MAX_GRAPH_VECTOR_LIMIT,
     PROPOSITION_VECTOR_INDEX_NAME,
 )
-from engram.constants_evidence import MAX_PROPOSITION_TRUST_CATEGORY_BYTES, PropositionOwnership
+from engram.constants_evidence import MAX_PROPOSITION_TRUST_CATEGORY_BYTES
 from engram.constants_graph import (
     ASSERTION_BASIS_WINDOW_FIELDS,
     CANONICAL_ENTITY_MATCH_QUERY,
@@ -252,7 +252,6 @@ def canonical_entity_match_from_graph_row(value: object) -> dict:
             value.get("primary_label", ""), "canonical entity primary label", MAX_RELATION_LABEL_BYTES, allow_empty=False
         ),
         "aliases": projection_text_collection(value.get("aliases", []), "canonical entity aliases"),
-        "edge_surfaces": projection_text_collection(value.get("edge_surfaces", []), "canonical entity edge surfaces"),
         "entity_type": projection_entity_object_type(value.get("entity_type", ""), "canonical entity type"),
     }
     return result
@@ -300,7 +299,6 @@ def proposition_projection(
     valid_to: object,
     valid_to_available: object,
     predicate_canonical: object,
-    ownership_category: object,
     trust_category: object,
     trust_category_available: object,
     supplied_trust: object,
@@ -373,11 +371,6 @@ def proposition_projection(
     ):
         raise InvalidRequestError("Proposition projection valid_from must be earlier than valid_to")
     normalized_predicate_canonical = require_bool(predicate_canonical, "Proposition projection predicate_canonical")
-    normalized_ownership = require_text(
-        ownership_category, "Proposition projection ownership_category", MAX_ENUM_WIRE_BYTES, allow_empty=False
-    )
-    if normalized_ownership not in {ownership.value for ownership in PropositionOwnership}:
-        raise InvalidRequestError("Proposition projection ownership_category is unsupported")
     normalized_trust_category_available = require_bool(trust_category_available, "Proposition projection trust_category_available")
     normalized_trust_category = optional_projection_text(
         trust_category,
@@ -441,7 +434,6 @@ def proposition_projection(
         "valid_to": normalized_valid_to,
         "valid_to_available": normalized_valid_to_available,
         "predicate_canonical": normalized_predicate_canonical,
-        "ownership_category": normalized_ownership,
         "trust_category": normalized_trust_category,
         "trust_category_available": normalized_trust_category_available,
         "supplied_trust": normalized_trust,
@@ -525,7 +517,6 @@ def proposition_projection_from_graph_row(
         valid_to=value.get("valid_to", ""),
         valid_to_available=valid_to_available,
         predicate_canonical=value.get("predicate_canonical", False),
-        ownership_category=value.get("ownership_category", ""),
         trust_category=value.get("trust_category", ""),
         trust_category_available=trust_category_available,
         supplied_trust=value.get("supplied_trust", 0.0),

@@ -210,7 +210,7 @@ def screen_proposition_evidence(assembly: dict, raw_proposition_records: tuple, 
     normalized_records = canonicalize_proposition_evidence(raw_proposition_records, lambda: evidence_check(assembly))
     evaluation_time = frame.get("eligibility_context", {}).get("evaluation_time", "")
     if any(
-        record.get("disclosure", {}).get("scope", {}) != frame.get("scope", {})
+        record.get("scope", {}) != frame.get("scope", {})
         or record.get("validity", {}).get("evaluation_time", "") != evaluation_time
         for record in normalized_records
     ):

@@ -53,7 +53,6 @@ def internal_item(value: dict[str, object], cardinality: str) -> dict:
         "valid_to": valid_to,
         "valid_to_available": bool(valid_to),
         "predicate_canonical": True,
-        "ownership_category": "PUBLIC",
         "trust_category": "source_supplied" if trust_available else "",
         "trust_category_available": trust_available,
         "supplied_trust": internal_score(value.get("trust", 0.8), "trust") if trust_available else 0.0,

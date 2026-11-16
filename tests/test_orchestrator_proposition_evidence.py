@@ -37,7 +37,6 @@ from engram.resolution_budget import capture_resolution_budget, validate_resolut
 from engram.resolution_evidence import (
     proposition_evidence_record_with_changes,
     validate_canonical_proposition_references,
-    validate_disclosure_decision,
     validate_proposition_validity_inputs,
 )
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
@@ -747,7 +746,7 @@ def test_orchestrator_rejects_proposition_not_bound_to_current_frame(monkeypatch
     if mismatch == "scope":
         record = proposition_evidence_record_with_changes(
             record,
-            {"disclosure": validate_disclosure_decision({**record.get("disclosure", {}), "scope": scope_key(namespace="other")})},
+            {"scope": scope_key(namespace="other")},
         )
     else:
         record = proposition_evidence_record_with_changes(

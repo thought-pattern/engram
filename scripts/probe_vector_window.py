@@ -26,7 +26,7 @@ Two modes, both printing counts only:
 """
 
 from argparse import ArgumentParser as argparse_ArgumentParser
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
 
@@ -122,17 +122,18 @@ def wording_report() -> dict:
     report = {"facts": len(WORDING_FACTS), "generic": sum(1 for fact in WORDING_FACTS if fact.get("predicate_surface", ""))}
     for name, statement in (("before", before_statement), ("now", GRAPH_FACT_RETURN)):
         sentences = [
-            phrase_fact(fact.get("subject", ""), recall_predicate(fact, statement), fact.get("object", "")) for fact in WORDING_FACTS
+            phrase_fact(fact.get("subject", ""), recall_predicate(fact, statement), fact.get("object", ""))
+            for fact in WORDING_FACTS
         ]
         report[f"{name}_worded_by_generic_label"] = sum(1 for sentence in sentences if GENERIC_LABEL in sentence)
         report[f"{name}_worded_by_own_surface"] = sum(
             1
-            for fact, sentence in zip(WORDING_FACTS, sentences)
+            for fact, sentence in zip(WORDING_FACTS, sentences, strict=True)
             if fact.get("predicate_surface", "") and fact.get("predicate_surface", "") in sentence
         )
         report[f"{name}_curated_by_label"] = sum(
             1
-            for fact, sentence in zip(WORDING_FACTS, sentences)
+            for fact, sentence in zip(WORDING_FACTS, sentences, strict=True)
             if not fact.get("predicate_surface", "") and fact.get("label", "") in sentence
         )
     return report
@@ -145,7 +146,10 @@ def stand_in_report() -> dict:
         1 for row in index if row.get("passes", False) and row.get("similarity", 0.0) >= DEFAULT_VECTOR_MIN_SIMILARITY
     )
     report = {"index_rows": len(index), "passing_at_or_above_floor": passing_total, "reads": [], "recall_wording": wording_report()}
-    for statement_name, statement in (("facts", VECTOR_SEARCH_PROPOSITIONS_QUERY), ("projections", VECTOR_PROPOSITION_PROJECTION_QUERY)):
+    for statement_name, statement in (
+        ("facts", VECTOR_SEARCH_PROPOSITIONS_QUERY),
+        ("projections", VECTOR_PROPOSITION_PROJECTION_QUERY),
+    ):
         for asked in ASKED_COUNTS:
             reads = []
             client = MemGraphConnection()
@@ -209,7 +213,7 @@ def graph_report(config_path: str, queries: int) -> dict:
     client = graph_connection(config_path)
     try:
         samples = client.execute(QUERY_SAMPLE_QUERY, {"queries": queries})
-        evaluation_time = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        evaluation_time = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         totals = {}
         for sample in samples:
             embedding = [float(value) for value in sample.get("embedding", []) or []]
@@ -265,7 +269,9 @@ def graph_report(config_path: str, queries: int) -> dict:
                         for row in projections
                         if row.get("proposition_id", "") in generic_projection_ids and row.get("predicate_canonical", False)
                     ),
-                    "projections_widened_marked_retrieval_only": sum(1 for row in projections if not row.get("predicate_canonical", False)),
+                    "projections_widened_marked_retrieval_only": sum(
+                        1 for row in projections if not row.get("predicate_canonical", False)
+                    ),
                     "facts_widened_generic_worded_by_label": label_worded(client, [row.get("proposition_id", "") for row in facts]),
                 }
                 current = totals.get(asked, {})

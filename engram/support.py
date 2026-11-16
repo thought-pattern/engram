@@ -12,10 +12,8 @@ SUPPORT_REFERENCE_FIELDS = {
     "id",
     "state_revision",
     "support_revision",
-    "visibility_scope",
     "dependency_state_digest",
 }
-VISIBILITY_FIELDS = {"kind", "company_id", "customer_id", "engagement_id"}
 
 
 def support_revision(value, name: str) -> int:
@@ -27,40 +25,6 @@ def support_revision(value, name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= MAX_SUPPORT_REVISION:
         raise ValueError(f"{name} must be an integer from 0 through {MAX_SUPPORT_REVISION}")
     return value
-
-
-def validate_support_visibility(value) -> dict:
-    """Validate opaque visibility without widening its exact identifiers."""
-    if not isinstance(value, dict) or set(value) != VISIBILITY_FIELDS:
-        raise ValueError("support visibility_scope has an invalid shape")
-    kind = require_any_text(value.get("kind", ""), "support visibility kind", MAX_METADATA_BYTES)
-    company_id = value.get("company_id", {})
-    customer_id = value.get("customer_id", {})
-    engagement_id = value.get("engagement_id", {})
-    # Absent identifiers are rebuilt as owned empty mappings so the validated
-    # copy never aliases a caller's mutable dictionary.
-    if kind == "global":
-        if any(item != {} for item in (company_id, customer_id, engagement_id)):
-            raise ValueError("global support visibility requires empty identifiers")
-        company_id, customer_id, engagement_id = {}, {}, {}
-    elif kind == "company":
-        company_id = require_any_text(company_id, "support company_id", MAX_METADATA_BYTES)
-        if customer_id != {} or engagement_id != {}:
-            raise ValueError("company support visibility has customer identifiers")
-        customer_id, engagement_id = {}, {}
-    elif kind == "engagement":
-        company_id = require_any_text(company_id, "support company_id", MAX_METADATA_BYTES)
-        customer_id = require_any_text(customer_id, "support customer_id", MAX_METADATA_BYTES)
-        engagement_id = require_any_text(engagement_id, "support engagement_id", MAX_METADATA_BYTES)
-    else:
-        raise ValueError("support visibility kind is not registered")
-    result = {
-        "kind": kind,
-        "company_id": company_id,
-        "customer_id": customer_id,
-        "engagement_id": engagement_id,
-    }
-    return result
 
 
 def validate_support_reference(value) -> dict:
@@ -87,7 +51,6 @@ def validate_support_reference(value) -> dict:
         "id": identifier,
         "state_revision": state_revision,
         "support_revision": proposition_revision,
-        "visibility_scope": validate_support_visibility(value.get("visibility_scope", {})),
         "dependency_state_digest": digest,
     }
     return result

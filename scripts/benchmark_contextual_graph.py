@@ -28,12 +28,12 @@ class BenchmarkGraph:
     def __init__(self) -> None:
         self.one_hop_calls: list[tuple[str, str, int]] = []
         self.entities = (
-            ("entity:ada-lovelace", "Ada Lovelace", ("Ada", "Augusta Ada King"), ("Lovelace",), "PERSON"),
-            ("entity:grace-hopper", "Grace Hopper", ("Grace",), ("Hopper",), "PERSON"),
-            ("entity:rfc-7231", "RFC 7231", ("RFC7231",), (), "ENTITY"),
-            ("entity:london", "London", (), (), "PLACE"),
-            ("entity:springfield-il", "Springfield", (), (), "PLACE"),
-            ("entity:springfield-ma", "Springfield", (), (), "PLACE"),
+            ("entity:ada-lovelace", "Ada Lovelace", ("Ada", "Augusta Ada King", "Lovelace"), "PERSON"),
+            ("entity:grace-hopper", "Grace Hopper", ("Grace", "Hopper"), "PERSON"),
+            ("entity:rfc-7231", "RFC 7231", ("RFC7231",), "ENTITY"),
+            ("entity:london", "London", (), "PLACE"),
+            ("entity:springfield-il", "Springfield", (), "PLACE"),
+            ("entity:springfield-ma", "Springfield", (), "PLACE"),
         )
         self.predicates = (
             ("predicate:birth-place", "birth place", ("born", "bear", "come", "come into world"), "PLACE"),
@@ -98,7 +98,6 @@ class BenchmarkGraph:
                     "valid_to": "",
                     "valid_to_available": False,
                     "predicate_canonical": True,
-                    "ownership_category": "PUBLIC",
                     "trust_category": "source_supplied",
                     "trust_category_available": True,
                     "supplied_trust": 0.8,
@@ -118,15 +117,14 @@ class BenchmarkGraph:
     def canonical_entity_matches(self, surface: str, *, limit: int):
         normalized = normalize_retrieval_key(surface)
         values = []
-        for canonical_id, label, aliases, edges, entity_type in self.entities:
-            known = {normalize_retrieval_key(value) for value in (label, *aliases, *edges)}
+        for canonical_id, label, aliases, entity_type in self.entities:
+            known = {normalize_retrieval_key(value) for value in (label, *aliases)}
             if normalized in known:
                 values.append(
                     {
                         "canonical_id": canonical_id,
                         "primary_label": label,
                         "aliases": aliases,
-                        "edge_surfaces": edges,
                         "entity_type": ExpectedObjectType(entity_type),
                     }
                 )

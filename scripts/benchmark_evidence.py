@@ -10,7 +10,6 @@ from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
-from engram.constants_evidence import DisclosureBasis, PropositionOwnership
 from engram.constants_resolution import CostClass, ResolutionOutcome, ResolverState
 from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
@@ -27,7 +26,6 @@ from engram.resolution_accounting import ResolutionAccountingFinalizer
 from engram.resolution_budget import budget_consumption_to_dict, capture_resolution_budget, resolution_budget
 from engram.resolution_evidence import (
     canonical_proposition_references,
-    disclosure_decision,
     feature_set,
     proposition_evidence_record,
     proposition_evidence_record_from_dict,
@@ -126,11 +124,7 @@ def measure_evidence(samples: int) -> dict:
                     True,
                 ),
                 trust=proposition_trust_inputs(),
-                disclosure=disclosure_decision(
-                    PropositionOwnership.PUBLIC,
-                    DisclosureBasis.PUBLIC_RULE,
-                    SCOPE,
-                ),
+                scope=SCOPE,
                 path=(proposition_id,),
                 selection_reasons=("canonical_complete", "public", "structured_match"),
             )
@@ -237,8 +231,7 @@ def measure_evidence(samples: int) -> dict:
             partial_finalization.get("candidate_statement_ids", ()) == () and not partial_finalization.get("success_applied", False)
         ),
         "complete_output_accounting_is_exact": (
-            partial_result.get("budget", {}).get("output_bytes", 0)
-            == encoded_size(resolution_result_to_dict(partial_result))
+            partial_result.get("budget", {}).get("output_bytes", 0) == encoded_size(resolution_result_to_dict(partial_result))
         ),
         "working_memory_within_frame_budget": (
             partial_result.get("budget", {}).get("working_memory_bytes", 0)

@@ -1,4 +1,4 @@
-"""Proposition evidence records, disclosure and eligibility, usefulness policy, and evidence package contracts."""
+"""Proposition evidence records, eligibility, usefulness policy, and evidence package contracts."""
 
 from enum import StrEnum
 
@@ -34,7 +34,6 @@ PROPOSITION_VALIDITY_INPUTS_FIELDS = set(
     }
 )
 PROPOSITION_TRUST_INPUTS_FIELDS = set({"trust_category", "trust_category_available", "supplied_trust", "supplied_trust_available"})
-DISCLOSURE_DECISION_FIELDS = set({"ownership", "basis", "scope", "authority", "authority_available"})
 PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
     {
         "position",
@@ -50,7 +49,7 @@ PROPOSITION_EVIDENCE_PATH_STEP_FIELDS = set(
     }
 )
 # Closed filter vocabulary of a Proposition evidence path step, in the sorted order a step carries it.
-PROPOSITION_PATH_FILTERS = ("canonical_identity", "object_type", "publication_revalidation", "temporal_eligibility", "visibility")
+PROPOSITION_PATH_FILTERS = ("canonical_identity", "object_type", "publication_revalidation", "temporal_eligibility")
 PROPOSITION_EVIDENCE_RECORD_FIELDS = set(
     {
         "proposition_id",
@@ -60,7 +59,7 @@ PROPOSITION_EVIDENCE_RECORD_FIELDS = set(
         "canonical_references",
         "validity",
         "trust",
-        "disclosure",
+        "scope",
         "path",
         "selection_reasons",
     }
@@ -76,17 +75,11 @@ EVIDENCE_USEFULNESS_POLICY_FIELDS = set(
         "supplied_trust_floor_available",
     }
 )
-VISIBILITY_AUTHORIZATION_FIELDS = set({"allowed", "scope", "ownership", "authority_id", "reason_code"})
-VISIBILITY_GRANT_FIELDS = set({"scope", "ownership"})
-PROPOSITION_ELIGIBILITY_DECISION_FIELDS = set(
-    {"projection", "eligible", "reason", "disclosure", "disclosure_available", "revalidated"}
-)
+PROPOSITION_ELIGIBILITY_DECISION_FIELDS = set({"projection", "eligible", "reason", "revalidated"})
 MAX_PROPOSITION_IDENTIFIER_BYTES = 256
 MAX_PROPOSITION_SOURCE_CONTRIBUTIONS = 8
 MAX_PROPOSITION_SELECTION_REASONS = 16
 MAX_PROPOSITION_TRUST_CATEGORY_BYTES = 96
-MAX_DISCLOSURE_AUTHORITY_BYTES = 256
-MAX_DISCLOSURE_ENUM_BYTES = 32
 MAX_EVIDENCE_PACKAGE_RECORDS = 10
 MAX_EVIDENCE_PACKAGE_INPUT_RECORDS = 1_000
 MAX_EVIDENCE_PACKAGE_BYTES = 65_536
@@ -98,14 +91,12 @@ CANONICAL_COMPLETENESS_FLOOR = 1.0
 STRUCTURED_MATCH_FLOOR = 1.0
 SEMANTIC_SIMILARITY_FLOOR = 0.60
 SOURCE_AGREEMENT_FLOOR = 1.0
-MAX_VISIBILITY_GRANTS = 4_096
 
 
 class PropositionEligibilityReason(StrEnum):
     """Closed temporal Proposition evidence eligibility outcomes."""
 
-    ELIGIBLE_PUBLIC = "eligible_public"
-    ELIGIBLE_TRUSTED_SCOPE = "eligible_trusted_scope"
+    ELIGIBLE = "eligible"
     EVALUATION_TIME_UNAVAILABLE = "evaluation_time_unavailable"
     TEMPORAL_QUERY_UNRESOLVED = "temporal_query_unresolved"
     PROPOSITION_INACTIVE = "proposition_inactive"
@@ -116,11 +107,6 @@ class PropositionEligibilityReason(StrEnum):
     VALID_TIME_NO_LONGER_CURRENT = "valid_time_no_longer_current"
     RETRIEVAL_ONLY = "retrieval_only"
     SEMANTIC_MEANING_UNREPRESENTED = "semantic_meaning_unrepresented"
-    VISIBILITY_AUTHORITY_UNAVAILABLE = "visibility_authority_unavailable"
-    VISIBILITY_AUTHORITY_FAILED = "visibility_authority_failed"
-    VISIBILITY_SCOPE_MISMATCH = "visibility_scope_mismatch"
-    VISIBILITY_OWNERSHIP_MISMATCH = "visibility_ownership_mismatch"
-    VISIBILITY_DENIED = "visibility_denied"
     REVALIDATION_UNAVAILABLE = "revalidation_unavailable"
     REVALIDATION_MISSING = "revalidation_missing"
     REVALIDATION_IDENTITY_CONFLICT = "revalidation_identity_conflict"
@@ -141,21 +127,6 @@ class EvidenceUsefulnessReason(StrEnum):
     SUPPLIED_TRUST_FLOOR_SATISFIED = "supplied_trust_floor_satisfied"
     SUPPLIED_TRUST_REQUIRED_UNAVAILABLE = "supplied_trust_required_unavailable"
     SUPPLIED_TRUST_BELOW_FLOOR = "supplied_trust_below_floor"
-
-
-class PropositionOwnership(StrEnum):
-    """Allow-listed canonical Proposition ownership categories."""
-
-    PUBLIC = "PUBLIC"
-    COMPANY = "COMPANY"
-    CUSTOMER = "CUSTOMER"
-
-
-class DisclosureBasis(StrEnum):
-    """Stable provenance for a successful Proposition visibility decision."""
-
-    PUBLIC_RULE = "public_rule"
-    TRUSTED_SCOPE_AUTHORITY = "trusted_scope_authority"
 
 
 class EvidencePackageTruncationReason(StrEnum):

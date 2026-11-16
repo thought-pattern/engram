@@ -3,19 +3,11 @@
 from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 
-GLOBAL_VISIBILITY = {
-    "kind": "global",
-    "company_id": {},
-    "customer_id": {},
-    "engagement_id": {},
-}
-
 ASSERTION_REFERENCE_A = {
     "record_kind": "assertion",
     "id": "ast_" + "a" * 64,
     "state_revision": 0,
     "support_revision": {},
-    "visibility_scope": GLOBAL_VISIBILITY,
     "dependency_state_digest": "dep_" + "a" * 64,
 }
 
