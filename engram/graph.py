@@ -639,7 +639,8 @@ def nearest_passing_rows(connection, statement: str, parameters: dict, limit: in
         window *= 2
     if reads > 1:
         logger.info(
-            "code=graph_vector_window_widened Vector read widened its index window to %d rows over %d reads and returned %d of %d rows asked",
+            "code=graph_vector_window_widened Vector read widened its index window to %d rows "
+            "over %d reads and returned %d of %d rows asked",
             window,
             reads,
             len(rows),
@@ -722,9 +723,10 @@ class MemGraphConnection:
         self.port = port
         self.username = username
         self.password = password
-        # Sockets the driver's pool has opened, and how many of them had the keepalive watchdog set at the last check.
+        # Sockets the driver's pool has opened, how many had keepalive set, and how many were connected at the last scan.
         self.opened = 0
         self.kept_alive = 0
+        self.active_sockets = 0
         self.schema_report = {}
         self.driver = ()
         self.available = False
@@ -750,11 +752,19 @@ class MemGraphConnection:
         return [address]
 
     def keep_opened_sockets_alive(self) -> None:
-        """Set the keepalive watchdog on every socket the pool opened since the last time it was set."""
+        """Set the keepalive watchdog on every socket the pool opened once it finishes connecting."""
         opened = self.opened
         if opened != self.kept_alive:
-            keep_graph_sockets_alive(self.host, self.port)
-            self.kept_alive = opened
+            configured = keep_graph_sockets_alive(self.host, self.port)
+            with self.internal_lock:
+                if configured <= 0:
+                    self.active_sockets = 0
+                elif configured > self.active_sockets:
+                    newly_established = configured - self.active_sockets
+                    self.kept_alive = min(opened, self.kept_alive + newly_established)
+                    self.active_sockets = configured
+                elif configured < self.active_sockets:
+                    self.active_sockets = configured
 
     async def open_driver(self):
         """Create a driver, prove it can reach the database and set its socket's keepalive watchdog."""
@@ -769,7 +779,12 @@ class MemGraphConnection:
             await driver.verify_connectivity()
             self.keep_opened_sockets_alive()
         except BaseException:
-            await driver.close()
+            try:
+                await driver.close()
+            finally:
+                with self.internal_lock:
+                    self.active_sockets = 0
+                    self.kept_alive = self.opened
             raise
         return driver
 
@@ -839,6 +854,9 @@ class MemGraphConnection:
                 await lost_driver.close()
             except Exception as err:
                 logger.warning("Closing the lost graph driver failed (%s)", failure_origin(err))
+        with self.internal_lock:
+            self.active_sockets = 0
+            self.kept_alive = self.opened
         try:
             driver = await self.open_driver()
         except Exception as err:
@@ -858,7 +876,12 @@ class MemGraphConnection:
                 self.reconnect_needed = False
                 self.reconnect_failures = 0
         if disconnected:
-            await driver.close()
+            try:
+                await driver.close()
+            finally:
+                with self.internal_lock:
+                    self.active_sockets = 0
+                    self.kept_alive = self.opened
             result = False
             return result
         logger.info("Reconnected to graph database at %s:%d", self.host, self.port)
@@ -874,6 +897,10 @@ class MemGraphConnection:
             self.reconnect_future = ()
             self.available = False
             self.reconnect_needed = False
+            if not loop or not thread:
+                self.driver = ()
+                self.active_sockets = 0
+                self.kept_alive = self.opened
         if loop and thread:
             future = asyncio_run_coroutine_threadsafe(self.shutdown(), loop)
             # The shutdown ends when its cancelled work and the driver's close have finished; a stalled connection is
@@ -899,7 +926,16 @@ class MemGraphConnection:
             driver = self.driver
             self.driver = ()
         if driver:
-            await driver.close()
+            try:
+                await driver.close()
+            finally:
+                with self.internal_lock:
+                    self.active_sockets = 0
+                    self.kept_alive = self.opened
+        else:
+            with self.internal_lock:
+                self.active_sockets = 0
+                self.kept_alive = self.opened
 
     def current_driver(self) -> tuple:
         """Return (loop, driver) for a statement, or raise when reads must fail fast."""

@@ -77,10 +77,16 @@ def frame_for_label(label: str) -> str:
 
     Raises ``RuntimeError`` when the spaCy model is not installed.
     """
-    nlp = SPACY_PIPELINES.pipeline(disable=("parser", "ner"))
     normalized = label.lower().strip()
-    literal_label = label.replace("{", "{{").replace("}", "}}")
+    if not normalized:
+        result = ""
+        return result
+    nlp = SPACY_PIPELINES.pipeline(disable=("parser", "ner"))
+    literal_label = label.strip().replace("{", "{{").replace("}", "}}")
     doc = nlp(normalized)
+    if len(doc) == 0:
+        result = ""
+        return result
     head = doc[0]
     ends_prep = doc[-1].pos_ == "ADP"
     verb_form = head.morph.get("VerbForm", [])
@@ -136,17 +142,25 @@ def frame_for_predicate(predicate: str) -> str:
         result = override
         return result
     label = deslug(predicate)
+    if not label:
+        result = ""
+        return result
     result = frame_for_label(label)
     return result
 
 
 def phrase_fact(subject: str, predicate: str, obj: str) -> str:
     """Phrase one canonical triple as a friendly sentence, or "" if a slot is empty."""
-    if not (subject and predicate and obj):
+    clean_subject = subject.strip() if subject else ""
+    clean_object = obj.strip() if obj else ""
+    if not (clean_subject and predicate and predicate.strip() and clean_object):
         result = ""
         return result
     frame = frame_for_predicate(predicate)
-    result = frame.format(s=subject, o=obj) + "."
+    if not frame:
+        result = ""
+        return result
+    result = frame.format(s=clean_subject, o=clean_object) + "."
     return result
 
 

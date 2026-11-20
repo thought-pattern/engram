@@ -42,7 +42,7 @@ def feedback_target(observations: tuple[object, ...], statement_id: str) -> dict
         if observation.get("statement_id", "") == statement_id:
             target = observation
             break
-    if target == {}:
+    if not target:
         raise LifecycleError("candidate feedback target is unavailable")
     result = validate_feedback_observation(target)
     return result
@@ -155,6 +155,14 @@ def ensure_proposal_candidacy(core, proposal_id: str, record: dict[str, object])
     observations = record.get("candidacy_observations", [])
     if not isinstance(observations, tuple):
         raise LifecycleError("proposal candidacy observations are malformed")
+    candidate_responses = record.get("candidate_responses", {})
+    if not observations and isinstance(candidate_responses, dict) and candidate_responses:
+        observations = core.proposal_feedback_observations(
+            record.get("feedback_frame", {}),
+            proposal_id,
+            tuple(sorted(candidate_responses)),
+        )
+        record["candidacy_observations"] = observations
     core.apply_feedback(feedback_mutation_request_id("proposal-candidacy", proposal_id), observations)
     record["candidacy_applied"] = True
     return True

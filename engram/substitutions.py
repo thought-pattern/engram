@@ -7,6 +7,8 @@ splits text into sentences with NLTK's punkt tokenizer, whose data
 ``nltk_data.NLTK_RESOURCES`` requires and loads.
 """
 
+from re import Match, sub as re_sub
+
 from nltk.tokenize import sent_tokenize
 
 from engram.constants_language import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
@@ -24,11 +26,42 @@ def get_all_input_subs(maps: dict) -> dict[str, str]:
     return result
 
 
+def substitute_word(match: Match, subs: dict[str, str]) -> str:
+    """Substitute one non-whitespace token while preserving surrounding punctuation and case."""
+    word = match.group(0)
+    prefix = ""
+    suffix = ""
+    core = word
+
+    while core and not core[0].isalnum():
+        prefix += core[0]
+        core = core[1:]
+
+    while core and not core[-1].isalnum():
+        suffix = core[-1] + suffix
+        core = core[:-1]
+
+    if not core:
+        return word
+
+    lower_core = core.lower()
+    if lower_core not in subs:
+        return word
+
+    replacement = subs.get(lower_core, "")
+    if core.isupper():
+        replacement = replacement.upper()
+    elif core[0].isupper():
+        replacement = replacement.capitalize()
+    substituted = prefix + replacement + suffix
+    return substituted
+
+
 def apply_substitutions(text: str, subs: dict[str, str]) -> str:
-    """Apply word-by-word substitutions to text.
+    """Apply word-by-word substitutions to text while preserving whitespace and line breaks.
 
     Substitutions are applied to whole words only (not partial matches).
-    Case is preserved in the output.
+    Case, indentation, and line breaks are preserved in the output.
 
     Args:
         text: Input text.
@@ -40,38 +73,7 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     if not subs or not text:
         return text
 
-    words = text.split()
-    result = []
-
-    for word in words:
-        prefix = ""
-        suffix = ""
-        core = word
-
-        while core and not core[0].isalnum():
-            prefix += core[0]
-            core = core[1:]
-
-        while core and not core[-1].isalnum():
-            suffix = core[-1] + suffix
-            core = core[:-1]
-
-        if not core:
-            result.append(word)
-            continue
-
-        lower_core = core.lower()
-        if lower_core in subs:
-            replacement = subs.get(lower_core, "")
-            if core.isupper():
-                replacement = replacement.upper()
-            elif core[0].isupper():
-                replacement = replacement.capitalize()
-            result.append(prefix + replacement + suffix)
-        else:
-            result.append(word)
-
-    substituted = " ".join(result)
+    substituted = re_sub(r"\S+", lambda match: substitute_word(match, subs), text)
     return substituted
 
 

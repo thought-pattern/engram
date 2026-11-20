@@ -112,6 +112,7 @@ def template_context(
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
         "evaluation_time": selected_evaluation_time,
+        "interpolated": False,
         "response_state": {"unknown": False},
         "redirect_fn": redirect_fn,
         "learn_fn": learn_fn,
@@ -346,7 +347,10 @@ class TemplateProcessor:
             return result
 
         if "redirect" in template:
-            result = self.process_redirect(self.substitute_variables(template.get("redirect", ""), context), context)
+            prior_interpolated = bool(context.get("interpolated", False))
+            redirect_target = self.substitute_variables(template.get("redirect", ""), context)
+            context["interpolated"] = prior_interpolated
+            result = self.process_redirect(redirect_target, context)
             return result
 
         if "sr" in template and template.get("sr", False):
@@ -358,17 +362,23 @@ class TemplateProcessor:
             return result
 
         if "think" in template:
+            prior_interpolated = bool(context.get("interpolated", False))
             self.process_think(template.get("think", []), context)
+            context["interpolated"] = prior_interpolated
             result = ""
             return result
 
         if "set" in template:
+            prior_interpolated = bool(context.get("interpolated", False))
             self.process_set(template.get("set", {}), context)
+            context["interpolated"] = prior_interpolated
             result = ""
             return result
 
         if "learn" in template:
+            prior_interpolated = bool(context.get("interpolated", False))
             self.process_learn(template.get("learn", {}), context)
+            context["interpolated"] = prior_interpolated
             result = ""
             return result
 
@@ -535,13 +545,16 @@ class TemplateProcessor:
             output = self.process(query_data.get("on_failure", ""), context)
             return output
 
+        prior_interpolated = bool(context.get("interpolated", False))
         query = self.substitute_variables(query_data.get("query", ""), context)
         if is_write_cypher(query):
+            context["interpolated"] = prior_interpolated
             output = self.process(query_data.get("on_failure", ""), context)
             return output
         params = {}
         for key, value in query_data.get("params", {}).items():
             params[key] = self.substitute_variables(str(value), context)
+        context["interpolated"] = prior_interpolated
 
         # Expected graph unavailability is normalized by the graph owner. A
         # callback defect remains visible to its caller.
@@ -552,6 +565,8 @@ class TemplateProcessor:
         if graph_is_empty(records):
             output = self.process(query_data.get("on_empty", query_data.get("on_failure", "")), context)
             return output
+
+        context["interpolated"] = True
 
         format_type = query_data.get("format", "single")
 
@@ -608,6 +623,7 @@ class TemplateProcessor:
         evaluation_time = projection_timestamp(context.get("evaluation_time", ""), True, "template evaluation time")
         params["evaluation_time"] = evaluation_time
 
+        context["interpolated"] = True
         records = graph(query, params)
         if records and graph_single(records):
             value = str(graph_single(records).get("result", ""))
@@ -647,66 +663,73 @@ class TemplateProcessor:
         result = "".join(output)
         return result
 
-    def render_token(self, inner: str, context: dict, bindings: dict) -> str:
-        """Return the value of one authored token whose text between braces is ``inner``."""
+    def resolve_token_value(self, inner: str, context: dict, bindings: dict) -> tuple[bool, str]:
+        """Resolve one brace expression into ``(matched, text)``."""
         if inner in bindings:
             bound = bindings.get(inner, "")
-            return bound
+            return True, bound
         name, separator, argument = inner.partition(":")
         # The transform expression accepts an empty argument, so it identifies transform names.
         if separator and transform_pattern.fullmatch(f"{{{name}:}}"):
             transformed = self.apply_transform(name, self.substitute_variables(argument, context, bindings), context)
-            return transformed
+            return True, transformed
         token = "{" + self.substitute_variables(inner, context, bindings) + "}"
         match = star_pattern.fullmatch(token)
         if match:
             value = get_star(context, int(match.group(1)))
-            return value
+            return True, value
         match = thatstar_pattern.fullmatch(token)
         if match:
             value = get_thatstar(context, int(match.group(1)))
-            return value
+            return True, value
         match = topicstar_pattern.fullmatch(token)
         if match:
             value = get_topicstar(context, int(match.group(1)))
-            return value
+            return True, value
         match = get_pattern.fullmatch(token)
         if match:
             value = context.get("predicates", {}).get(match.group(1), match.group(2) or "")
-            return value
+            return True, value
         match = bot_pattern.fullmatch(token)
         if match:
             value = context.get("bot", {}).get(match.group(1), "")
-            return value
+            return True, value
         match = map_pattern.fullmatch(token)
         if match:
             value = get_map(context, match.group(1), match.group(2), match.group(3) or "")
-            return value
+            return True, value
         match = input_pattern.fullmatch(token)
         if match:
             value = get_input(context, int(match.group(1)))
-            return value
+            return True, value
         match = response_pattern.fullmatch(token)
         if match:
             value = get_response(context, int(match.group(1)) if match.group(1) else 1)
-            return value
+            return True, value
         match = that_pattern.fullmatch(token)
         if match and match.group(1):
             value = get_that(context, int(match.group(1)), int(match.group(2)) if match.group(2) else 1)
-            return value
+            return True, value
         if match:
             history = context.get("that_history", [])
             value = history[0][0] if history and history[0] else ""
-            return value
+            return True, value
         if token in TEMPLATE_SIMPLE_VARIABLE_TOKENS.values():
             value = simple_variable_values(context).get(token, "")
-            return value
+            return True, value
         match = date_format_pattern.fullmatch(token)
         if match:
             value = format_template_date(match.group(1), token)
-            return value
+            return True, value
         # Unknown braces stay literal text.
-        return token
+        return False, token
+
+    def render_token(self, inner: str, context: dict, bindings: dict) -> str:
+        """Return the value of one authored token whose text between braces is ``inner``."""
+        matched, value = self.resolve_token_value(inner, context, bindings)
+        if matched:
+            context["interpolated"] = True
+        return value
 
     def apply_transform(self, fn_name: str, resolved: str, context: dict) -> str:
         """Apply one named text transform to an already rendered value."""

@@ -64,16 +64,18 @@ def normalize(text: str) -> str:
         >>> normalize("What's the S&P 500 price?")
         'whats the sp 500 price'
     """
-    result = text.lower()
-
-    # Protect intra-word hyphens while removing other punctuation. Lookarounds
-    # leave the neighbors unconsumed, so every hyphen in "a-b-c" is kept.
-    placeholder = "\x00"
-    result = re_sub(r"(?<=[a-z0-9])-(?=[a-z0-9])", placeholder, result)
-    result = "".join(c for c in result if c.isalnum() or c.isspace() or c == placeholder)
-    result = result.replace(placeholder, "-")
-    result = re_sub(r"\s+", " ", result)
-    trimmed = result.strip()
+    lowered = text.lower()
+    # Protect intra-word hyphens between any two alphanumeric characters while
+    # removing other punctuation and control characters without a placeholder.
+    kept = [
+        char
+        for index, char in enumerate(lowered)
+        if char.isalnum()
+        or char.isspace()
+        or (char == "-" and 0 < index < len(lowered) - 1 and lowered[index - 1].isalnum() and lowered[index + 1].isalnum())
+    ]
+    collapsed = re_sub(r"\s+", " ", "".join(kept))
+    trimmed = collapsed.strip()
     return trimmed
 
 
@@ -169,7 +171,8 @@ def extract_keywords(
         tagged = pos_tag(tokens)
         tokens = [word for word, tag in tagged if tag in CONTENT_POS_TAGS]
 
-    result = select_lexical_terms(tokens, stopwords)
+    word_tokens = [token for token in tokens if all(part.isalnum() for part in token.split("-"))]
+    result = select_lexical_terms(word_tokens, stopwords, allow_technical=True)
     return result
 
 

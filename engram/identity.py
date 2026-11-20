@@ -5,7 +5,7 @@ literal constants and error types. Identity construction therefore performs no
 graph access, model loading, resource download, or transport work.
 """
 
-from re import Match, fullmatch as re_fullmatch, search as re_search
+from re import Match, finditer as re_finditer, fullmatch as re_fullmatch, search as re_search
 from unicodedata import normalize as unicodedata_normalize
 
 from engram.constants import DEFAULT_STOPWORDS
@@ -112,10 +112,14 @@ def expand_contraction(match: Match) -> str:
 
 
 def clean_normalized_token(token: str) -> str:
-    cleaned = token.strip("'")
-    cleaned = cleaned.rstrip(".")
-    if cleaned.endswith(":") and not re_fullmatch(r"[a-z]:", cleaned):
-        cleaned = cleaned.rstrip(":")
+    cleaned = token
+    while True:
+        previous = cleaned
+        cleaned = cleaned.strip("'").rstrip(".")
+        if cleaned.endswith(":") and not re_fullmatch(r"[a-z]:", cleaned):
+            cleaned = cleaned.rstrip(":")
+        if cleaned == previous:
+            break
     return cleaned
 
 
@@ -836,15 +840,17 @@ def extract_entities_and_identifiers(request: str) -> tuple[dict, ...]:
         (match.start(1), match.end(1), match.group(1)) for match in IDENTITY_QUOTED_SPAN_RE.finditer(normalized_unicode)
     )
     for match in IDENTITY_TITLE_SEQUENCE_RE.finditer(normalized_unicode):
-        surface = match.group(0).strip()
-        surface_parts = surface.split()
-        while surface_parts and normalize_retrieval_key(surface_parts[0]).rstrip(".") in IDENTITY_ENTITY_EXCLUDED_WORDS:
-            surface_parts = surface_parts[1:]
-        surface = " ".join(surface_parts)
+        tokens = list(re_finditer(r"\S+", match.group(0)))
+        while tokens and normalize_retrieval_key(tokens[0].group(0)).rstrip(".") in IDENTITY_ENTITY_EXCLUDED_WORDS:
+            tokens = tokens[1:]
+        if not tokens:
+            continue
+        surface = " ".join(token.group(0) for token in tokens)
         words = normalize_retrieval_key(surface).split()
         if words and not all(word in IDENTITY_ENTITY_EXCLUDED_WORDS for word in words):
-            surface_start = normalized_unicode.find(surface, match.start(), match.end())
-            candidates.append((surface_start, surface_start + len(surface), surface))
+            surface_start = match.start() + tokens[0].start()
+            surface_end = match.start() + tokens[-1].end()
+            candidates.append((surface_start, surface_end, surface))
 
     entities = []
     seen = set()
@@ -853,14 +859,18 @@ def extract_entities_and_identifiers(request: str) -> tuple[dict, ...]:
         cleaned = surface.strip(' \t\r\n,;!?()[]{}"“”').rstrip(".")
         if not cleaned:
             continue
-        key = normalize_retrieval_key(cleaned)
+        try:
+            key = normalize_retrieval_key(cleaned)
+            entity = entity_reference(surface=cleaned)
+        except IdentityValidationError:
+            continue
         if not key or key in seen:
             continue
         if any(start < occupied_end and end > occupied_start for occupied_start, occupied_end in occupied):
             continue
         seen.add(key)
         occupied.append((start, end))
-        entities.append(entity_reference(surface=cleaned))
+        entities.append(entity)
         if len(entities) == MAX_ENTITIES:
             break
     result = tuple(entities)

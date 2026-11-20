@@ -1,5 +1,7 @@
 """Engram graph compatibility tests; every check only reads the graph."""
 
+from json import loads as json_loads
+
 from pytest import raises
 
 from engram.schema_admin import verify_schema
@@ -8,6 +10,7 @@ from engram.schema_catalog import packaged_schema, schema_catalog, validate_sche
 SCHEMA_FILE = packaged_schema()
 CATALOG = schema_catalog(SCHEMA_FILE.read_text(encoding="utf-8"))
 DEFAULT_PARAMETERS = {}
+EXTERNAL_NULL = json_loads("null")
 WRITE_PREFIXES = ("CREATE ", "DROP ", "DELETE ", "SET ", "MERGE ")
 
 
@@ -27,11 +30,19 @@ class RecordingConnection:
         if query == "SHOW INDEX INFO":
             ordinary = CATALOG.get("ordinary_indexes", [])[1:] if self.missing_index else CATALOG.get("ordinary_indexes", [])
             rows = [
-                {
-                    "index type": "label+property",
-                    "label": value.get("label", ""),
-                    "property": [value.get("property", "")],
-                }
+                (
+                    {
+                        "index type": "label+property",
+                        "label": value.get("label", ""),
+                        "property": list(value.get("properties", ())),
+                    }
+                    if value.get("properties", ())
+                    else {
+                        "index type": "label",
+                        "label": value.get("label", ""),
+                        "property": EXTERNAL_NULL,
+                    }
+                )
                 for value in ordinary
             ]
             if self.extra_index:

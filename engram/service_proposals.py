@@ -62,6 +62,27 @@ def service_proposal_result(record: dict, *, idempotent: bool) -> dict:
     return result
 
 
+def finish_proposal_accounting(core, request_id: str, proposal_id: str, record: dict) -> None:
+    """Finish candidate query accounting and candidacy feedback for a cached proposal."""
+    if not record.get("queries_recorded", False):
+        queried_ids = record.get("queried_response_ids", ())
+        if queried_ids:
+            core.response_mutations.record_response_queries(
+                queried_ids,
+                accounting_request_id("response-query", request_id),
+            )
+        record["queries_recorded"] = True
+    if not record.get("candidacy_applied", False):
+        candidate_responses = record.get("candidate_responses", {})
+        if not record.get("candidacy_observations", ()) and candidate_responses:
+            record["candidacy_observations"] = core.proposal_feedback_observations(
+                record.get("feedback_frame", {}),
+                proposal_id,
+                tuple(sorted(candidate_responses)),
+            )
+        core.ensure_proposal_candidacy(proposal_id, record)
+
+
 def propose(
     core,
     request: str,
@@ -102,7 +123,7 @@ def propose(
             existing = core.proposals.get(existing_proposal_id, {})
             if existing.get("signature", "") != signature:
                 raise ConflictError("request_id is already associated with a different proposal request")
-            core.ensure_proposal_candidacy(existing_proposal_id, existing)
+            finish_proposal_accounting(core, request_id, existing_proposal_id, existing)
             core.regulated_metrics["idempotent_retries"] += 1
             result = service_proposal_result(existing, idempotent=True)
             return result
@@ -235,11 +256,14 @@ def propose(
             "keywords": list(feedback_frame.get("identity", {}).get("lexical_terms", ())),
             "candidates": candidates,
         }
+        queried_ids = tuple(sorted(queried_response_ids))
         candidate_responses = {candidate.get("statement_id", ""): candidate.get("response", "") for candidate in candidates}
         record = {
             "signature": signature,
             "proposal": proposal,
             "candidate_responses": candidate_responses,
+            "queried_response_ids": queried_ids,
+            "queries_recorded": not queried_ids,
             "resolution": {},
             "resolution_signature": "",
             "pending_resolution": {},
@@ -253,18 +277,7 @@ def propose(
         if not candidates:
             core.regulated_metrics["misses"] += 1
         core.enforce_transient_bound()
-        if queried_response_ids:
-            core.response_mutations.record_response_queries(
-                tuple(sorted(queried_response_ids)),
-                accounting_request_id("response-query", request_id),
-            )
-        if candidates:
-            record["candidacy_observations"] = core.proposal_feedback_observations(
-                feedback_frame,
-                proposal_id,
-                tuple(sorted(candidate_responses)),
-            )
-            core.ensure_proposal_candidacy(proposal_id, record)
+        finish_proposal_accounting(core, request_id, proposal_id, record)
         result = service_proposal_result(record, idempotent=False)
         return result
 
@@ -284,7 +297,12 @@ def resolve(core, proposal_id: str, outcome: str, statement_id: str = "", reason
         record = core.proposals.get(proposal_id, {})
         if not record:
             raise ResourceNotFoundError("unknown or expired proposal_id")
-        core.ensure_proposal_candidacy(proposal_id, record)
+        finish_proposal_accounting(
+            core,
+            record.get("proposal", {}).get("request_id", ""),
+            proposal_id,
+            record,
+        )
         resolution_signature = service_request_signature(outcome=outcome, statement_id=statement_id, reason=reason)
         prior_signature = record.get("resolution_signature", "")
         if prior_signature:

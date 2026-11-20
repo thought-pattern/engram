@@ -3,9 +3,10 @@
 from importlib.resources import files
 from re import IGNORECASE, MULTILINE, compile as re_compile
 
-# A label index has no property; the catalog represents it with an empty property name.
+# A label index has no properties; single and composite node property indexes carry their ordered property tuple.
 ORDINARY_INDEX_PATTERN = re_compile(
-    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)" r"(?:\((?P<property>[A-Za-z][A-Za-z0-9_]*)\))?",
+    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)"
+    r"(?:\((?P<properties>[A-Za-z][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z][A-Za-z0-9_]*)*)\))?",
     IGNORECASE,
 )
 TEXT_INDEX_PATTERN = re_compile(
@@ -249,7 +250,16 @@ def schema_catalog(text: str) -> dict:
         normalized = statement
         match = ORDINARY_INDEX_PATTERN.fullmatch(normalized)
         if match:
-            catalog.get("ordinary_indexes", []).append({"label": match.group("label"), "property": match.group("property") or ""})
+            raw_properties = match.group("properties") or ""
+            properties = tuple(value.strip() for value in raw_properties.split(",") if value.strip())
+            catalog.get("ordinary_indexes", []).append(
+                {
+                    "index_type": "label+property" if properties else "label",
+                    "label": match.group("label"),
+                    "properties": properties,
+                    "property": ",".join(properties),
+                }
+            )
             continue
         match = TEXT_INDEX_PATTERN.fullmatch(normalized)
         if match:
@@ -319,11 +329,16 @@ def validate_schema_contract(text: str) -> dict:
     existence_properties = {
         (label, property_name) for constraint_type, label, property_name in constraints if constraint_type == "exists"
     }
-    if unique_properties - existence_properties or unique_properties - indexed:
+    single_property_indexes = {
+        (label, properties[0])
+        for index_type, label, properties in indexed
+        if index_type == "label+property" and len(properties) == 1
+    }
+    if unique_properties - existence_properties or unique_properties - single_property_indexes:
         raise ValueError("every unique identity requires an existence constraint and lookup index")
     if not REQUIRED_IDENTITY_PROPERTIES.issubset(unique_properties):
         raise ValueError("Engram schema is missing a required corrected identity")
-    if not REQUIRED_SOURCE_BASIS_INDEXES.issubset(indexed):
+    if not REQUIRED_SOURCE_BASIS_INDEXES.issubset(single_property_indexes):
         raise ValueError("Engram source-basis indexes do not match the v1 contract")
 
     admitted_labels = {label for label, _ in REQUIRED_IDENTITY_PROPERTIES}
@@ -331,7 +346,7 @@ def validate_schema_contract(text: str) -> dict:
         if any(value.get("label", "") not in admitted_labels for value in catalog.get(group, [])):
             raise ValueError("schema contains an unknown current label")
     # Memgraph has no implicit label index, so a label match without an indexed property scans every vertex.
-    label_indexes = {label for label, property_name in indexed if not property_name}
+    label_indexes = {label for index_type, label, properties in indexed if index_type == "label" and not properties}
     if admitted_labels - label_indexes:
         raise ValueError("every current label requires a label index")
 
@@ -385,10 +400,11 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
     catalog = {"ordinary_indexes": [], "text_indexes": [], "vector_indexes": [], "constraints": [], "relationships": []}
     for row in index_rows:
         index_type = str(row.get("index type", "") or "")
-        if "vector" in index_type.casefold():
+        folded_type = index_type.strip().casefold()
+        if "vector" in folded_type:
             continue
         properties = catalog_properties(row.get("property", ()))
-        if "text" in index_type.casefold():
+        if "text" in folded_type and "edge" not in folded_type:
             name = str(row.get("name", "") or "")
             if not name:
                 match = TEXT_INDEX_NAME_PATTERN.search(index_type)
@@ -396,11 +412,16 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
             catalog.get("text_indexes", []).append(
                 {"name": name, "label": str(row.get("label", "") or ""), "properties": properties}
             )
-        elif index_type.casefold() == "label" and row.get("property") is None:
-            catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": ""})
         else:
-            for property_name in properties:
-                catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": property_name})
+            normalized_type = "label+property" if folded_type == "label+property (desc)" else folded_type
+            catalog.get("ordinary_indexes", []).append(
+                {
+                    "index_type": normalized_type,
+                    "label": str(row.get("label", "") or ""),
+                    "properties": properties,
+                    "property": ",".join(properties),
+                }
+            )
     for row in constraint_rows:
         constraint_type = str(row.get("constraint type", "") or "").casefold()
         # A composite uniqueness constraint is one definition; its sorted property names are joined by commas.
@@ -429,7 +450,14 @@ def catalog_keys(catalog: dict, group: str) -> set[tuple]:
     """Return comparable immutable keys for one catalog group."""
     values = catalog.get(group, [])
     if group == "ordinary_indexes":
-        result = {(value.get("label", ""), value.get("property", "")) for value in values}
+        result = {
+            (
+                value.get("index_type", "label+property" if value.get("property", "") else "label"),
+                value.get("label", ""),
+                tuple(value.get("properties", (value.get("property", ""),) if value.get("property", "") else ())),
+            )
+            for value in values
+        }
         return result
     if group == "text_indexes":
         result = {(value.get("name", ""), value.get("label", ""), tuple(value.get("properties", ()))) for value in values}

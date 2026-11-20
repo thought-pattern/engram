@@ -257,6 +257,7 @@ def pattern_query(
                     record_statement_hit(selected, turn_moment)
 
                     response_state = {"unknown": False}
+                    render_info = {"interpolated": False}
                     final_response = engram.process_statement_template(
                         selected,
                         captured,
@@ -269,13 +270,19 @@ def pattern_query(
                         evaluation_time=selected_evaluation_time,
                         speaker=speaker,
                         response_state=response_state,
+                        render_info=render_info,
                     )
                     # Output cleanup: repair casing (sentence starts, the
-                    # pronoun I) that lowercase captures splice into
-                    # authored text. Text that rendered exactly as authored
-                    # is kept, so code such as "s[1:4]" or "pop()" survives.
-                    authored = selected.get("template", {}) or selected.get("text", "")
-                    if engram.config.get("polish_responses", False) and final_response != authored:
+                    # pronoun I) only when dynamic content was interpolated or
+                    # captured via <learn>; authored literals stay verbatim.
+                    authored_text = selected.get("text", "") if not selected.get("template", {}) else ""
+                    learned_capture = bool(selected.get("introduced_by_user_id", "")) and bool(selected.get("template", {}))
+                    interpolated = render_info.get("interpolated", False) or learned_capture
+                    if (
+                        engram.config.get("polish_responses", False)
+                        and interpolated
+                        and (not authored_text or final_response != authored_text)
+                    ):
                         final_response = polish_response(final_response)
                     responses.append(final_response)
                     candidates.append(
@@ -360,6 +367,7 @@ def process_statement_template(
     *,
     speaker: str,
     response_state: dict,
+    render_info=(),
 ) -> str:
     """Process a statement's template with context.
 
@@ -440,6 +448,8 @@ def process_statement_template(
                     template_to_process = redirect_stmt.get("template", {}) or redirect_stmt.get("text", "")
                     new_context["response_state"] = response_state
                     redirect_response = engram.template_processor.process(template_to_process, new_context)
+                    if new_context.get("interpolated", False):
+                        context["interpolated"] = True
                     return redirect_response
         result = ""
         return result
@@ -495,6 +505,8 @@ def process_statement_template(
 
     template_to_process = stmt.get("template", {}) or stmt.get("text", "")
     response = engram.template_processor.process(template_to_process, context)
+    if isinstance(render_info, dict):
+        render_info["interpolated"] = bool(context.get("interpolated", False))
 
     # Synchronize public predicates and remove template-local scratch keys.
     if session:
