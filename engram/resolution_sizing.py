@@ -31,6 +31,8 @@ def number_size(value: object) -> int:
     if isinstance(value, int):
         result = len(int.__repr__(value))
         return result
+    if not isinstance(value, float):
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
     if not math_isfinite(value):
         raise ValueError("Out of range float values are not JSON compliant")
     result = len(float.__repr__(value))
