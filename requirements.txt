@@ -22,7 +22,7 @@ spacy==3.8.18
 #   python -m spacy download en_core_web_sm   # parser/tagger/NER/lemmatizer
 
 confection==1.3.4
-srsly==3.0.1
+srsly==2.5.6
 thinc==8.3.14
 weasel==1.0.1
 
