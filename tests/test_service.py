@@ -7,7 +7,8 @@ from threading import Event as threading_Event, Thread as threading_Thread
 from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import metrics, sessions
-from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS
+from engram.config import engram_config
+from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, SessionOverflow
 from engram.constants_artifacts import MAX_RESPONSE_BYTES, LifecycleState, Tier
 from engram.constants_resolution import RESOLUTION_RESULT_FIELDS, ResolutionOutcome
 from engram.constants_service import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES
@@ -332,6 +333,28 @@ def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     core.stop_conversation(named_id)
     core.start_conversation(named_id)
     assert core.inspect_conversation(named_id).get("session", {}).get("previous_response", "") == "Named context."
+
+
+@pytest_mark.parametrize("overflow", [SessionOverflow.LRU, SessionOverflow.EXPIRE_OLDEST])
+@pytest_mark.parametrize("invalid_start", [{"random_seed": "seed"}, {"initial_bot_text": "x" * (MAX_RESPONSE_BYTES + 1)}])
+def test_rejected_start_keeps_the_conversation_it_would_have_displaced(overflow: SessionOverflow, invalid_start: dict) -> None:
+    engram = Engram(config=engram_config(max_sessions=1, session_overflow=overflow))
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    core = EngramCore(engram)
+    token = core.start_conversation("").get("conversation_token", "")
+    core.chat("0", "The sky is blue.", conversation_token=token)
+
+    # At capacity, a valid start would evict the anonymous conversation; a rejected one must not.
+    with pytest_raises(InvalidRequestError):
+        core.start_conversation("Carol", **invalid_start)
+    # An expired anonymous lease is released by a valid restart, not by a rejected one.
+    core.conversation_activity["0"] = core.conversation_activity.get("0", 0.0) - ANONYMOUS_CONVERSATION_LEASE_SECONDS
+    with pytest_raises(InvalidRequestError):
+        core.start_conversation("", **invalid_start)
+
+    assert list(core.conversations) == ["0"]
+    learned = core.inspect_conversation("0", conversation_token=token).get("learned_dynamic", [])
+    assert [fact.get("text", "") for fact in learned] == ["The sky is blue."]
 
 
 @pytest_mark.parametrize("failure_site", ["context", "metrics"])

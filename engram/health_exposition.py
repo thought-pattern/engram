@@ -1,7 +1,7 @@
 """Prometheus text exposition of an owner's existing health snapshot.
 
-This protocol library uses only the standard library. Engram, Tapestry and the isolated Workspace share it without
-constructing a peer runtime. It reads only the explicit fields below; content, identifiers of work, paths, recent
+This protocol library uses only the standard library. Engram and Tapestry share it without constructing a peer
+runtime. It reads only the explicit fields below; content, identifiers of work, paths, recent
 observations and arbitrary nested members are never metric labels. Counters retain their owner's process lifetime.
 """
 

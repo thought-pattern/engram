@@ -68,6 +68,30 @@ def predicate_changes(before: dict, after: dict) -> dict:
     return changes
 
 
+def require_conversation_start(
+    initial_bot_text: object, random_seed: object, random_seed_present: object, clock: object = ()
+) -> None:
+    """Reject malformed conversation start inputs without changing any state.
+
+    The service calls this before it releases or evicts a runtime to make room, so a
+    rejected start leaves every existing conversation in place.
+    """
+    if not isinstance(initial_bot_text, str):
+        raise InvalidRequestError("initial_bot_text must be a string")
+    try:
+        initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
+    except UnicodeEncodeError as err:
+        raise InvalidRequestError("initial_bot_text must contain valid Unicode") from err
+    if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
+        raise InvalidRequestError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
+    if not isinstance(random_seed, int) or isinstance(random_seed, bool):
+        raise InvalidRequestError("random_seed must be an integer")
+    if not isinstance(random_seed_present, bool):
+        raise InvalidRequestError("random_seed_present must be a boolean")
+    if clock != () and not callable(clock):
+        raise InvalidRequestError("clock must be callable")
+
+
 class ConversationRuntime:
     """One process-local Engram conversation with observable turn diagnostics.
 
@@ -87,20 +111,7 @@ class ConversationRuntime:
         clock=(),
     ) -> None:
         normalized_user_id = sessions.normalize_user_id(user_id)
-        if not isinstance(initial_bot_text, str):
-            raise InvalidRequestError("initial_bot_text must be a string")
-        try:
-            initial_bot_text_bytes = len(initial_bot_text.encode("utf-8"))
-        except UnicodeEncodeError as err:
-            raise InvalidRequestError("initial_bot_text must contain valid Unicode") from err
-        if initial_bot_text_bytes > MAX_RESPONSE_BYTES:
-            raise InvalidRequestError(f"initial_bot_text exceeds the UTF-8 limit of {MAX_RESPONSE_BYTES} bytes")
-        if not isinstance(random_seed, int) or isinstance(random_seed, bool):
-            raise InvalidRequestError("random_seed must be an integer")
-        if not isinstance(random_seed_present, bool):
-            raise InvalidRequestError("random_seed_present must be a boolean")
-        if clock != () and not callable(clock):
-            raise InvalidRequestError("clock must be callable")
+        require_conversation_start(initial_bot_text, random_seed, random_seed_present, clock)
 
         self.engram = engram
         self.user_id = normalized_user_id

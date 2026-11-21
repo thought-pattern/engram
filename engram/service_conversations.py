@@ -11,7 +11,7 @@ from uuid import uuid4
 from engram import sessions
 from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, DEFAULT_USER_ID, SessionOverflow
 from engram.constants_artifacts import MAX_METADATA_KEY_BYTES, MAX_METADATA_STRING_BYTES, MAX_RESPONSE_BYTES, MAX_SOURCE_LABEL_BYTES
-from engram.conversation import ConversationRuntime, statement_view
+from engram.conversation import ConversationRuntime, require_conversation_start, statement_view
 from engram.errors import ConflictError, ConversationOwnershipError, LifecycleError, ResourceNotFoundError
 from engram.service_requests import normalize_service_user_id
 from engram.validation import require_any_text
@@ -28,6 +28,10 @@ def start_conversation(
     with core.lock:
         core.require_running()
         conversation_id = normalize_service_user_id(user_id)
+        # Request validation raises InvalidRequestError with its own message, and runs
+        # before an expired lease is released or a runtime is evicted to make room: a
+        # rejected start removes nothing.
+        require_conversation_start(initial_bot_text, random_seed, random_seed_present, core.internal_clock)
         if conversation_id == DEFAULT_USER_ID and conversation_id in core.conversations:
             idle = time_monotonic() - core.conversation_activity.get(conversation_id, time_monotonic())
             if idle >= ANONYMOUS_CONVERSATION_LEASE_SECONDS:
@@ -35,8 +39,7 @@ def start_conversation(
         if conversation_id in core.conversations:
             raise ConflictError(f"conversation already active for user_id: {conversation_id}")
         core.make_conversation_room()
-        # Request validation raises InvalidRequestError with its own message;
-        # anything else is an internal failure, logged at the transport.
+        # Anything raised from here on is an internal failure, logged at the transport.
         runtime = ConversationRuntime(
             core.engram,
             user_id=conversation_id,
