@@ -593,7 +593,7 @@ def test_fusion_suppresses_relation_phrase_if_current_proposition_changes_after_
     )
 
     assert graph.current_reads == 2
-    assert result.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.EVIDENCE
+    assert result.get("outcome", ResolutionOutcome.EVIDENCE) == ResolutionOutcome.MISS
     assert "response_candidates" in result
     assert result.get("response_candidates", ()) == ()
-    assert result.get("evidence_package", {}).get("retained_count", 0) == 1
+    assert result.get("evidence_package", {}).get("retained_count", -1) == 0

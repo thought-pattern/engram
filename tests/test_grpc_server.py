@@ -22,7 +22,7 @@ from engram.constants_service import MAX_CACHE_REQUEST_BYTES
 from engram.core import Engram
 from engram.engram_pb2_grpc import EngramEvidenceServiceStub, EngramServiceStub
 from engram.errors import InvalidRequestError
-from engram.grpc_server import SERVICE_NAME, EngramGrpcServer
+from engram.grpc_server import SERVICE_NAME, EngramGrpcServer, to_metadata_map
 from engram.identity import extract_standalone_identity, query_identity_to_dict
 from engram.mcp_server import MCPConversationService
 from engram.resolution_budget import resolution_budget, resolution_budget_to_dict
@@ -188,7 +188,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                     request_id="learn-1",
                     user_id="Alice",
                     namespace="support",
-                    metadata=struct_pb2.Struct(fields={"actor_model": struct_pb2.Value(string_value="actor-7")}),
+                    metadata=to_metadata_map({"actor_model": "actor-7"}),
                 )
             )
         )
@@ -199,7 +199,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                     request_id="proposal-1",
                     user_id="Carol",
                     namespace="support",
-                    required_metadata=struct_pb2.Struct(fields={"actor_model": struct_pb2.Value(string_value="actor-7")}),
+                    required_metadata=to_metadata_map({"actor_model": "actor-7"}),
                 )
             )
         )
@@ -265,7 +265,7 @@ def test_learn_response_restores_integral_support_revisions_from_struct() -> Non
                     response="This response has durable support.",
                     request_id="learn-struct-support-integers",
                     user_id="",
-                    metadata=as_struct({"support": [ASSERTION_REFERENCE_A]}),
+                    metadata=to_metadata_map({"support": [ASSERTION_REFERENCE_A]}),
                 )
             )
         )

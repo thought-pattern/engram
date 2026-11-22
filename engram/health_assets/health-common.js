@@ -20,6 +20,7 @@ const SUMMARY = `
 </section>`;
 
 const DETAIL = `
+<section id="std-models" class="panel" hidden><h2>Failed models and held model calls</h2><p id="std-models-note" class="subtle"></p><div class="table-scroll"><table><thead><tr><th>Model or config.yml section</th><th>State</th><th>Reason</th><th>Since</th><th>Next</th></tr></thead><tbody id="std-model-state-rows"></tbody></table></div></section>
 <section class="panel"><h2>Recent activity</h2><p class="subtle">Five-second samples for ten minutes; gaps stay visible; counters reset when the component restarts.</p>
   <div class="charts">
     <div><h3>Items waiting</h3><svg id="std-queue-chart" viewBox="0 0 600 150" role="img" aria-label="Items waiting over time"></svg></div>
@@ -197,6 +198,34 @@ function operationColumns(first, second) {
   return [([operation]) => operation, ([, row]) => count(row[first]), ([, row]) => count(row[second]), ([, row]) => tally(row.outcomes)];
 }
 
+// The models marked failed, each until it is tried again, and the config.yml sections whose model calls are held until
+// a human acts; shown for a component whose snapshot reports them.
+export function failedModelRows(snapshot) {
+  const rows = Object.entries(snapshot.failed_models || {}).map(([model, mark]) => ({
+    name: model,
+    state: "Failed",
+    reason: (mark.reason || "Not observed") + (mark.status ? " · HTTP " + mark.status : ""),
+    since: mark.since,
+    next: "Tried again " + time(mark.retry_at),
+  }));
+  for (const [reason, sections] of Object.entries(snapshot.model_provider || {}))
+    for (const [section, hold] of Object.entries(sections || {}))
+      rows.push({ name: "config.yml section " + section, state: "Calls held until a human acts", reason, since: hold.since, next: count(hold.held_calls) + " held" });
+  return rows;
+}
+
+function renderModels(snapshot) {
+  const panel = byId("std-models");
+  if (!panel) return;
+  const reported = "failed_models" in snapshot || "model_provider" in snapshot;
+  panel.hidden = !reported;
+  if (!reported) return;
+  const rows = failedModelRows(snapshot);
+  const failed = Object.keys(snapshot.failed_models || {}).length;
+  text("std-models-note", count(failed) + " failed · " + count(rows.length - failed) + " held");
+  table("std-model-state-rows", rows, [(row) => row.name, (row) => row.state, (row) => row.reason, (row) => time(row.since), (row) => row.next], "No model is marked failed and no model call is held.");
+}
+
 // Build the standard sections: `summary` holds the cards, `detail` the charts and tables.
 export function mountStandard(summary, detail) {
   summary.innerHTML = SUMMARY;
@@ -246,6 +275,7 @@ export function renderStandard(component, snapshot) {
     ["Last error", last.kind ? [last.kind, last.operation, time(last.observed_at)].filter(Boolean).join(" · ") : "None"],
     ["By kind", tally(errors.by_kind)],
   ]);
+  renderModels(snapshot);
   const history = snapshot.history || [];
   chart("std-queue-chart", history, "queue_depth");
   chart("std-finished-chart", history, "finished", true);
@@ -280,17 +310,15 @@ export function renderStandard(component, snapshot) {
   table("std-token-operation-rows", Object.entries(usage.by_operation || {}), tokenColumns(), "No model calls.");
 }
 
-// Poll /api/health with one request outstanding and a four-second timeout, paused while the tab is hidden; a failed
-// poll marks the page stale, and a new incarnation shows the restart notice.
+// Poll /api/health with one request outstanding, paused while the tab is hidden; a failed poll marks the page stale,
+// and a new incarnation shows the restart notice.
 export function start(component, render) {
   const state = { snapshot: null, incarnation: "", pending: false, timer: null };
   async function load() {
     if (state.pending || document.hidden) return;
     state.pending = true;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
     try {
-      const reply = await fetch("/api/health", { cache: "no-store", signal: controller.signal });
+      const reply = await fetch("/api/health", { cache: "no-store" });
       if (!reply.ok) throw new Error("HTTP " + reply.status);
       const snapshot = await reply.json();
       if (state.incarnation && state.incarnation !== snapshot.incarnation) {
@@ -303,10 +331,9 @@ export function start(component, render) {
       text("connection", "Live");
       byId("connection").className = "status live";
     } catch (error) {
-      text("connection", "Stale · " + (error.name === "AbortError" ? "timed out" : error.message));
+      text("connection", "Stale · " + error.message);
       byId("connection").className = "status stale";
     } finally {
-      clearTimeout(timeout);
       state.pending = false;
       clearTimeout(state.timer);
       if (!document.hidden) state.timer = setTimeout(load, 1000 * (state.snapshot?.refresh_seconds || 5));

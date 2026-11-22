@@ -430,10 +430,28 @@ def enrich_query_frame(
     return result
 
 
-def compact_query_frame_from_frame(value: object, *, source_turn: object, topic: object = "") -> dict:
-    """Project one enriched runtime frame into bounded user-owned context."""
+def compact_query_frame_from_frame(
+    value: object,
+    *,
+    source_turn: object,
+    topic: object = "",
+    previous: object = EMPTY_MAPPING,
+) -> dict:
+    """Project one enriched runtime frame into bounded context."""
     frame = validate_query_frame(value)
+    current_turn = internal_turn(source_turn, "compact query frame source_turn")
     identity = frame.get("identity", {})
+    inheritance = frame.get("inheritance", ())
+    effective_turn = min([current_turn, *(item.get("source_turn", current_turn) for item in inheritance)])
+    if inheritance and previous:
+        prior = validate_compact_query_frame(previous)
+        inherited_confidence = max(0.0, prior.get("confidence", 0.0) - 0.1)
+        confidence = frame_confidence(frame, inherited_confidence=inherited_confidence) if inherited_confidence else 0.0
+    elif inheritance:
+        decayed = max(0.0, frame_confidence(frame) - 0.1 * max(1, current_turn - effective_turn))
+        confidence = frame_confidence(frame, inherited_confidence=decayed) if decayed else 0.0
+    else:
+        confidence = frame_confidence(frame)
     result = compact_query_frame(
         operator=identity.get("operator", QueryOperator.UNKNOWN),
         subjects=identity.get("entities", ())[:MAX_CONTEXTUAL_SUBJECTS],
@@ -441,8 +459,8 @@ def compact_query_frame_from_frame(value: object, *, source_turn: object, topic:
         expected_object_type=frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
         temporal_query_value=frame.get("temporal_query", {}),
         qualifiers=identity.get("qualifiers", ()),
-        source_turn=source_turn,
-        confidence=frame_confidence(frame),
+        source_turn=effective_turn,
+        confidence=confidence,
         topic=topic,
     )
     return result

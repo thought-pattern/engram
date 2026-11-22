@@ -16,6 +16,7 @@ from asyncio import (
     get_running_loop as asyncio_get_running_loop,
     new_event_loop as asyncio_new_event_loop,
     run_coroutine_threadsafe as asyncio_run_coroutine_threadsafe,
+    to_thread as asyncio_to_thread,
     wait as asyncio_wait,
 )
 from collections.abc import Mapping
@@ -75,7 +76,6 @@ from engram.constants_relation import (
     MAX_RELATION_CANDIDATES,
     MAX_RELATION_LABEL_BYTES,
     MAX_RELATION_PLAN_ROWS,
-    MAX_RELATION_SURFACES,
     ExpectedObjectType,
     PredicateCardinality,
 )
@@ -203,8 +203,8 @@ def optional_projection_text(value: object, available: bool, name: str, maximum_
 
 
 def projection_text_collection(value: object, name: str) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)) or len(value) > MAX_RELATION_SURFACES:
-        raise InvalidRequestError(f"{name} must be a collection of at most {MAX_RELATION_SURFACES} strings")
+    if not isinstance(value, (list, tuple)):
+        raise InvalidRequestError(f"{name} must be a sequence of strings")
     normalized = tuple(require_text(item, f"{name} value", MAX_RELATION_LABEL_BYTES, allow_empty=False) for item in value)
     if normalized != tuple(dict.fromkeys(normalized)):
         raise InvalidRequestError(f"{name} must contain unique values")
@@ -553,7 +553,13 @@ def decode_projection_rows(rows: object, projection_id: PropositionProjectionQue
         if proposition_id in decoded and decoded.get(proposition_id, {}) != projection:
             raise InvalidRequestError(f"conflicting Proposition projections for Proposition ID: {proposition_id}")
         decoded[proposition_id] = projection
-    result = [decoded.get(proposition_id, {}) for proposition_id in sorted(decoded)]
+    if projection_id == PropositionProjectionQuery.VECTOR:
+        result = sorted(
+            decoded.values(),
+            key=lambda item: (-item.get("semantic_similarity", 0.0), item.get("proposition_id", "")),
+        )
+    else:
+        result = [decoded.get(proposition_id, {}) for proposition_id in sorted(decoded)]
     return result
 
 
@@ -699,6 +705,25 @@ def graph_single(records: list) -> dict:
     return record
 
 
+class DriverSchemaConnection:
+    """Read-only adapter that checks a replacement driver's catalog before publishing it."""
+
+    def __init__(self, owner, loop, driver) -> None:
+        self.owner = owner
+        self.loop = loop
+        self.driver = driver
+
+    def execute(self, query: str, parameters=()) -> list:
+        if is_write_cypher(query) and query not in FIXED_READ_PROCEDURE_QUERIES:
+            raise ValueError("ENGRAM graph access is read-only")
+        query_parameters = dict(parameters) if isinstance(parameters, Mapping) else {}
+        try:
+            result = self.owner.run_on(self.loop, self.driver, query, query_parameters)
+            return result
+        except (Neo4jError, DriverError, OSError) as err:
+            raise RuntimeError(f"Query failed ({type(err).__name__})") from err
+
+
 class MemGraphConnection:
     """Manages a connection to a Bolt graph database through the neo4j async driver.
 
@@ -727,6 +752,7 @@ class MemGraphConnection:
         self.opened = 0
         self.kept_alive = 0
         self.active_sockets = 0
+        self.schema_checked = False
         self.schema_report = {}
         self.driver = ()
         self.available = False
@@ -751,13 +777,16 @@ class MemGraphConnection:
         self.opened += 1
         return [address]
 
-    def keep_opened_sockets_alive(self) -> None:
+    def keep_opened_sockets_alive(self, *, in_flight: bool = False) -> None:
         """Set the keepalive watchdog on every socket the pool opened once it finishes connecting."""
         opened = self.opened
         if opened != self.kept_alive:
             configured = keep_graph_sockets_alive(self.host, self.port)
             with self.internal_lock:
-                if configured <= 0:
+                if not in_flight:
+                    self.active_sockets = max(0, configured)
+                    self.kept_alive = opened
+                elif configured <= 0:
                     self.active_sockets = 0
                 elif configured > self.active_sockets:
                     newly_established = configured - self.active_sockets
@@ -868,9 +897,35 @@ class MemGraphConnection:
             log("Graph database reconnect failed at %s:%d (%s)", self.host, self.port, failure_origin(err))
             result = False
             return result
+        check_loop = asyncio_get_running_loop()
+        verified_report = self.schema_report
+        if self.schema_checked or self.schema_report:
+            try:
+                verified_report = await asyncio_to_thread(
+                    verify_schema,
+                    DriverSchemaConnection(self, check_loop, driver),
+                    packaged_schema(),
+                )
+                if not verified_report.get("valid", False):
+                    raise RuntimeError(f"graph database schema preflight failed: {verified_report}")
+            except Exception as err:
+                try:
+                    await driver.close()
+                finally:
+                    with self.internal_lock:
+                        self.active_sockets = 0
+                        self.kept_alive = self.opened
+                        self.schema_report = verified_report if isinstance(verified_report, dict) else {}
+                        self.reconnect_failures += 1
+                        first_failure = self.reconnect_failures == 1
+                log = logger.warning if first_failure else logger.debug
+                log("Graph database reconnect schema check failed at %s:%d (%s)", self.host, self.port, failure_origin(err))
+                result = False
+                return result
         with self.internal_lock:
-            disconnected = self.loop is not asyncio_get_running_loop()
+            disconnected = self.loop is not check_loop
             if not disconnected:
+                self.schema_report = verified_report
                 self.driver = driver
                 self.available = True
                 self.reconnect_needed = False
@@ -957,7 +1012,7 @@ class MemGraphConnection:
         try:
             # A connection the pool opens for this statement gets its watchdog within one check while the statement waits.
             while futures_wait((future,), timeout=GRAPH_KEEPALIVE_CHECK_SECONDS).not_done:
-                self.keep_opened_sockets_alive()
+                self.keep_opened_sockets_alive(in_flight=True)
             result = future.result()
         except Exception as err:
             if is_connection_error(err):
@@ -1073,7 +1128,11 @@ class MemGraphConnection:
         decoded = [canonical_entity_match_from_graph_row(row) for row in rows]
         if len({row.get("canonical_id", "") for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical entity query returned duplicate identities")
-        result = sorted(decoded, key=lambda row: row.get("canonical_id", ""))
+        folded_term = term.casefold()
+        result = sorted(
+            decoded,
+            key=lambda row: (row.get("primary_label", "").casefold() != folded_term, row.get("canonical_id", "")),
+        )
         return result
 
     def canonical_predicate_matches(self, surface: str, *, limit: int = MAX_RELATION_CANDIDATES) -> list[dict]:
@@ -1086,7 +1145,14 @@ class MemGraphConnection:
         decoded = [canonical_predicate_match_from_graph_row(row) for row in rows]
         if len({row.get("canonical_id", "") for row in decoded}) != len(decoded):
             raise InvalidRequestError("canonical Predicate query returned duplicate identities")
-        result = sorted(decoded, key=lambda row: row.get("canonical_id", ""))
+        folded_term = term.casefold()
+        result = sorted(
+            decoded,
+            key=lambda row: (
+                row.get("primary_label", "").casefold() != folded_term and row.get("canonical_id", "").casefold() != folded_term,
+                row.get("canonical_id", ""),
+            ),
+        )
         return result
 
     def relation_one_hop_proposition_projections(
@@ -1190,6 +1256,7 @@ def connect_graph(
     an empty query result as graph readiness.
     """
     client = MemGraphConnection(host=host, port=port, username=username, password=password)
+    client.schema_checked = True
     # Ownership passes to the caller only after validation; every unsuccessful
     # connection or preflight outcome, including a raised catalog read, stops
     # the client's loop and driver here.

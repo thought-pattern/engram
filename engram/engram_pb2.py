@@ -14,75 +14,91 @@ DESCRIPTOR = imported_descriptor_pool.Default().AddSerializedFile(
     b'ndom_seed"H\n\x0bChatRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04tex'
     b't\x18\x02 \x01(\t\x12\x1a\n\x12conversation_token\x18\x03 \x01(\t":\n\x0bUserReque'
     b'st\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x1a\n\x12conversation_token\x18\x02 \x01(\t"'
-    b"4\n\x0eAddFactRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x14\n\x0csource_label\x18"
-    b'\x02 \x01(\t"C\n\x13SetPredicateRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n'
-    b'\x04name\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t"K\n\x13GetPredicateReques'
-    b"t\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x15\n\rdefault_valu"
-    b'e\x18\x03 \x01(\t""\n\x11PredicateResponse\x12\r\n\x05value\x18\x01 \x01(\t"\xe7\x01\n\x0e'
-    b"ProposeRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 "
-    b"\x01(\t\x12\x0f\n\x07user_id\x18\x03 \x01(\t\x12\x11\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13conte"
-    b"xt_fingerprint\x18\x05 \x01(\t\x12\x12\n\x05limit\x18\x06 \x01(\x05H\x00\x88\x01\x01\x122\n\x11requ"
-    b"ired_metadata\x18\x07 \x01(\x0b2\x17.google.protobuf.Struct\x12\x1d\n\x15"
-    b'required_source_label\x18\x08 \x01(\tB\x08\n\x06_limit"v\n\x0eResolve'
-    b"Request\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12)\n\x07outcome\x18\x02 \x01(\x0e2\x18."
-    b"engram.RegulatorOutcome\x12\x14\n\x0cstatement_id\x18\x03 \x01(\t\x12\x0e\n"
-    b'\x06reason\x18\x04 \x01(\t"\xcf\x01\n\x14LearnResponseRequest\x12\x0f\n\x07reques'
-    b"t\x18\x01 \x01(\t\x12\x10\n\x08response\x18\x02 \x01(\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t\x12\x0f\n"
-    b"\x07user_id\x18\x04 \x01(\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x1b\n\x13context_fin"
-    b"gerprint\x18\x06 \x01(\t\x12\x14\n\x0csource_label\x18\x07 \x01(\t\x12)\n\x08metadata"
-    b'\x18\x08 \x01(\x0b2\x17.google.protobuf.Struct"Q\n\x15RetireRespons'
-    b"eRequest\x12\x14\n\x0cstatement_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\x12\x12"
-    b'\n\nrequest_id\x18\x03 \x01(\t"/\n\x19ResponsesBySupportRequest\x12'
-    b'\x12\n\nrecord_ids\x18\x01 \x03(\t"\xd9\x02\n\x16ResolveEvidenceRequest\x12\x0f'
-    b"\n\x07request\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07user_id\x18\x03"
-    b" \x01(\t\x12\x11\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13context_fingerprint\x18\x05"
-    b" \x01(\t\x12)\n\x08identity\x18\x06 \x01(\x0b2\x17.google.protobuf.Struct\x12"
-    b"2\n\x11required_metadata\x18\x07 \x01(\x0b2\x17.google.protobuf.Str"
-    b"uct\x12\x1d\n\x15required_source_label\x18\x08 \x01(\t\x12'\n\x06budget\x18\t \x01"
-    b"(\x0b2\x17.google.protobuf.Struct\x12\x1c\n\x14configured_resolv"
-    b'ers\x18\n \x03(\t\x12\x14\n\x0caccept_exact\x18\x0b \x01(\x08"\x99\x01\n\x0fEvidencePack'
-    b"age\x12(\n\x07records\x18\x02 \x03(\x0b2\x17.google.protobuf.Struct\x12\x16\n"
-    b"\x0eretained_count\x18\x03 \x01(\r\x12\x15\n\romitted_count\x18\x04 \x01(\r\x12\x11\n\t"
-    b'truncated\x18\x05 \x01(\x08\x12\x1a\n\x12truncation_reasons\x18\x06 \x03(\t"\x8e\x04\n\x10'
-    b"ResolutionResult\x12\x0f\n\x07outcome\x18\x02 \x01(\t\x123\n\x12selected_ca"
-    b"ndidate\x18\x03 \x01(\x0b2\x17.google.protobuf.Struct\x12$\n\x1cselect"
-    b"ed_candidate_available\x18\x04 \x01(\x08\x124\n\x13response_candida"
-    b"tes\x18\x05 \x03(\x0b2\x17.google.protobuf.Struct\x12)\n\x08evidence\x18\x06"
-    b" \x03(\x0b2\x17.google.protobuf.Struct\x12\x12\n\nconfidence\x18\x07 \x01("
-    b"\x01\x12\x1c\n\x14confidence_available\x18\x08 \x01(\x08\x12\x14\n\x0creason_codes\x18"
-    b"\t \x03(\t\x122\n\x11frame_diagnostics\x18\n \x01(\x0b2\x17.google.protob"
-    b"uf.Struct\x121\n\x10resolver_results\x18\x0b \x03(\x0b2\x17.google.pro"
-    b"tobuf.Struct\x12'\n\x06budget\x18\x0c \x01(\x0b2\x17.google.protobuf.S"
-    b'truct\x12"\n\x1aevidence_package_available\x18\r \x01(\x08\x121\n\x10evi'
-    b"dence_package\x18\x0e \x01(\x0b2\x17.engram.EvidencePackage*\xf2\x01\n"
-    b"\x10RegulatorOutcome\x12!\n\x1dREGULATOR_OUTCOME_UNSPECIFI"
-    b'ED\x10\x00\x12\x1e\n\x1aREGULATOR_OUTCOME_ACCEPTED\x10\x01\x12&\n"REGULATO'
-    b'R_OUTCOME_REJECTED_QUALITY\x10\x02\x12&\n"REGULATOR_OUTCOM'
-    b"E_REJECTED_CONTEXT\x10\x03\x12$\n REGULATOR_OUTCOME_REJECT"
-    b"ED_STALE\x10\x04\x12%\n!REGULATOR_OUTCOME_REJECTED_POLICY\x10"
-    b"\x052\xc6\x07\n\rEngramService\x12N\n\x11StartConversation\x12 .engra"
-    b"m.StartConversationRequest\x1a\x17.google.protobuf.Str"
-    b"uct\x124\n\x04Chat\x12\x13.engram.ChatRequest\x1a\x17.google.protob"
-    b"uf.Struct\x12C\n\x13InspectConversation\x12\x13.engram.UserRe"
-    b"quest\x1a\x17.google.protobuf.Struct\x12B\n\x12FinishConversa"
-    b"tion\x12\x13.engram.UserRequest\x1a\x17.google.protobuf.Stru"
-    b"ct\x12@\n\x10StopConversation\x12\x13.engram.UserRequest\x1a\x17.go"
-    b"ogle.protobuf.Struct\x12:\n\x07AddFact\x12\x16.engram.AddFact"
-    b"Request\x1a\x17.google.protobuf.Struct\x12F\n\x0cSetPredicate"
-    b"\x12\x1b.engram.SetPredicateRequest\x1a\x19.engram.Predicate"
-    b"Response\x12F\n\x0cGetPredicate\x12\x1b.engram.GetPredicateRe"
-    b"quest\x1a\x19.engram.PredicateResponse\x12:\n\x07Propose\x12\x16.en"
-    b"gram.ProposeRequest\x1a\x17.google.protobuf.Struct\x12:\n\x07"
-    b"Resolve\x12\x16.engram.ResolveRequest\x1a\x17.google.protobu"
-    b"f.Struct\x12F\n\rLearnResponse\x12\x1c.engram.LearnResponse"
-    b"Request\x1a\x17.google.protobuf.Struct\x12H\n\x0eRetireRespon"
-    b"se\x12\x1d.engram.RetireResponseRequest\x1a\x17.google.proto"
-    b"buf.Struct\x12P\n\x12ResponsesBySupport\x12!.engram.Respon"
-    b"sesBySupportRequest\x1a\x17.google.protobuf.Struct\x12<\n\t"
-    b"GetStatus\x12\x16.google.protobuf.Empty\x1a\x17.google.proto"
-    b"buf.Struct2d\n\x15EngramEvidenceService\x12K\n\x0fResolveEv"
-    b"idence\x12\x1e.engram.ResolveEvidenceRequest\x1a\x18.engram."
-    b"ResolutionResultb\x06proto3"
+    b"\x83\x03\n\x12ConversationReport\x12\x12\n\nstarted_at\x18\x01 \x01(\t\x12\x13\n\x0bfi"
+    b"nished_at\x18\x02 \x01(\t\x12\x0f\n\x07user_id\x18\x03 \x01(\t\x12\x18\n\x10initial_bot_"
+    b"text\x18\x04 \x01(\t\x12\x13\n\x0brandom_seed\x18\x05 \x01(\x03\x12\x1b\n\x13random_seed_p"
+    b"resent\x18\x06 \x01(\x08\x12(\n\x07summary\x18\x07 \x01(\x0b2\x17.google.protobuf."
+    b"Struct\x121\n\x10metrics_baseline\x18\x08 \x01(\x0b2\x17.google.protob"
+    b"uf.Struct\x12.\n\rmetrics_final\x18\t \x01(\x0b2\x17.google.protob"
+    b"uf.Struct\x12(\n\x07session\x18\n \x01(\x0b2\x17.google.protobuf.Str"
+    b"uct\x120\n\x0flearned_dynamic\x18\x0b \x03(\x0b2\x17.google.protobuf.S"
+    b'truct"B\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12$\n\x05value\x18\x02 \x01'
+    b'(\x0b2\x15.engram.MetadataValue"5\n\x0cMetadataList\x12%\n\x06val'
+    b'ues\x18\x01 \x03(\x0b2\x15.engram.MetadataValue"5\n\x0bMetadataMap\x12'
+    b'&\n\x07entries\x18\x01 \x03(\x0b2\x15.engram.MetadataEntry"\xc7\x01\n\rMeta'
+    b"dataValue\x12\x14\n\nbool_value\x18\x01 \x01(\x08H\x00\x12\x13\n\tint_value\x18\x02 \x01"
+    b"(\x03H\x00\x12\x15\n\x0bfloat_value\x18\x03 \x01(\x01H\x00\x12\x16\n\x0cstring_value\x18\x04 \x01("
+    b"\tH\x00\x12*\n\nlist_value\x18\x05 \x01(\x0b2\x14.engram.MetadataListH\x00\x12"
+    b"(\n\tmap_value\x18\x06 \x01(\x0b2\x13.engram.MetadataMapH\x00B\x06\n\x04kin"
+    b'd"4\n\x0eAddFactRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x14\n\x0csource_labe'
+    b'l\x18\x02 \x01(\t"C\n\x13SetPredicateRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12'
+    b'\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t"K\n\x13GetPredicateRequ'
+    b"est\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x15\n\rdefault_va"
+    b'lue\x18\x03 \x01(\t""\n\x11PredicateResponse\x12\r\n\x05value\x18\x01 \x01(\t"\xe3\x01'
+    b"\n\x0eProposeRequest\x12\x0f\n\x07request\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18"
+    b"\x02 \x01(\t\x12\x0f\n\x07user_id\x18\x03 \x01(\t\x12\x11\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13con"
+    b"text_fingerprint\x18\x05 \x01(\t\x12\x12\n\x05limit\x18\x06 \x01(\x05H\x00\x88\x01\x01\x12.\n\x11re"
+    b"quired_metadata\x18\x07 \x01(\x0b2\x13.engram.MetadataMap\x12\x1d\n\x15re"
+    b'quired_source_label\x18\x08 \x01(\tB\x08\n\x06_limit"v\n\x0eResolveRe'
+    b"quest\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12)\n\x07outcome\x18\x02 \x01(\x0e2\x18.en"
+    b"gram.RegulatorOutcome\x12\x14\n\x0cstatement_id\x18\x03 \x01(\t\x12\x0e\n\x06r"
+    b'eason\x18\x04 \x01(\t"\xcb\x01\n\x14LearnResponseRequest\x12\x0f\n\x07request\x18'
+    b"\x01 \x01(\t\x12\x10\n\x08response\x18\x02 \x01(\t\x12\x12\n\nrequest_id\x18\x03 \x01(\t\x12\x0f\n\x07u"
+    b"ser_id\x18\x04 \x01(\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x1b\n\x13context_finge"
+    b"rprint\x18\x06 \x01(\t\x12\x14\n\x0csource_label\x18\x07 \x01(\t\x12%\n\x08metadata\x18\x08"
+    b' \x01(\x0b2\x13.engram.MetadataMap"Q\n\x15RetireResponseReque'
+    b"st\x12\x14\n\x0cstatement_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\x12\x12\n\nrequ"
+    b'est_id\x18\x03 \x01(\t"/\n\x19ResponsesBySupportRequest\x12\x12\n\nrec'
+    b'ord_ids\x18\x01 \x03(\t"\xd5\x02\n\x16ResolveEvidenceRequest\x12\x0f\n\x07requ'
+    b"est\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07user_id\x18\x03 \x01(\t\x12\x11"
+    b"\n\tnamespace\x18\x04 \x01(\t\x12\x1b\n\x13context_fingerprint\x18\x05 \x01(\t\x12)"
+    b"\n\x08identity\x18\x06 \x01(\x0b2\x17.google.protobuf.Struct\x12.\n\x11req"
+    b"uired_metadata\x18\x07 \x01(\x0b2\x13.engram.MetadataMap\x12\x1d\n\x15req"
+    b"uired_source_label\x18\x08 \x01(\t\x12'\n\x06budget\x18\t \x01(\x0b2\x17.googl"
+    b"e.protobuf.Struct\x12\x1c\n\x14configured_resolvers\x18\n \x03(\t\x12"
+    b'\x14\n\x0caccept_exact\x18\x0b \x01(\x08"\x99\x01\n\x0fEvidencePackage\x12(\n\x07rec'
+    b"ords\x18\x02 \x03(\x0b2\x17.google.protobuf.Struct\x12\x16\n\x0eretained_"
+    b"count\x18\x03 \x01(\r\x12\x15\n\romitted_count\x18\x04 \x01(\r\x12\x11\n\ttruncated\x18"
+    b'\x05 \x01(\x08\x12\x1a\n\x12truncation_reasons\x18\x06 \x03(\t"\x8e\x04\n\x10Resolution'
+    b"Result\x12\x0f\n\x07outcome\x18\x02 \x01(\t\x123\n\x12selected_candidate\x18\x03 "
+    b"\x01(\x0b2\x17.google.protobuf.Struct\x12$\n\x1cselected_candida"
+    b"te_available\x18\x04 \x01(\x08\x124\n\x13response_candidates\x18\x05 \x03(\x0b2"
+    b"\x17.google.protobuf.Struct\x12)\n\x08evidence\x18\x06 \x03(\x0b2\x17.goo"
+    b"gle.protobuf.Struct\x12\x12\n\nconfidence\x18\x07 \x01(\x01\x12\x1c\n\x14confi"
+    b"dence_available\x18\x08 \x01(\x08\x12\x14\n\x0creason_codes\x18\t \x03(\t\x122\n\x11f"
+    b"rame_diagnostics\x18\n \x01(\x0b2\x17.google.protobuf.Struct\x12"
+    b"1\n\x10resolver_results\x18\x0b \x03(\x0b2\x17.google.protobuf.Stru"
+    b"ct\x12'\n\x06budget\x18\x0c \x01(\x0b2\x17.google.protobuf.Struct\x12\"\n\x1ae"
+    b"vidence_package_available\x18\r \x01(\x08\x121\n\x10evidence_pack"
+    b"age\x18\x0e \x01(\x0b2\x17.engram.EvidencePackage*\xf2\x01\n\x10Regulator"
+    b"Outcome\x12!\n\x1dREGULATOR_OUTCOME_UNSPECIFIED\x10\x00\x12\x1e\n\x1aRE"
+    b'GULATOR_OUTCOME_ACCEPTED\x10\x01\x12&\n"REGULATOR_OUTCOME_'
+    b'REJECTED_QUALITY\x10\x02\x12&\n"REGULATOR_OUTCOME_REJECTED'
+    b"_CONTEXT\x10\x03\x12$\n REGULATOR_OUTCOME_REJECTED_STALE\x10\x04"
+    b"\x12%\n!REGULATOR_OUTCOME_REJECTED_POLICY\x10\x052\xc9\x07\n\rEngr"
+    b"amService\x12N\n\x11StartConversation\x12 .engram.StartCon"
+    b"versationRequest\x1a\x17.google.protobuf.Struct\x124\n\x04Cha"
+    b"t\x12\x13.engram.ChatRequest\x1a\x17.google.protobuf.Struct\x12"
+    b"C\n\x13InspectConversation\x12\x13.engram.UserRequest\x1a\x17.go"
+    b"ogle.protobuf.Struct\x12E\n\x12FinishConversation\x12\x13.eng"
+    b"ram.UserRequest\x1a\x1a.engram.ConversationReport\x12@\n\x10S"
+    b"topConversation\x12\x13.engram.UserRequest\x1a\x17.google.pr"
+    b"otobuf.Struct\x12:\n\x07AddFact\x12\x16.engram.AddFactRequest"
+    b"\x1a\x17.google.protobuf.Struct\x12F\n\x0cSetPredicate\x12\x1b.engr"
+    b"am.SetPredicateRequest\x1a\x19.engram.PredicateRespons"
+    b"e\x12F\n\x0cGetPredicate\x12\x1b.engram.GetPredicateRequest\x1a\x19"
+    b".engram.PredicateResponse\x12:\n\x07Propose\x12\x16.engram.Pr"
+    b"oposeRequest\x1a\x17.google.protobuf.Struct\x12:\n\x07Resolve"
+    b"\x12\x16.engram.ResolveRequest\x1a\x17.google.protobuf.Struc"
+    b"t\x12F\n\rLearnResponse\x12\x1c.engram.LearnResponseRequest"
+    b"\x1a\x17.google.protobuf.Struct\x12H\n\x0eRetireResponse\x12\x1d.en"
+    b"gram.RetireResponseRequest\x1a\x17.google.protobuf.Str"
+    b"uct\x12P\n\x12ResponsesBySupport\x12!.engram.ResponsesBySu"
+    b"pportRequest\x1a\x17.google.protobuf.Struct\x12<\n\tGetStat"
+    b"us\x12\x16.google.protobuf.Empty\x1a\x17.google.protobuf.Str"
+    b"uct2d\n\x15EngramEvidenceService\x12K\n\x0fResolveEvidence\x12"
+    b"\x1e.engram.ResolveEvidenceRequest\x1a\x18.engram.Resolut"
+    b"ionResultb\x06proto3"
 )
 
 module_globals = globals()

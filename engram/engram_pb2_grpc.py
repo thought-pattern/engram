@@ -43,7 +43,7 @@ class EngramServiceStub:
         self.FinishConversation = channel.unary_unary(
             "/engram.EngramService/FinishConversation",
             request_serializer=engram_protocol.UserRequest.SerializeToString,
-            response_deserializer=protobuf_struct.Struct.FromString,
+            response_deserializer=engram_protocol.ConversationReport.FromString,
             **{"_registered_method": True},
         )
         self.StopConversation = channel.unary_unary(
@@ -219,7 +219,7 @@ def add_EngramServiceServicer_to_server(servicer, server):
         "FinishConversation": grpc_unary_unary_rpc_method_handler(
             servicer.FinishConversation,
             request_deserializer=engram_protocol.UserRequest.FromString,
-            response_serializer=protobuf_struct.Struct.SerializeToString,
+            response_serializer=engram_protocol.ConversationReport.SerializeToString,
         ),
         "StopConversation": grpc_unary_unary_rpc_method_handler(
             servicer.StopConversation,

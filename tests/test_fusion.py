@@ -20,7 +20,6 @@ from engram.fusion import (
     fusion_policy_from_dict,
     fusion_policy_to_dict,
     normalize_validated_candidate_features,
-    permissive_candidate_authority,
     policy_fingerprint,
     validate_fusion_policy,
 )
@@ -31,7 +30,7 @@ from engram.resolution import evidence_reference, validate_candidate, validate_e
 from engram.resolution_budget import capture_resolution_budget, validate_resolution_budget
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import QueryFrameBuilder, query_frame_with_changes
-from tests.support_fixtures import PROPOSITION_REFERENCE_A
+from tests.support_fixtures import PROPOSITION_REFERENCE_A, permissive_candidate_authority
 
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 START_NS = 1_000_000_000

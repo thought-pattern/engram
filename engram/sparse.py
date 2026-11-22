@@ -1,7 +1,6 @@
 """Request-local fielded sparse retrieval over accepted-response artifacts."""
 
 from collections import Counter
-from itertools import islice
 from math import log as math_log
 from re import IGNORECASE, UNICODE, compile as re_compile
 from threading import Lock as threading_Lock
@@ -199,23 +198,34 @@ def field_texts(artifact: dict, include_response_text: bool) -> dict[str, tuple[
     return result
 
 
+def bounded_field_token_groups(texts: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    groups = []
+    remaining = MAX_SPARSE_TOKENS_PER_FIELD
+    for text in texts:
+        if not remaining:
+            break
+        current = sparse_tokens(text)[:remaining]
+        if current:
+            groups.append(current)
+            remaining -= len(current)
+    result = tuple(groups)
+    return result
+
+
 def sparse_document_from_validated_artifact(
     artifact: dict,
     include_response_text: bool,
 ) -> dict:
     fields = field_texts(artifact, include_response_text)
-    # Lazy concatenation stops tokenizing a field's later texts once the field
-    # limit is reached.
-    tokens = {
-        name: tuple(islice((token for text in fields.get(name, ()) for token in sparse_tokens(text)), MAX_SPARSE_TOKENS_PER_FIELD))
-        for name in SPARSE_FIELD_NAMES
-    }
+    token_groups = {name: bounded_field_token_groups(fields.get(name, ())) for name in SPARSE_FIELD_NAMES}
+    tokens = {name: tuple(token for group in token_groups.get(name, ()) for token in group) for name in SPARSE_FIELD_NAMES}
     result = {
         "statement_id": artifact.get("statement_id", ""),
         "scope": dict(validate_scope_key(artifact.get("scope", {}))),
         "lifecycle": artifact.get("lifecycle", LifecycleState.RETIRED),
         "fields": dict(fields),
         "tokens": dict(tokens),
+        "token_groups": dict(token_groups),
         "technical_identifiers": fields.get("technical_identifiers", ()),
     }
     return result
@@ -543,25 +553,30 @@ def phrase_present(tokens: tuple[str, ...], query: tuple[str, ...]) -> bool:
 
 
 def internal_minimum_proximity(tokens: tuple[str, ...], query: tuple[str, ...]) -> int:
-    required = tuple(dict.fromkeys(query))
-    if len(required) < 2:
+    if len(query) < 2:
         return 0
-    positions = {term: [index for index, token in enumerate(tokens) if token == term] for term in required}
-    if any(not values for values in positions.values()):
+    required_counts = Counter(query)
+    if len(required_counts) == 1 and next(iter(required_counts.values()), 0) < 2:
+        return 0
+    positions = {term: [index for index, token in enumerate(tokens) if token == term] for term in required_counts}
+    if any(len(values) < required_counts.get(term, 0) for term, values in positions.items()):
         return 0
     events = sorted((position, term) for term, values in positions.items() for position in values)
     counts: Counter[str] = Counter()
+    satisfied = 0
     left = 0
     best = 0
     for right_position, right_term in events:
         counts[right_term] += 1
-        while len(counts) == len(required):
+        if counts[right_term] == required_counts.get(right_term, 0):
+            satisfied += 1
+        while satisfied == len(required_counts):
             left_position, left_term = events[left]
             width = right_position - left_position + 1
             best = width if not best else min(best, width)
+            if counts[left_term] == required_counts.get(left_term, 0):
+                satisfied -= 1
             counts[left_term] -= 1
-            if not counts[left_term]:
-                del counts[left_term]
             left += 1
     return best
 
@@ -570,18 +585,28 @@ def query_descriptors(
     text: str,
     max_prefix_expansions: int,
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, float]]:
-    tokens = tuple(dict.fromkeys(sparse_tokens(text)))
+    phrase_tokens = sparse_tokens(text)
+    unique_tokens = tuple(dict.fromkeys(phrase_tokens))
     identifiers = technical_identifiers(text)
     descriptors: dict[str, float] = {}
     prefix_count = 0
-    for token in tokens:
+    for token in unique_tokens:
         descriptors[f"t:{token}"] = 1.0
         if MIN_PREFIX_LENGTH <= len(token) <= MAX_PREFIX_LENGTH and prefix_count < max_prefix_expansions:
             descriptors[f"p:{token}"] = 0.15
             prefix_count += 1
     for identifier in identifiers:
         descriptors[f"x:{identifier}"] = 1.5
-    result = (tokens, identifiers, dict(descriptors))
+    result = (phrase_tokens, identifiers, dict(descriptors))
+    return result
+
+
+def field_token_groups_for_document(document: dict, field_name: str) -> tuple[tuple[str, ...], ...]:
+    groups = document.get("token_groups", {}).get(field_name, ())
+    if groups:
+        return groups
+    flat = document.get("tokens", {}).get(field_name, ())
+    result = (flat,) if flat else ()
     return result
 
 
@@ -599,14 +624,31 @@ def rank_sparse_matches(
 ) -> dict:
     """Project bounded accumulated sparse scores and retain deterministic top-K matches."""
     query_ngrams = {f"g:{ngram}" for identifier in query_identifiers for ngram in character_ngrams(identifier)}
+    unique_token_count = max(1, len(set(query_tokens)))
     retained = []
     for statement_id, raw_fields in scores.items():
-        document_tokens = documents.get(statement_id, {}).get("tokens", {})
+        document = documents.get(statement_id, {})
         raw_total = sum(raw_fields.values())
-        normalization = 2.0 * max(1, len(query_tokens))
+        normalization = 2.0 * unique_token_count
         base_score = raw_total / (raw_total + normalization) if raw_total else 0.0
-        phrase_fields = tuple(name for name in SPARSE_FIELD_NAMES if phrase_present(document_tokens.get(name, ()), query_tokens))
-        proximity = {name: internal_minimum_proximity(document_tokens.get(name, ()), query_tokens) for name in SPARSE_FIELD_NAMES}
+        phrase_fields = tuple(
+            name
+            for name in SPARSE_FIELD_NAMES
+            if any(phrase_present(group, query_tokens) for group in field_token_groups_for_document(document, name))
+        )
+        proximity = {
+            name: min(
+                (
+                    value
+                    for value in (
+                        internal_minimum_proximity(group, query_tokens) for group in field_token_groups_for_document(document, name)
+                    )
+                    if value
+                ),
+                default=0,
+            )
+            for name in SPARSE_FIELD_NAMES
+        }
         proximity_fields = tuple(name for name in SPARSE_FIELD_NAMES if 0 < proximity.get(name, 0) <= 8)
         minimum_proximity = min((value for value in proximity.values() if value), default=0)
         keys = matched_keys.get(statement_id, set())
@@ -616,7 +658,7 @@ def rank_sparse_matches(
         technical_exact_count = sum(f"x:{identifier}" in keys for identifier in query_identifiers)
         technical_exact_ratio = technical_exact_count / len(query_identifiers) if query_identifiers else 0.0
         technical_exact = bool(technical_exact_count)
-        prefix_ratio = min(1.0, prefix_count / max(1, len(query_tokens)))
+        prefix_ratio = min(1.0, prefix_count / unique_token_count)
         score = min(
             1.0,
             0.65 * base_score
@@ -693,6 +735,7 @@ def search_sparse_working_set(
     max_posting_visits: int,
     max_prefix_expansions: int,
     max_working_memory_bytes: int,
+    allowed_statement_ids: object = (),
 ) -> dict:
     """Search one immutable state with complete-or-abstain resource bounds."""
     if not isinstance(text, str) or not text.strip():
@@ -741,7 +784,9 @@ def search_sparse_working_set(
                     "working_memory_bytes": 256 + len(descriptors) * SPARSE_DESCRIPTOR_WORKING_BYTES,
                 }
                 return result
-            if documents.get(posting[0], {}).get("scope", {}) != validated_scope:
+            if documents.get(posting[0], {}).get("scope", {}) != validated_scope or (
+                isinstance(allowed_statement_ids, set) and posting[0] not in allowed_statement_ids
+            ):
                 continue
             projected_items = exact_identifier_item_count + 1
             projected_memory = (
@@ -812,13 +857,19 @@ def search_sparse_working_set(
                 + exact_identifier_item_count * SPARSE_IDENTIFIER_WORKING_BYTES,
             }
             return result
-        candidate_pool = set(populated_identifier_sets[0])
+        candidate_pool = {
+            sid
+            for sid in populated_identifier_sets[0]
+            if not isinstance(allowed_statement_ids, set) or sid in allowed_statement_ids
+        }
         for statement_ids in populated_identifier_sets[1:]:
             candidate_pool.intersection_update(statement_ids)
         if not candidate_pool:
             for statement_ids in populated_identifier_sets:
                 for statement_id in statement_ids:
-                    if statement_id in candidate_pool:
+                    if statement_id in candidate_pool or (
+                        isinstance(allowed_statement_ids, set) and statement_id not in allowed_statement_ids
+                    ):
                         continue
                     projected_size = len(candidate_pool) + 1
                     projected_memory = (
@@ -862,7 +913,11 @@ def search_sparse_working_set(
                     }
                     return result
                 statement_id = posting[0]
-                if documents.get(statement_id, {}).get("scope", {}) != validated_scope or statement_id in candidate_pool:
+                if (
+                    documents.get(statement_id, {}).get("scope", {}) != validated_scope
+                    or (isinstance(allowed_statement_ids, set) and statement_id not in allowed_statement_ids)
+                    or statement_id in candidate_pool
+                ):
                     continue
                 projected_memory = (
                     256
@@ -925,7 +980,9 @@ def search_sparse_working_set(
                 continue
             statement_id = posting[0]
             document = documents.get(statement_id, {})
-            if document.get("scope", {}) != validated_scope:
+            if document.get("scope", {}) != validated_scope or (
+                isinstance(allowed_statement_ids, set) and statement_id not in allowed_statement_ids
+            ):
                 continue
             document_tokens = document.get("tokens", {})
             if statement_id not in scores:
@@ -977,6 +1034,7 @@ def search_sparse_index(
     limit: int,
     max_working_memory_bytes: int,
     trusted_artifacts: bool,
+    artifact_filter: object = (),
 ) -> dict:
     """Sync the index to ``artifacts`` and score the query's postings."""
     # Every term the scorer can look up: the query descriptors, and the
@@ -1005,6 +1063,7 @@ def search_sparse_index(
         if statement_id in current:
             raise InvalidRequestError(f"duplicate sparse statement_id: {statement_id}")
         current[statement_id] = artifact
+    allowed_ids = {sid for sid, art in current.items() if artifact_filter(art)} if callable(artifact_filter) else ()
     with index.internal_lock:
         index.sync(current, settings.get("include_response_text", False))
         state = index.query_state(scope, terms)
@@ -1017,6 +1076,7 @@ def search_sparse_index(
             max_posting_visits=settings.get("max_posting_visits", 1),
             max_prefix_expansions=settings.get("max_prefix_expansions", 1),
             max_working_memory_bytes=remaining_memory,
+            allowed_statement_ids=allowed_ids,
         )
     result["working_memory_bytes"] = state_memory + result.get("working_memory_bytes", 0)
     return result
@@ -1032,6 +1092,7 @@ def search_sparse_artifacts(
     max_working_memory_bytes: int,
     trusted_artifacts: bool = False,
     index: object = (),
+    artifact_filter: object = (),
 ) -> dict:
     """Search the artifacts' sparse representations for one scope.
 
@@ -1096,6 +1157,7 @@ def search_sparse_artifacts(
             limit=limit,
             max_working_memory_bytes=max_working_memory_bytes,
             trusted_artifacts=trusted_artifacts,
+            artifact_filter=artifact_filter,
         )
         return result
     construction = index_sparse_artifacts(
@@ -1131,6 +1193,15 @@ def search_sparse_artifacts(
     state = construction.get("state", {})
     if not isinstance(state, dict):
         raise InvalidRequestError("sparse construction state must be an object")
+    allowed_ids = (
+        {
+            (art if trusted_artifacts else validate_cached_response_artifact(art)).get("statement_id", "")
+            for art in artifacts
+            if artifact_filter(art)
+        }
+        if callable(artifact_filter)
+        else ()
+    )
     result = search_sparse_working_set(
         state,
         text,
@@ -1140,6 +1211,7 @@ def search_sparse_artifacts(
         max_posting_visits=validated_settings.get("max_posting_visits", 1),
         max_prefix_expansions=validated_settings.get("max_prefix_expansions", 1),
         max_working_memory_bytes=remaining_memory,
+        allowed_statement_ids=allowed_ids,
     )
     result["working_memory_bytes"] = max(
         construction_peak_memory,

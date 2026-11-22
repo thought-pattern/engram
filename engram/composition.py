@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from logging import getLogger as logging_getLogger
 from re import compile as re_compile
 
+from engram.constants_evidence import PropositionEligibilityReason
 from engram.constants_identity import QueryOperator
 from engram.constants_relation import (
     COMPOSITION_DATE_SECONDS_FRACTION,
@@ -314,12 +315,30 @@ def graph_composition_operator(frame: object) -> GraphCompositionOperator:
     raise InvalidRequestError(CompositionReason.UNSUPPORTED_QUERY.value)
 
 
+def composition_order_descending(frame: object) -> bool:
+    """Detect whether a validated query frame asks for descending order."""
+    current = validate_query_frame(frame)
+    normalized = current.get("resolved_text", "").casefold()
+    descending_markers = (
+        "descending",
+        "highest to lowest",
+        "largest to smallest",
+        "latest to earliest",
+        "newest to oldest",
+        "most to least",
+        "decreasing",
+    )
+    descending = any(marker in normalized for marker in descending_markers)
+    return descending
+
+
 def linear_composition_plan(
     subject: object,
     predicates: object,
     operator: object,
     expected_object_type: object,
     *,
+    descending: bool = False,
     max_rows: int = MAX_COMPOSITION_ROWS,
     max_candidates_per_step: int = MAX_COMPOSITION_CANDIDATES_PER_STEP,
 ) -> dict:
@@ -333,11 +352,24 @@ def linear_composition_plan(
     if not isinstance(operator, GraphCompositionOperator) or not isinstance(expected_object_type, ExpectedObjectType):
         raise InvalidRequestError("linear composition operator or expected type is unsupported")
     root_id = root.get("canonical_id", "")
+    ordered_operators = {
+        GraphCompositionOperator.MIN,
+        GraphCompositionOperator.MAX,
+        GraphCompositionOperator.ORDER,
+    }
     steps = []
     prior_binding = "$root"
     for hop, predicate in enumerate(selected):
         output_binding = "$result" if hop == len(selected) - 1 else f"$hop{hop + 1}"
-        step_type = expected_object_type if hop == len(selected) - 1 else predicate.get("object_type", ExpectedObjectType.UNKNOWN)
+        predicate_type = predicate.get("object_type", ExpectedObjectType.UNKNOWN)
+        if hop == len(selected) - 1:
+            step_type = (
+                predicate_type
+                if expected_object_type == ExpectedObjectType.UNKNOWN and operator in ordered_operators
+                else expected_object_type
+            )
+        else:
+            step_type = predicate_type
         steps.append(
             composition_step(
                 0,
@@ -370,6 +402,7 @@ def linear_composition_plan(
         tuple(steps),
         "$result",
         aggregation_inputs=aggregation,
+        descending=descending if operator == GraphCompositionOperator.ORDER else False,
         max_rows=max_rows,
         max_candidates_per_step=max_candidates_per_step,
     )
@@ -477,7 +510,7 @@ def resolve_composition_predicates(
             candidate = (label, object_type, surface)
             if prior and prior[:2] != candidate[:2]:
                 raise InvalidRequestError(CompositionReason.IDENTITY_AMBIGUOUS.value)
-            if not prior or surface < prior[2]:
+            if not prior or (-len(surface), surface) < (-len(prior[2]), prior[2]):
                 matches[match_key] = candidate
         if len(matches) > MAX_COMPOSITION_HOPS:
             raise InvalidRequestError(CompositionReason.IDENTITY_AMBIGUOUS.value)
@@ -485,6 +518,15 @@ def resolve_composition_predicates(
     if len(matches) != MAX_COMPOSITION_HOPS:
         raise InvalidRequestError(CompositionReason.IDENTITY_MISS.value)
     ordered = sorted(matches.items(), key=lambda value: (value[0][1], value[0][0]))
+    normalized_request = current.get("resolved_text", "").replace("’", "'").replace("ʼ", "'").casefold()
+    first_pos = ordered[0][0][1]
+    first_surface = ordered[0][1][2]
+    second_pos = ordered[1][0][1]
+    between = normalized_request[first_pos + len(first_surface) : second_pos] if first_pos < second_pos else ""
+    of_index = f" {between} ".find(" of ")
+    possessive_index = between.find("'s")
+    if of_index >= 0 and (possessive_index < 0 or of_index <= possessive_index):
+        ordered = [ordered[1], ordered[0]]
     result = tuple(
         canonical_resolution(
             status=CanonicalResolutionStatus.SELECTED,
@@ -500,6 +542,10 @@ def resolve_composition_predicates(
     return result
 
 
+PLAIN_DECIMAL_NUMBER = re_compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+GROUPED_DECIMAL_NUMBER = re_compile(r"^[+-]?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
+
+
 def typed_order_value(label: str, object_type: ExpectedObjectType) -> tuple:
     """Return an exact order key for one NUMBER or DATE terminal label.
 
@@ -508,8 +554,17 @@ def typed_order_value(label: str, object_type: ExpectedObjectType) -> tuple:
     resolution, so distinct labels never share a rounded key.
     """
     if object_type == ExpectedObjectType.NUMBER:
+        stripped_label = label.strip()
+        if "," in stripped_label:
+            if not GROUPED_DECIMAL_NUMBER.fullmatch(stripped_label):
+                raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value)
+            numeric_text = stripped_label.replace(",", "")
+        else:
+            if not PLAIN_DECIMAL_NUMBER.fullmatch(stripped_label):
+                raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value)
+            numeric_text = stripped_label
         try:
-            value = Decimal(label.replace(",", ""))
+            value = Decimal(numeric_text)
         except InvalidOperation as err:
             raise InvalidRequestError(CompositionReason.TYPE_MISMATCH.value) from err
         if not value.is_finite():
@@ -592,6 +647,7 @@ def execute_composition_plan(
         branch_truncated = False
         branch_failed = False
         branch_cycle = False
+        branch_type_unavailable = False
         for step in branch_steps:
             step_max_candidates = step.get("max_candidates", 0)
             step_predicate_id = step.get("predicate_id", "")
@@ -661,15 +717,18 @@ def execute_composition_plan(
                     decision = validate_proposition_eligibility_decision(revalidate(projection))
                     graph_rows += 1
                     if not decision.get("eligible", False) or not decision.get("revalidated", False):
+                        if decision.get("reason", "") == PropositionEligibilityReason.REVALIDATION_UNAVAILABLE:
+                            branch_failed = True
+                            reasons.add(CompositionReason.DEPENDENCY_FAILED)
                         continue
                     expected = step.get("expected_object_type", ExpectedObjectType.UNKNOWN)
                     item_type = item.get("object_type", ExpectedObjectType.UNKNOWN)
                     if expected != ExpectedObjectType.UNKNOWN and item_type != expected:
-                        reasons.add(
-                            CompositionReason.TYPE_UNAVAILABLE
-                            if item_type == ExpectedObjectType.UNKNOWN
-                            else CompositionReason.TYPE_MISMATCH
-                        )
+                        if item_type == ExpectedObjectType.UNKNOWN:
+                            branch_type_unavailable = True
+                            reasons.add(CompositionReason.TYPE_UNAVAILABLE)
+                        else:
+                            reasons.add(CompositionReason.TYPE_MISMATCH)
                         continue
                     object_id = projection.get("object_entity_id", "")
                     if object_id in state_history:
@@ -715,7 +774,7 @@ def execute_composition_plan(
         completed = [state.get("path", ()) for state in states if len(state.get("path", ())) == len(branch_steps)]
         complete_paths.extend(completed)
         branch_complete.append(bool(completed))
-        branch_known.append(not branch_truncated and not branch_failed and not branch_cycle)
+        branch_known.append(not branch_truncated and not branch_failed and not branch_cycle and not branch_type_unavailable)
 
     complete = ordered_paths(complete_paths)
     partial = ordered_paths(partial_paths)
@@ -824,9 +883,16 @@ def evaluate_composition_result(
         terminal_cardinalities = tuple(
             item.get("predicate_cardinality", PredicateCardinality.UNKNOWN) for item in terminal_propositions
         )
+        single_subject_values: dict[tuple[str, str], set[str]] = {}
+        for item in terminal_propositions:
+            if item.get("predicate_cardinality", PredicateCardinality.UNKNOWN) == PredicateCardinality.SINGLE:
+                projection = item.get("projection", {})
+                pair = (projection.get("subject_entity_id", ""), projection.get("predicate_id", ""))
+                single_subject_values.setdefault(pair, set()).add(projection.get("object_entity_id", ""))
+        single_value_conflict = any(len(values) > 1 for values in single_subject_values.values())
         if any(value == PredicateCardinality.UNKNOWN for value in terminal_cardinalities):
             reasons.add(CompositionReason.CARDINALITY_UNKNOWN)
-        elif len(terminal_ids) != len(raw_terminal_ids):
+        elif len(terminal_ids) != len(raw_terminal_ids) or single_value_conflict:
             reasons.add(CompositionReason.CARDINALITY_CONFLICT)
         elif known_complete:
             aggregate_value = str(len(terminal_ids))
@@ -889,6 +955,15 @@ def evaluate_composition_result(
     return result
 
 
+def composition_branch_chains(steps: tuple) -> tuple[str, ...]:
+    """Build each branch's ordered predicate-label chain."""
+    branches = sorted({step.get("branch", 0) for step in steps})
+    chains = tuple(
+        " → ".join(step.get("predicate_label", "") for step in steps if step.get("branch", 0) == branch) for branch in branches
+    )
+    return chains
+
+
 def phrase_composition_result(plan: object, execution: object) -> str:
     """Phrase only a direct-safe composition result from closed plan fields."""
     current = validate_composition_plan(plan)
@@ -896,7 +971,8 @@ def phrase_composition_result(plan: object, execution: object) -> str:
         raise InvalidRequestError("composition result is not direct-result eligible")
     operator = current.get("operator", GraphCompositionOperator.LOOKUP)
     root_label = current.get("root_label", "")
-    chain = " → ".join(step.get("predicate_label", "") for step in current.get("steps", ()) if step.get("branch", 0) == 0)
+    branch_chains = composition_branch_chains(current.get("steps", ()))
+    chain = branch_chains[0] if branch_chains else ""
     if operator == GraphCompositionOperator.LOOKUP:
         labels = execution.get("terminal_labels", ())
         if not isinstance(labels, tuple) or len(labels) != 1 or not isinstance(labels[0], str):
@@ -913,6 +989,10 @@ def phrase_composition_result(plan: object, execution: object) -> str:
         truth = execution.get("truth_value", False)
         if "truth_value" not in execution or not isinstance(truth, bool) or not execution.get("truth_available", False):
             raise InvalidRequestError("composition Boolean result is malformed")
+        if operator in {GraphCompositionOperator.AND, GraphCompositionOperator.OR}:
+            joined = f" {operator.value.lower()} ".join(branch_chains)
+            result = f"{root_label} — {joined}: {'true' if truth else 'false'}."
+            return result
         result = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth else 'false'}."
         return result
     aggregate = execution.get("aggregate_value", "")

@@ -344,7 +344,12 @@ def resolve_request(
             frame = apply_rewrites_to_frame(frame, core.rewrite_engine, check_cancellation)
 
         def remember_contextual_frame() -> None:
-            compact = compact_query_frame_from_frame(frame, source_turn=current_turn, topic=topic)
+            compact = compact_query_frame_from_frame(
+                frame,
+                source_turn=current_turn,
+                topic=topic,
+                previous=previous_query_frame,
+            )
             with core.engram.session_lock:
                 session["previous_query_frame"] = compact
                 session["query_frame_turn"] = current_turn

@@ -84,7 +84,7 @@ def interface_type(field: FieldDescriptorProto) -> str:
             return computed_return_value
         return element
     if field.type == FieldDescriptorProto.TYPE_ENUM:
-        element = field.type_name.rsplit(".", 1)[-1]
+        element = "int"
     else:
         element = SCALAR_INTERFACE_TYPES.get(field.type, "")
         if not element:
@@ -102,7 +102,7 @@ def constructor_type(field: FieldDescriptorProto) -> str:
     if field.type == FieldDescriptorProto.TYPE_MESSAGE:
         element = "object"
     elif field.type == FieldDescriptorProto.TYPE_ENUM:
-        element = field.type_name.rsplit(".", 1)[-1]
+        element = "int"
     else:
         element = SCALAR_INTERFACE_TYPES.get(field.type, "")
         if not element:
@@ -118,7 +118,7 @@ def normalize_protobuf_interface() -> None:
     lines = [
         '"""Static interface for the generated current Engram protobuf messages."""',
         "",
-        "from google.protobuf.descriptor import FileDescriptor",
+        "from google.protobuf.descriptor import EnumDescriptor, FileDescriptor",
         "from google.protobuf.internal.containers import RepeatedCompositeFieldContainer, RepeatedScalarFieldContainer",
         "from google.protobuf.message import Message",
         "from google.protobuf.struct_pb2 import Struct",
@@ -127,23 +127,36 @@ def normalize_protobuf_interface() -> None:
         "",
     ]
     for enum in descriptor.enum_type:
-        lines.extend((f"class {enum.name}(int):",))
+        wrapper_name = f"{enum.name}Wrapper"
+        lines.append(f"class {wrapper_name}:")
+        lines.append("    DESCRIPTOR: EnumDescriptor")
+        lines.append("    ValueType: type[int]")
         for value in enum.value:
-            lines.append(f"    {value.name}: {enum.name}")
+            lines.append(f"    {value.name}: int")
+        lines.append("    def Name(self, number: int) -> str: ...")
+        lines.append("    def Value(self, name: str) -> int: ...")
+        lines.append("    def keys(self) -> list[str]: ...")
+        lines.append("    def values(self) -> list[int]: ...")
+        lines.append("    def items(self) -> list[tuple[str, int]]: ...")
         lines.append("")
+        lines.append(f"{enum.name}: {wrapper_name}")
         for value in enum.value:
-            lines.append(f"{value.name}: {enum.name}")
+            lines.append(f"{value.name}: int")
         lines.append("")
     for message in descriptor.message_type:
         lines.append(f"class {message.name}(Message):")
         for field in message.field:
             lines.append(f"    {field.name}: {interface_type(field)}")
         lines.append("")
-        lines.append("    def __init__(")
-        lines.append("        self,")
-        for field in message.field:
-            lines.append(f"        {field.name}: {constructor_type(field)} = ...,")
-        lines.append("    ) -> None: ...")
+        if message.field:
+            lines.append("    def __init__(")
+            lines.append("        self,")
+            lines.append("        *,")
+            for field in message.field:
+                lines.append(f"        {field.name}: {constructor_type(field)} = ...,")
+            lines.append("    ) -> None: ...")
+        else:
+            lines.append("    def __init__(self) -> None: ...")
         lines.append("")
     PROTOBUF_INTERFACE.write_text("\n".join(lines), encoding="utf-8")
 

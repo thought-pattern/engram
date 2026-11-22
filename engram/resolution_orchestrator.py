@@ -19,7 +19,7 @@ from engram.evidence import (
     evidence_usefulness_policy,
     validate_evidence_usefulness_policy,
 )
-from engram.fusion import CandidateFusionEngine
+from engram.fusion import CandidateFusionEngine, EngramCandidateAuthority
 from engram.resolution import (
     empty_candidate,
     evidence_reference_to_dict,
@@ -100,6 +100,7 @@ def fused_assembly(orchestrator, frame: dict, plan: dict, accept_exact: bool, co
         confidence_available = False
         reason_codes.append("exact_answer_not_permitted")
     assembly = {
+        "orchestrator": orchestrator,
         "frame": frame,
         "plan": plan,
         "cooperative_check": cooperative_check,
@@ -218,8 +219,30 @@ def screen_proposition_evidence(assembly: dict, raw_proposition_records: tuple, 
     usefulness_decisions = []
     included_records = []
     reason_counts: dict[str, int] = {}
+    checked_propositions = dict(assembly.get("decision", {}).get("checked_propositions", {}))
+    orchestrator = assembly.get("orchestrator", ())
+    authority = getattr(getattr(orchestrator, "internal_fusion", ()), "internal_authority", ())
     for record in normalized_records:
         evidence_check(assembly)
+        record_ids = (
+            record.get("proposition_id", ""),
+            *(step if isinstance(step, str) else step.get("proposition_id", "") for step in record.get("path", ())),
+        )
+        stale = any(pid in checked_propositions and not checked_propositions.get(pid, False) for pid in record_ids if pid)
+        if (
+            not stale
+            and any(pid not in checked_propositions for pid in record_ids if pid)
+            and isinstance(authority, EngramCandidateAuthority)
+            and bool(authority.internal_engram.graph_client)
+        ):
+            is_current = authority.proposition_record_current(record, frame)
+            for pid in record_ids:
+                if pid and pid not in checked_propositions:
+                    checked_propositions[pid] = is_current
+            stale = not is_current
+        if stale:
+            reason_counts["proposition_revalidation_failed"] = reason_counts.get("proposition_revalidation_failed", 0) + 1
+            continue
         usefulness = evaluate_evidence_usefulness(evidence_policy, record)
         usefulness_decisions.append(usefulness)
         for reason in usefulness.get("reasons", ()):

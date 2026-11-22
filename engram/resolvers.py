@@ -3,6 +3,7 @@
 from hashlib import sha256 as hashlib_sha256
 
 from engram.constants_artifacts import LifecycleState
+from engram.constants_evidence import EligibilityExclusionReason
 from engram.constants_identity import ExactLookupOutcome
 from engram.constants_resolution import (
     EXACT_RESOLVER_COST_CLASS,
@@ -18,6 +19,7 @@ from engram.constants_resolution import (
     EvidenceKind,
     ResolverState,
 )
+from engram.eligibility import validity_exclusion_reason
 from engram.errors import (
     InvalidRequestError,
     ResourceNotFoundError,
@@ -57,6 +59,12 @@ def artifact_matches_frame(artifact: dict, frame: dict) -> bool:
     ):
         result = False
         return result
+    eligibility_context = frame.get("eligibility_context", {})
+    if eligibility_context.get("evaluation_time_available", False):
+        validity_reason = validity_exclusion_reason(artifact, eligibility_context.get("evaluation_time", ""))
+        if validity_reason != EligibilityExclusionReason.ELIGIBLE:
+            result = False
+            return result
     required_source_label = frame.get("required_source_label", "")
     if required_source_label and artifact.get("provenance", {}).get("source_label", "") != required_source_label:
         result = False
@@ -328,6 +336,11 @@ class StandaloneSemanticResolver:
             result = exhausted_result(self.name, exhausted)
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
+
+        def matches_semantic_frame(artifact: dict) -> bool:
+            matched = artifact_matches_frame(artifact, frame)
+            return matched
+
         discovery = self.internal_engram.semantic_candidates(
             frame.get("resolved_text", ""),
             frame.get("scope", {}),
@@ -335,6 +348,7 @@ class StandaloneSemanticResolver:
             max_vector_results=budget.get("max_vector_results", 0),
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
             cooperative_check=cooperative_check,
+            artifact_filter=matches_semantic_frame,
         )
         scanned_records = discovery.get("scanned_records", 0)
         if not discovery.get("complete", False):
@@ -473,11 +487,17 @@ class SparseResolver:
             result = exhausted_result(self.name, (dimension,))
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
+
+        def matches_sparse_frame(artifact: dict) -> bool:
+            matched = artifact_matches_frame(artifact, frame)
+            return matched
+
         discovery = self.internal_engram.sparse_candidates(
             frame.get("resolved_text", ""),
             frame.get("scope", {}),
             limit=budget.get("max_candidates", 0),
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
+            artifact_filter=matches_sparse_frame,
         )
         posting_visits = discovery.get("posting_visits", 0)
         if not discovery.get("complete", False):

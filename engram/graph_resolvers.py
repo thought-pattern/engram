@@ -48,6 +48,7 @@ from engram.resolution import (
     evidence_reference,
     evidence_reference_to_dict,
     resolver_result,
+    trusted_candidate_with_changes,
 )
 from engram.resolution_budget import (
     budget_consumption,
@@ -65,6 +66,130 @@ from engram.resolver_plan import (
     run_cooperative_check,
 )
 from engram.resolvers import artifact_matches_frame, exhausted_result, internal_candidate_id
+
+
+def trim_relation_output(
+    records: list[dict],
+    candidates: list[dict],
+    selected_proposition_id: str,
+    budget: dict,
+) -> tuple[int, int, set[str]]:
+    """Trim one-hop evidence records and answer candidates to all declared budgets."""
+    exhausted: set[str] = set()
+    record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+    record_total = sum(record_sizes)
+
+    def record_bytes() -> int:
+        result = array_bytes(record_total, len(records))
+        return result
+
+    def pop_record() -> None:
+        nonlocal record_total
+        index = len(records) - 1
+        if candidates and len(records) > 1:
+            non_selected = next(
+                (
+                    pos
+                    for pos in range(len(records) - 1, -1, -1)
+                    if records[pos].get("proposition_id", "") != selected_proposition_id
+                ),
+                index,
+            )
+            index = non_selected
+        records.pop(index)
+        record_total -= record_sizes.pop(index)
+
+    while len(records) > budget.get("max_evidence", 0):
+        pop_record()
+        exhausted.add("evidence")
+    while records and record_bytes() > budget.get("max_evidence_bytes", 0):
+        pop_record()
+        exhausted.add("evidence_bytes")
+    output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
+    while candidates and output_bytes > budget.get("max_output_bytes", 0):
+        candidates.pop()
+        exhausted.add("output_bytes")
+        output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
+    while records and record_bytes() > budget.get("max_output_bytes", 0):
+        pop_record()
+        exhausted.add("output_bytes")
+    output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
+    if candidates and not records:
+        candidates.clear()
+        output_bytes = 0
+    result = (record_bytes(), output_bytes, exhausted)
+    return result
+
+
+def trim_support_semantic_output(
+    candidates: list[dict],
+    accounting: list[dict],
+    records: list[dict],
+    budget: dict,
+) -> tuple[int, int, int, set[str]]:
+    """Trim semantic proposition records, candidate references, and candidates to budget."""
+    exhausted: set[str] = set()
+    candidate_ref_sizes = [
+        [encoded_size(evidence_reference_to_dict(reference)) for reference in item.get("evidence", ())] for item in candidates
+    ]
+    record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
+
+    def current_evidence_bytes() -> int:
+        ref_count = sum(len(sizes) for sizes in candidate_ref_sizes)
+        ref_total = sum(size for sizes in candidate_ref_sizes for size in sizes)
+        result = array_bytes(ref_total + sum(record_sizes), ref_count + len(record_sizes))
+        return result
+
+    while current_evidence_bytes() > budget.get("max_evidence_bytes", 0):
+        if records:
+            records.pop()
+            record_sizes.pop()
+            exhausted.add("evidence_bytes")
+            continue
+        candidate_index = next(
+            (idx for idx in range(len(candidates) - 1, -1, -1) if candidate_ref_sizes[idx]),
+            -1,
+        )
+        if candidate_index < 0:
+            break
+        candidate_ref_sizes[candidate_index].pop()
+        exhausted.add("evidence_bytes")
+
+    for idx, kept_sizes in enumerate(candidate_ref_sizes):
+        current_cand = candidates[idx]
+        cand_refs = current_cand.get("evidence", ())
+        if len(kept_sizes) != len(cand_refs):
+            kept_refs = cand_refs[: len(kept_sizes)]
+            cand_features = current_cand.get("features", {})
+            updated_values = {**dict(cand_features.get("values", {})), "support_coverage": float(bool(kept_refs))}
+            candidates[idx] = trusted_candidate_with_changes(
+                current_cand,
+                {
+                    "evidence": kept_refs,
+                    "features": feature_set(values=updated_values, unavailable=cand_features.get("unavailable", ())),
+                },
+            )
+
+    candidate_sizes = [encoded_size(candidate_to_dict(item)) for item in candidates]
+
+    def current_output_bytes() -> int:
+        result = array_bytes(sum(candidate_sizes) + sum(record_sizes), len(candidate_sizes) + len(record_sizes))
+        return result
+
+    while current_output_bytes() > budget.get("max_output_bytes", 0) and (records or candidates):
+        if records:
+            records.pop()
+            record_sizes.pop()
+        else:
+            candidates.pop()
+            accounting.pop()
+            candidate_sizes.pop()
+            candidate_ref_sizes.pop()
+        exhausted.add("output_bytes")
+
+    retained_ref_count = sum(len(sizes) for sizes in candidate_ref_sizes)
+    result = (retained_ref_count, current_evidence_bytes(), current_output_bytes(), exhausted)
+    return result
 
 
 class StructuredGraphResolver:
@@ -170,7 +295,7 @@ class StructuredGraphResolver:
             subject,
             predicate,
             frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
-            max_rows=min(MAX_RELATION_PLAN_ROWS, budget.get("max_evidence", 0), max(1, remaining_rows // 2)),
+            max_rows=min(MAX_RELATION_PLAN_ROWS, max(1, remaining_rows // 2)),
         )
         template_id = plan.get("template_id", RelationPlanTemplate.ONE_HOP_PROPOSITION)
         expected_object_type = plan.get("expected_object_type", ExpectedObjectType.UNKNOWN)
@@ -193,6 +318,8 @@ class StructuredGraphResolver:
         retained: list[tuple[dict, dict, float, bool]] = []
         exclusion_counts: dict[str, int] = {}
         revalidation_rows = 0
+        revalidation_incomplete = False
+        revalidation_unavailable = False
         checked_frame = validate_query_frame(frame)
         for item in results:
             check()
@@ -203,15 +330,26 @@ class StructuredGraphResolver:
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             if graph_rows >= budget.get("max_graph_rows", 0):
+                revalidation_incomplete = True
                 break
             decision = self.internal_eligibility_evaluator.revalidate(
-                projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
+                projection,
+                checked_frame,
+                lambda prop_id, window: self.internal_engram.current_proposition_projection(
+                    prop_id,
+                    window,
+                    raise_on_failure=True,
+                ),
+                trusted_frame=True,
             )
             graph_rows += 1
             if decision.get("revalidated", False):
                 revalidation_rows += 1
             if not decision.get("eligible", False):
-                reason = decision.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE).value
+                decision_reason = decision.get("reason", PropositionEligibilityReason.REVALIDATION_UNAVAILABLE)
+                if decision_reason == PropositionEligibilityReason.REVALIDATION_UNAVAILABLE:
+                    revalidation_unavailable = True
+                reason = decision_reason.value
                 exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                 continue
             object_type = item.get("object_type", ExpectedObjectType.UNKNOWN)
@@ -222,7 +360,8 @@ class StructuredGraphResolver:
             tuple(item for item, internal_decision, internal_type_match, internal_type_match_available in retained),
             frame.get("temporal_query", {}),
         )
-        direct_answer = selection.get("direct_answer", False)
+        incomplete_read = len(results) >= plan.get("max_rows", 0) or revalidation_incomplete or revalidation_unavailable
+        direct_answer = selection.get("direct_answer", False) and not incomplete_read
         selection_reason = selection.get("reason", RelationSelectionReason.NO_ELIGIBLE_PROPOSITION)
         selection_cardinality = selection.get("cardinality", PredicateCardinality.UNKNOWN)
         conflict_proposition_ids = selection.get("conflict_proposition_ids", ())
@@ -314,27 +453,14 @@ class StructuredGraphResolver:
                         },
                     )
                 )
-        exhausted = set()
-        record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
-        record_total = sum(record_sizes)
-
-        def record_bytes() -> int:
-            result = array_bytes(record_total, len(records))
-            return result
-
-        while records and record_bytes() > budget.get("max_evidence_bytes", 0):
-            records.pop()
-            record_total -= record_sizes.pop()
-            exhausted.add("evidence_bytes")
-        output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
-        while candidates and output_bytes > budget.get("max_output_bytes", 0):
-            candidates.pop()
-            exhausted.add("output_bytes")
-            output_bytes = record_bytes()
-        if candidates and not records:
-            candidates.clear()
-            output_bytes = 0
-        working_memory = working_size(results) + record_bytes() + output_bytes
+        selected_proposition_id = selection.get("selected_proposition_id", "") if direct_answer else ""
+        evidence_bytes, output_bytes, exhausted = trim_relation_output(
+            records,
+            candidates,
+            selected_proposition_id,
+            budget,
+        )
+        working_memory = working_size(results) + evidence_bytes + output_bytes
         if working_memory > budget.get("max_working_memory_bytes", 0):
             raise WorkingMemoryExceededError("relation resolution working-memory estimate exceeded")
         result = resolver_result(
@@ -370,7 +496,7 @@ class StructuredGraphResolver:
                 candidates=len(candidates),
                 graph_rows=graph_rows,
                 evidence=len(records),
-                evidence_bytes=record_bytes(),
+                evidence_bytes=evidence_bytes,
                 output_bytes=output_bytes,
                 working_memory_bytes=working_memory,
                 exhausted_dimensions=tuple(sorted(exhausted)),
@@ -664,11 +790,15 @@ class SupportSemanticResolver:
         exclusion_counts: dict[str, int] = {}
         revalidation_attempts = 0
         revalidation_rows = 0
-        exhausted = set()
+        exhausted: set[str] = set()
+        ordered_projections = sorted(
+            projections,
+            key=lambda item: (-item.get("semantic_similarity", 0.0), item.get("proposition_id", "")),
+        )
         remaining_evidence = max(0, budget.get("max_evidence", 0) - evidence_count)
         if proposition_capacity and remaining_evidence:
             checked_frame = validate_query_frame(frame)
-            for projection in projections:
+            for projection in ordered_projections:
                 run_cooperative_check(cooperative_check)
                 initial = self.internal_eligibility_evaluator.evaluate(projection, checked_frame, trusted_frame=True)
                 if not initial.get("eligible", False):
@@ -680,7 +810,14 @@ class SupportSemanticResolver:
                     break
                 revalidation_attempts += 1
                 decision = self.internal_eligibility_evaluator.revalidate(
-                    projection, checked_frame, self.internal_engram.current_proposition_projection, trusted_frame=True
+                    projection,
+                    checked_frame,
+                    lambda prop_id, window: self.internal_engram.current_proposition_projection(
+                        prop_id,
+                        window,
+                        raise_on_failure=True,
+                    ),
+                    trusted_frame=True,
                 )
                 if decision.get("revalidated", False):
                     revalidation_rows += 1
@@ -691,35 +828,20 @@ class SupportSemanticResolver:
                 records.append(proposition_evidence_record(projection, decision, frame, self.name, trusted=True))
                 if len(records) >= remaining_evidence:
                     break
-        records.sort(key=lambda record: record.get("proposition_id", ""))
+        records.sort(
+            key=lambda record: (
+                -record.get("features", {}).get("values", {}).get("semantic_score", 0.0),
+                record.get("proposition_id", ""),
+            )
+        )
 
-        # Candidates are fixed while records are trimmed, so their sizes are
-        # computed once and each record's size is subtracted as it goes.
-        reference_sizes = [
-            encoded_size(evidence_reference_to_dict(reference))
-            for candidate in candidates
-            for reference in candidate.get("evidence", ())
-        ]
-        candidate_sizes = [encoded_size(candidate_to_dict(candidate)) for candidate in candidates]
-        record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
-        record_total = sum(record_sizes)
-
-        def evidence_bytes() -> int:
-            result = array_bytes(sum(reference_sizes) + record_total, len(reference_sizes) + len(records))
-            return result
-
-        def output_bytes() -> int:
-            result = array_bytes(sum(candidate_sizes) + record_total, len(candidate_sizes) + len(records))
-            return result
-
-        while records and evidence_bytes() > budget.get("max_evidence_bytes", 0):
-            records.pop()
-            record_total -= record_sizes.pop()
-            exhausted.add("evidence_bytes")
-        while records and output_bytes() > budget.get("max_output_bytes", 0):
-            records.pop()
-            record_total -= record_sizes.pop()
-            exhausted.add("output_bytes")
+        retained_ref_count, evidence_byte_total, output_byte_total, trim_exhausted = trim_support_semantic_output(
+            candidates,
+            accounting,
+            records,
+            budget,
+        )
+        exhausted.update(trim_exhausted)
         fixed_working_memory = (
             working_size(graph_rows) + working_size(projections) + working_size(matches) + working_size(candidates)
         )
@@ -735,6 +857,12 @@ class SupportSemanticResolver:
             record_working -= record_shares.pop()
             exhausted.add("working_memory_bytes")
             working_memory = fixed_working_memory + record_working
+            _, evidence_byte_total, output_byte_total, _ = trim_support_semantic_output(
+                candidates,
+                accounting,
+                records,
+                budget,
+            )
         if working_memory > budget.get("max_working_memory_bytes", 0):
             result = exhausted_result(self.name, ("working_memory_bytes",))
             return result
@@ -760,9 +888,9 @@ class SupportSemanticResolver:
                 candidates=len(candidates),
                 graph_rows=revalidation_attempts,
                 vector_results=len(graph_rows) + len(projections),
-                evidence=evidence_count + len(records),
-                evidence_bytes=evidence_bytes(),
-                output_bytes=output_bytes(),
+                evidence=retained_ref_count + len(records),
+                evidence_bytes=evidence_byte_total,
+                output_bytes=output_byte_total,
                 working_memory_bytes=working_memory,
                 exhausted_dimensions=tuple(sorted(exhausted)),
             ),

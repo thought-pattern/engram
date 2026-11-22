@@ -53,7 +53,7 @@ def graph_records_to_facts(records: list) -> list[tuple[str, str, str]]:
         predicate = record.get("predicate", "")
         obj = record.get("object", "")
         fact = (subject, predicate, obj)
-        identity = tuple(value.casefold() for value in fact)
+        identity = (" ".join(subject.split()), " ".join(predicate.split()).casefold(), " ".join(obj.split()))
         if subject and predicate and obj and identity not in seen:
             seen.add(identity)
             facts.append(fact)
@@ -235,7 +235,11 @@ def graph_vector_proposition_projections(
 
 
 def current_proposition_projection(
-    engram, proposition_id: str, basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS
+    engram,
+    proposition_id: str,
+    basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+    *,
+    raise_on_failure: bool = False,
 ) -> tuple[dict, ...]:
     """Re-read one canonical Proposition through the fixed by-ID capability.
 
@@ -249,6 +253,8 @@ def current_proposition_projection(
         rows = lookup(proposition_id, basis_window)
     except RuntimeError as err:
         result = failed_graph_read("current_proposition_projection", err, ())
+        if raise_on_failure:
+            raise
         return result
     if not isinstance(rows, list) or len(rows) > 1:
         raise ValueError("Proposition projection revalidation boundary returned an invalid collection")
@@ -312,22 +318,24 @@ def structured_proposition_projections(
     retained: dict[str, dict] = {}
     for projection_id, value in requests:
         run_cooperative_check(cooperative_check)
-        remaining = row_limit - len(retained)
-        if not remaining:
+        if len(retained) >= row_limit:
             break
         try:
-            rows = search(value, projection_id=projection_id, limit=remaining, basis_window=basis_window)
+            rows = search(value, projection_id=projection_id, limit=row_limit, basis_window=basis_window)
         except RuntimeError as err:
             result = failed_graph_read("structured_proposition_projections", err, [])
             return result
-        if not isinstance(rows, list) or len(rows) > remaining:
+        if not isinstance(rows, list) or len(rows) > row_limit:
             raise ValueError("structured Proposition projection boundary returned an invalid collection")
         validated_rows = [validate_proposition_projection(row) for row in rows]
         for row in validated_rows:
             proposition_id = row.get("proposition_id", "")
-            if proposition_id in retained and retained.get(proposition_id, {}) != row:
-                raise ValueError(f"conflicting structured Proposition projections for Proposition ID: {proposition_id}")
-            retained[proposition_id] = row
+            if proposition_id in retained:
+                if retained.get(proposition_id, {}) != row:
+                    raise ValueError(f"conflicting structured Proposition projections for Proposition ID: {proposition_id}")
+                continue
+            if len(retained) < row_limit:
+                retained[proposition_id] = row
         run_cooperative_check(cooperative_check)
         require_working_memory(
             estimate_working_bytes([proposition_projection_to_dict(projection) for projection in retained.values()]),
@@ -385,6 +393,7 @@ def relation_one_hop_proposition_projections(
     cooperative_check=(),
     max_working_memory_bytes: int = 0,
     basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+    raise_on_failure: bool = False,
 ) -> list[dict]:
     """Run the fixed one-hop Proposition template and enforce its output boundary."""
     if isinstance(row_limit, bool) or not isinstance(row_limit, int) or not 0 <= row_limit <= MAX_RELATION_PLAN_ROWS:
@@ -402,6 +411,8 @@ def relation_one_hop_proposition_projections(
         )
     except RuntimeError as err:
         result = failed_graph_read("relation_one_hop_proposition_projections", err, [])
+        if raise_on_failure:
+            raise
         return result
     if not isinstance(rows, list) or len(rows) > row_limit:
         raise ValueError("relation one-hop boundary returned an invalid collection")
@@ -473,8 +484,8 @@ def graph_lookup(engram, text: str, *, evaluation_time: str = "") -> str:
         else:
             # Keyword fallback: match a canonical Entity whose primary label
             # contains a query keyword, then return its current surface triples.
-            keywords = extract_keywords(normalize(text), engram.config.get("stopwords", set()))
-            for keyword in keywords[:3]:
+            keywords = tuple(dict.fromkeys(extract_keywords(normalize(text), engram.config.get("stopwords", set()))))
+            for keyword in keywords:
                 records = engram.graph_query(
                     GRAPH_KEYWORD_FACTS_QUERY,
                     {"keyword": keyword, "evaluation_time": selected_evaluation_time},

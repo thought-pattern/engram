@@ -96,6 +96,13 @@ def frame_for_label(label: str) -> str:
         result = "{s} " + literal_label + " {o}"
         return result
 
+    present_finite = (verb_form == ["Fin"] and head.morph.get("Tense", []) == ["Pres"]) or (
+        head.pos_ == "NOUN" and head.morph.get("Number", []) == ["Plur"] and finite_verb_label(nlp, head, normalized)
+    )
+    if present_finite:
+        result = "{s} " + literal_label + " {o}"
+        return result
+
     if normalized.endswith(" by"):
         result = "{s} was " + literal_label + " {o}"
         return result

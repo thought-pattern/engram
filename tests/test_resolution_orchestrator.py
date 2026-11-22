@@ -16,7 +16,7 @@ from engram.constants_resolution import (
 from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
 from engram.errors import InvalidRequestError, ResolutionCancelledError
-from engram.fusion import CandidateFusionEngine, permissive_candidate_authority
+from engram.fusion import CandidateFusionEngine
 from engram.identity import extract_standalone_identity
 from engram.repository import ArtifactRepository, tier_admission_policy
 from engram.resolution import (
@@ -46,7 +46,7 @@ from tests.resolver_fixtures import (
     START_NS,
     FakeResolver,
 )
-from tests.support_fixtures import PROPOSITION_REFERENCE_A
+from tests.support_fixtures import PROPOSITION_REFERENCE_A, permissive_candidate_authority
 
 
 def test_orchestrator_cancellation_after_execution_prevents_accounting_publication() -> None:

@@ -15,7 +15,7 @@ from engram.sparse import search_sparse_artifacts
 logger = logging_getLogger(__name__)
 
 
-def sparse_candidates(engram, text: str, scope, *, limit: int, max_working_memory_bytes: int) -> dict:
+def sparse_candidates(engram, text: str, scope, *, limit: int, max_working_memory_bytes: int, artifact_filter=()) -> dict:
     """Search request-local sparse structures derived from the current artifacts."""
     artifacts = engram.response_repository.trusted_artifacts()
     result = search_sparse_artifacts(
@@ -27,20 +27,34 @@ def sparse_candidates(engram, text: str, scope, *, limit: int, max_working_memor
         max_working_memory_bytes=max_working_memory_bytes,
         trusted_artifacts=True,
         index=engram.sparse_index,
+        artifact_filter=artifact_filter,
     )
     return result
 
 
 def semantic_candidates(
-    engram, text: str, scope, *, limit: int, max_vector_results: int, max_working_memory_bytes: int, cooperative_check=()
+    engram,
+    text: str,
+    scope,
+    *,
+    limit: int,
+    max_vector_results: int,
+    max_working_memory_bytes: int,
+    cooperative_check=(),
+    artifact_filter=(),
 ) -> dict:
     """Search request-local embeddings derived from the current artifacts."""
     artifacts = engram.response_repository.trusted_artifacts()
     engram.semantic_retriever.retain(artifacts)
+    eligible = (
+        tuple(artifact for artifact in artifacts.values() if artifact_filter(artifact))
+        if callable(artifact_filter)
+        else tuple(artifacts.values())
+    )
     result = engram.semantic_retriever.search(
         text,
         scope,
-        tuple(artifacts.values()),
+        eligible,
         limit=limit,
         max_vector_results=max_vector_results,
         max_working_memory_bytes=max_working_memory_bytes,
@@ -150,8 +164,10 @@ def vector_supported_match_components_from_scores(
             similarities.append(support_scores.get(reference_id, 0.0))
         if not similarities:
             continue
-        retained_bytes += estimate_working_bytes(artifact.get("statement_id", ""))
-        require_working_memory(retained_bytes, max_working_memory_bytes)
+        require_working_memory(
+            retained_bytes + scored_bytes + estimate_working_bytes(similarities),
+            max_working_memory_bytes,
+        )
         semantic_similarity = max(similarities)
         priority = 0.0
         score = semantic_similarity * vector_weight

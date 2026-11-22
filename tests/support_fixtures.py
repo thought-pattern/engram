@@ -1,7 +1,16 @@
 """Exact corrected support-reference and accepted-artifact fixtures for Engram tests."""
 
 from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.fusion import candidate_eligibility
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
+
+
+def permissive_candidate_authority(candidate: dict, frame: dict) -> dict:
+    """Return explicit conformance-only eligibility for isolated test fixtures."""
+    del candidate, frame
+    result = candidate_eligibility()
+    return result
+
 
 ASSERTION_REFERENCE_A = {
     "record_kind": "assertion",

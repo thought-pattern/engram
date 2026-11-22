@@ -12,10 +12,44 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
 from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA
+from engram.constants_identity import QueryOperator
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
-from engram.errors import ConflictError, EngramCoreError, LifecycleError, failure_origin
+from engram.errors import (
+    ConflictError,
+    EngramCoreError,
+    IdentityValidationError,
+    InvalidRequestError,
+    LifecycleError,
+    failure_origin,
+)
+from engram.identity import query_identity_from_dict
+from engram.resolution_budget import resolution_budget_from_dict
 from engram.service import EngramCore
 from engram.service_requests import normalize_service_user_id
+
+
+def decode_mcp_identity(identity: object) -> object:
+    """Decode a JSON-serialized QueryIdentity dict while leaving native dicts untouched."""
+    if not isinstance(identity, dict) or not identity:
+        return identity
+    if not isinstance(identity.get("operator", ()), QueryOperator) or isinstance(identity.get("entities", ()), list):
+        try:
+            decoded = query_identity_from_dict(identity)
+        except IdentityValidationError as err:
+            raise InvalidRequestError("identity must be a QueryIdentity") from err
+        return decoded
+    return identity
+
+
+def decode_mcp_budget(budget: object) -> object:
+    """Decode a JSON-serialized ResolutionBudget dict while leaving native dicts untouched."""
+    if not isinstance(budget, dict) or not budget:
+        return budget
+    if isinstance(budget.get("allowed_cost_classes", ()), list):
+        decoded = resolution_budget_from_dict(budget)
+        return decoded
+    return budget
+
 
 logger = logging_getLogger(__name__)
 
@@ -189,16 +223,18 @@ class MCPConversationService:
         """Run the shared transport-neutral resolution pipeline."""
         with self.lock:
             core, _ = self.require_active()
+            decoded_identity = decode_mcp_identity(identity)
+            decoded_budget = decode_mcp_budget(budget)
             result = core.resolve_request(
                 request=request,
                 request_id=request_id,
                 user_id=user_id,
                 namespace=namespace,
                 context_fingerprint=context_fingerprint,
-                identity=identity,
+                identity=decoded_identity,
                 required_metadata=required_metadata,
                 required_source_label=required_source_label,
-                budget=budget,
+                budget=decoded_budget,
                 configured_resolvers=tuple(configured_resolvers),
                 accept_exact=accept_exact,
             )

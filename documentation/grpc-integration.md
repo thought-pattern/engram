@@ -113,12 +113,7 @@ engram/engram_pb2.pyi
 engram/engram_pb2_grpc.py
 ```
 
-RPC requests have explicit fields, and `Resolve` uses the `RegulatorOutcome`
-enum. Conversation, inspection, and cache responses use
-`google.protobuf.Struct` at the external transport boundary. `ResolutionResult`
-names every top-level unified result field, while bounded candidate, evidence,
-diagnostic, resolver, and budget records remain core-owned structures carried
-through `Struct` fields.
+RPC requests have explicit fields, `Resolve` uses the `RegulatorOutcome` enum, and request metadata uses `MetadataMap` so boolean, signed 64-bit integer, and floating-point values keep their exact types. Conversation, inspection, and cache responses use `google.protobuf.Struct` at the external transport boundary, while `ConversationReport` carries signed 64-bit conversation seeds and `ResolutionResult` names every top-level unified result field alongside core-owned `Struct` structures.
 
 Regenerate after changing the contract:
 

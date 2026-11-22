@@ -1,26 +1,34 @@
 """Static interface for the generated current Engram protobuf messages."""
 
-from google.protobuf.descriptor import FileDescriptor
+from google.protobuf.descriptor import EnumDescriptor, FileDescriptor
 from google.protobuf.internal.containers import RepeatedCompositeFieldContainer, RepeatedScalarFieldContainer
 from google.protobuf.message import Message
 from google.protobuf.struct_pb2 import Struct
 
 DESCRIPTOR: FileDescriptor
 
-class RegulatorOutcome(int):
-    REGULATOR_OUTCOME_UNSPECIFIED: RegulatorOutcome
-    REGULATOR_OUTCOME_ACCEPTED: RegulatorOutcome
-    REGULATOR_OUTCOME_REJECTED_QUALITY: RegulatorOutcome
-    REGULATOR_OUTCOME_REJECTED_CONTEXT: RegulatorOutcome
-    REGULATOR_OUTCOME_REJECTED_STALE: RegulatorOutcome
-    REGULATOR_OUTCOME_REJECTED_POLICY: RegulatorOutcome
+class RegulatorOutcomeWrapper:
+    DESCRIPTOR: EnumDescriptor
+    ValueType: type[int]
+    REGULATOR_OUTCOME_UNSPECIFIED: int
+    REGULATOR_OUTCOME_ACCEPTED: int
+    REGULATOR_OUTCOME_REJECTED_QUALITY: int
+    REGULATOR_OUTCOME_REJECTED_CONTEXT: int
+    REGULATOR_OUTCOME_REJECTED_STALE: int
+    REGULATOR_OUTCOME_REJECTED_POLICY: int
+    def Name(self, number: int) -> str: ...
+    def Value(self, name: str) -> int: ...
+    def keys(self) -> list[str]: ...
+    def values(self) -> list[int]: ...
+    def items(self) -> list[tuple[str, int]]: ...
 
-REGULATOR_OUTCOME_UNSPECIFIED: RegulatorOutcome
-REGULATOR_OUTCOME_ACCEPTED: RegulatorOutcome
-REGULATOR_OUTCOME_REJECTED_QUALITY: RegulatorOutcome
-REGULATOR_OUTCOME_REJECTED_CONTEXT: RegulatorOutcome
-REGULATOR_OUTCOME_REJECTED_STALE: RegulatorOutcome
-REGULATOR_OUTCOME_REJECTED_POLICY: RegulatorOutcome
+RegulatorOutcome: RegulatorOutcomeWrapper
+REGULATOR_OUTCOME_UNSPECIFIED: int
+REGULATOR_OUTCOME_ACCEPTED: int
+REGULATOR_OUTCOME_REJECTED_QUALITY: int
+REGULATOR_OUTCOME_REJECTED_CONTEXT: int
+REGULATOR_OUTCOME_REJECTED_STALE: int
+REGULATOR_OUTCOME_REJECTED_POLICY: int
 
 class StartConversationRequest(Message):
     user_id: str
@@ -29,6 +37,7 @@ class StartConversationRequest(Message):
 
     def __init__(
         self,
+        *,
         user_id: str = ...,
         initial_bot_text: str = ...,
         random_seed: int = ...,
@@ -41,6 +50,7 @@ class ChatRequest(Message):
 
     def __init__(
         self,
+        *,
         user_id: str = ...,
         text: str = ...,
         conversation_token: str = ...,
@@ -52,8 +62,86 @@ class UserRequest(Message):
 
     def __init__(
         self,
+        *,
         user_id: str = ...,
         conversation_token: str = ...,
+    ) -> None: ...
+
+class ConversationReport(Message):
+    started_at: str
+    finished_at: str
+    user_id: str
+    initial_bot_text: str
+    random_seed: int
+    random_seed_present: bool
+    summary: Struct
+    metrics_baseline: Struct
+    metrics_final: Struct
+    session: Struct
+    learned_dynamic: RepeatedCompositeFieldContainer[Struct]
+
+    def __init__(
+        self,
+        *,
+        started_at: str = ...,
+        finished_at: str = ...,
+        user_id: str = ...,
+        initial_bot_text: str = ...,
+        random_seed: int = ...,
+        random_seed_present: bool = ...,
+        summary: object = ...,
+        metrics_baseline: object = ...,
+        metrics_final: object = ...,
+        session: object = ...,
+        learned_dynamic: object = ...,
+    ) -> None: ...
+
+class MetadataEntry(Message):
+    key: str
+    value: MetadataValue
+
+    def __init__(
+        self,
+        *,
+        key: str = ...,
+        value: object = ...,
+    ) -> None: ...
+
+class MetadataList(Message):
+    values: RepeatedCompositeFieldContainer[MetadataValue]
+
+    def __init__(
+        self,
+        *,
+        values: object = ...,
+    ) -> None: ...
+
+class MetadataMap(Message):
+    entries: RepeatedCompositeFieldContainer[MetadataEntry]
+
+    def __init__(
+        self,
+        *,
+        entries: object = ...,
+    ) -> None: ...
+
+class MetadataValue(Message):
+    bool_value: bool
+    int_value: int
+    float_value: float
+    string_value: str
+    list_value: MetadataList
+    map_value: MetadataMap
+
+    def __init__(
+        self,
+        *,
+        bool_value: bool = ...,
+        int_value: int = ...,
+        float_value: float = ...,
+        string_value: str = ...,
+        list_value: object = ...,
+        map_value: object = ...,
     ) -> None: ...
 
 class AddFactRequest(Message):
@@ -62,6 +150,7 @@ class AddFactRequest(Message):
 
     def __init__(
         self,
+        *,
         text: str = ...,
         source_label: str = ...,
     ) -> None: ...
@@ -73,6 +162,7 @@ class SetPredicateRequest(Message):
 
     def __init__(
         self,
+        *,
         user_id: str = ...,
         name: str = ...,
         value: str = ...,
@@ -85,6 +175,7 @@ class GetPredicateRequest(Message):
 
     def __init__(
         self,
+        *,
         user_id: str = ...,
         name: str = ...,
         default_value: str = ...,
@@ -95,6 +186,7 @@ class PredicateResponse(Message):
 
     def __init__(
         self,
+        *,
         value: str = ...,
     ) -> None: ...
 
@@ -105,11 +197,12 @@ class ProposeRequest(Message):
     namespace: str
     context_fingerprint: str
     limit: int
-    required_metadata: Struct
+    required_metadata: MetadataMap
     required_source_label: str
 
     def __init__(
         self,
+        *,
         request: str = ...,
         request_id: str = ...,
         user_id: str = ...,
@@ -122,14 +215,15 @@ class ProposeRequest(Message):
 
 class ResolveRequest(Message):
     proposal_id: str
-    outcome: RegulatorOutcome
+    outcome: int
     statement_id: str
     reason: str
 
     def __init__(
         self,
+        *,
         proposal_id: str = ...,
-        outcome: RegulatorOutcome = ...,
+        outcome: int = ...,
         statement_id: str = ...,
         reason: str = ...,
     ) -> None: ...
@@ -142,10 +236,11 @@ class LearnResponseRequest(Message):
     namespace: str
     context_fingerprint: str
     source_label: str
-    metadata: Struct
+    metadata: MetadataMap
 
     def __init__(
         self,
+        *,
         request: str = ...,
         response: str = ...,
         request_id: str = ...,
@@ -163,6 +258,7 @@ class RetireResponseRequest(Message):
 
     def __init__(
         self,
+        *,
         statement_id: str = ...,
         reason: str = ...,
         request_id: str = ...,
@@ -173,6 +269,7 @@ class ResponsesBySupportRequest(Message):
 
     def __init__(
         self,
+        *,
         record_ids: object = ...,
     ) -> None: ...
 
@@ -183,7 +280,7 @@ class ResolveEvidenceRequest(Message):
     namespace: str
     context_fingerprint: str
     identity: Struct
-    required_metadata: Struct
+    required_metadata: MetadataMap
     required_source_label: str
     budget: Struct
     configured_resolvers: RepeatedScalarFieldContainer[str]
@@ -191,6 +288,7 @@ class ResolveEvidenceRequest(Message):
 
     def __init__(
         self,
+        *,
         request: str = ...,
         request_id: str = ...,
         user_id: str = ...,
@@ -213,6 +311,7 @@ class EvidencePackage(Message):
 
     def __init__(
         self,
+        *,
         records: object = ...,
         retained_count: int = ...,
         omitted_count: int = ...,
@@ -237,6 +336,7 @@ class ResolutionResult(Message):
 
     def __init__(
         self,
+        *,
         outcome: str = ...,
         selected_candidate: object = ...,
         selected_candidate_available: bool = ...,

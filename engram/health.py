@@ -19,10 +19,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from errno import errorcode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from ipaddress import ip_address
 from json import dumps as json_dumps
 from logging import getLogger
 from os import getpid
 from pathlib import Path
+from socket import AF_INET6 as socket_AF_INET6
 from threading import Lock as threading_Lock, Thread as threading_Thread, local as threading_local
 from time import monotonic
 
@@ -135,6 +137,14 @@ class EngramHealth:
             self.calls.arrival = {}
         return result
 
+    def thread_cancelled(self, token: int) -> bool:
+        """Drop a pending gRPC thread-wait record when submission fails or its future is cancelled before running."""
+        if not token:
+            return False
+        with self.lock:
+            removed = bool(self.thread_waits.pop(token, {}))
+        return removed
+
     def current_key(self) -> int:
         """The key of the call this thread is serving, 0 outside a counted call."""
         result = getattr(self.calls, "key", 0)
@@ -179,6 +189,7 @@ class EngramHealth:
             total = max(0.0, now - item.get("accepted", now))
             executed = "started" in item
             execution = max(0.0, item.get("worked", now) - item.get("started", now)) if executed else 0.0
+            queued = max(0.0, item.get("started", now) - item.get("accepted", now)) if executed else total
             self.requests["responses"] = self.requests.get("responses", 0) + 1
             self.requests["last_response_at"] = observed_at
             row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
@@ -205,35 +216,42 @@ class EngramHealth:
                     "outcome": outcome,
                     "error_kind": error_kind,
                     "finished_at": observed_at,
-                    "queue_seconds": max(0.0, total - execution),
+                    "queue_seconds": queued,
                     "executed": executed,
                     "execution_seconds": execution,
                     "total_seconds": total,
                     "ids": {},
                 }
             )
+            self.sample_locked(now, observed_at)
+        return True
+
+    def sample_locked(self, now: float, observed_at: str) -> bool:
+        """Keep one recent-activity sample under `self.lock`, at most one every HEALTH_SAMPLE_SECONDS."""
+        if now - self.last_sample < HEALTH_SAMPLE_SECONDS:
+            return False
+        self.last_sample = now
+        self.history.append(
+            {
+                "observed_at": observed_at,
+                "elapsed_seconds": now - self.began,
+                "queue_depth": sum(1 for item in self.items.values() if "started" not in item) + len(self.thread_waits),
+                "finished": self.finished_count,
+                "responses": self.requests.get("responses", 0),
+                "provider_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
+        )
         return True
 
     def sample(self) -> bool:
         """Keep one recent-activity sample, at most one every HEALTH_SAMPLE_SECONDS, and return whether it was kept."""
         now = monotonic()
+        observed_at = datetime.now(UTC).isoformat()
         with self.lock:
-            if now - self.last_sample < HEALTH_SAMPLE_SECONDS:
-                return False
-            self.last_sample = now
-            self.history.append(
-                {
-                    "observed_at": datetime.now(UTC).isoformat(),
-                    "elapsed_seconds": now - self.began,
-                    "queue_depth": sum(1 for item in self.items.values() if "started" not in item) + len(self.thread_waits),
-                    "finished": self.finished_count,
-                    "responses": self.requests.get("responses", 0),
-                    "provider_calls": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                }
-            )
-        return True
+            kept = self.sample_locked(now, observed_at)
+        return kept
 
     def snapshot(self, status: dict, *, stopping: bool, http: dict, grpc: dict, refresh_seconds: float) -> dict:
         """The standard snapshot every Tapestry page shows, then the GetStatus fields in STATUS_FIELDS.
@@ -242,7 +260,9 @@ class EngramHealth:
         health check is not in it.
         """
         now = monotonic()
+        observed_at = datetime.now(UTC).isoformat()
         with self.lock:
+            self.sample_locked(now, observed_at)
             waiting = [item for item in self.items.values() if "started" not in item] + list(self.thread_waits.values())
             queue = sorted(
                 (
@@ -372,8 +392,25 @@ class CountedExecutor(ThreadPoolExecutor):
 
     def submit(self, fn, /, *args, **kwargs):
         token = self.metrics.thread_wait()
-        future = super().submit(self.metrics.thread_started, token, fn, *args, **kwargs)
+        try:
+            future = super().submit(self.metrics.thread_started, token, fn, *args, **kwargs)
+        except BaseException:
+            self.metrics.thread_cancelled(token)
+            raise
+        if token:
+            future.add_done_callback(lambda done: self.metrics.thread_cancelled(token) if done.cancelled() else False)
         return future
+
+
+def http_socket_family(host: str):
+    """Select IPv6 or IPv4 socket family for a validated HTTP listen host."""
+    if host and host != "localhost":
+        try:
+            if ip_address(host).version == 6:
+                return socket_AF_INET6
+        except ValueError:
+            return HealthPageServer.address_family
+    return HealthPageServer.address_family
 
 
 class HealthPageServer(ThreadingHTTPServer):
@@ -383,6 +420,8 @@ class HealthPageServer(ThreadingHTTPServer):
 
     def __init__(self, address: tuple, owner):
         self.owner = owner
+        host = str(address[0]) if address else ""
+        self.address_family = http_socket_family(host)
         super().__init__(address, HealthPageHandler)
 
     def service_actions(self):

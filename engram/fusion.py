@@ -33,13 +33,17 @@ from engram.constants_graph import PropositionProjectionQuery
 from engram.constants_relation import (
     COMPOSITION_CANDIDATE_PROVENANCE_FIELDS,
     GRAPH_COMPOSITION_PRODUCER,
+    MAX_COMPOSITION_BRANCHES,
     MAX_COMPOSITION_HOPS,
+    MAX_COMPOSITION_ROWS,
+    MAX_RELATION_PLAN_ROWS,
     RELATION_CANDIDATE_PROVENANCE_FIELDS,
     RELATION_ONE_HOP_PRODUCER,
     ExpectedObjectType,
     GraphCompositionOperator,
     PredicateCardinality,
     RelationSelectionReason,
+    TemporalQueryOperator,
 )
 from engram.constants_resolution import UTILITY_RESOLVER_PRODUCER, CandidateSource, EvidenceKind, ResolutionOutcome
 from engram.eligibility import evaluate_artifact_eligibility
@@ -52,7 +56,7 @@ from engram.feedback_values import (
     internal_fingerprint,
 )
 from engram.graph import validate_proposition_projection
-from engram.relation import phrase_relation_result
+from engram.relation import phrase_relation_result, select_relation_propositions
 from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
     empty_candidate,
@@ -315,13 +319,6 @@ def trusted_candidate_eligibility_to_dict(current: dict) -> dict:
     return result
 
 
-def permissive_candidate_authority(candidate: dict, frame: dict) -> dict:
-    """Return explicit conformance-only eligibility for isolated fixtures."""
-    del candidate, frame
-    result = candidate_eligibility()
-    return result
-
-
 def abstaining_candidate_authority(candidate: dict, frame: dict) -> dict:
     """Return the safe default when no current-state authority was supplied."""
     del candidate, frame
@@ -413,7 +410,65 @@ class EngramCandidateAuthority:
                 RelationSelectionReason.SELECTED_TRUST_RANKED,
             }
         )
-        result = {"current": current, "response": response, "object_type": object_type} if unchanged else {}
+        if not unchanged:
+            result = {}
+            return result
+        subject_label = provenance.get("subject_label", "")
+        predicate_label = provenance.get("predicate_label", "")
+        object_label = provenance.get("object_label", "")
+        client = self.internal_engram.graph_client
+        if client and callable(getattr(client, "relation_one_hop_proposition_projections", ())):
+            include_historical = frame.get("temporal_query", {}).get("operator", TemporalQueryOperator.UNSPECIFIED) not in {
+                TemporalQueryOperator.UNSPECIFIED,
+                TemporalQueryOperator.CURRENT,
+                TemporalQueryOperator.NOW,
+            }
+            try:
+                one_hop_rows = self.internal_engram.relation_one_hop_proposition_projections(
+                    expected_identity[0],
+                    expected_identity[1],
+                    row_limit=MAX_RELATION_PLAN_ROWS,
+                    include_historical=include_historical,
+                    basis_window=assertion_basis_window(frame),
+                    raise_on_failure=True,
+                )
+            except (RuntimeError, ValueError):
+                result = {}
+                return result
+            evaluator = PropositionEligibilityEvaluator()
+            eligible_rows = tuple(
+                row for row in one_hop_rows if evaluator.evaluate(row.get("projection", {}), frame).get("eligible", False)
+            )
+            selection = select_relation_propositions(eligible_rows, frame.get("temporal_query", {}))
+            statement_id = candidate.get("statement_id", "")
+            if (
+                len(one_hop_rows) >= MAX_RELATION_PLAN_ROWS
+                or not selection.get("direct_answer", False)
+                or selection.get("selected_proposition_id", "") != statement_id
+            ):
+                result = {"conflict": True}
+                return result
+            matched_row = next(
+                (row for row in eligible_rows if row.get("projection", {}).get("proposition_id", "") == statement_id),
+                {},
+            )
+            if not matched_row:
+                result = {}
+                return result
+            object_label = matched_row.get("object_label", object_label)
+            object_type = matched_row.get("object_type", object_type)
+            if callable(getattr(client, "canonical_entity_matches", ())) and subject_label:
+                entity_rows = self.internal_engram.canonical_entity_matches(subject_label)
+                matched_entity = next((row for row in entity_rows if row.get("canonical_id", "") == expected_identity[0]), {})
+                if matched_entity:
+                    subject_label = matched_entity.get("primary_label", subject_label)
+            if callable(getattr(client, "canonical_predicate_matches", ())) and predicate_label:
+                predicate_rows = self.internal_engram.canonical_predicate_matches(predicate_label)
+                matched_pred = next((row for row in predicate_rows if row.get("canonical_id", "") == expected_identity[1]), {})
+                if matched_pred:
+                    predicate_label = matched_pred.get("primary_label", predicate_label)
+            response = phrase_relation_result(subject_label, predicate_label, object_label)
+        result = {"current": current, "response": response, "object_type": object_type, "conflict": False}
         return result
 
     def relation_candidate(self, candidate: dict, frame: dict) -> dict:
@@ -429,6 +484,12 @@ class EngramCandidateAuthority:
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
+            return result
+        if frame.get("required_source_label", ""):
+            result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
+            return result
+        if frame.get("required_metadata", {}):
+            result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
             return result
         candidate_evidence = candidate.get("evidence", ())
         only_reference = candidate_evidence[0] if len(candidate_evidence) == 1 else {}
@@ -451,6 +512,14 @@ class EngramCandidateAuthority:
                 False,
                 False,
                 (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,),
+            )
+            return result
+        if rebuilt.get("conflict", False):
+            result = candidate_eligibility(
+                False,
+                False,
+                False,
+                (FusionPolicyReason.EXPLICIT_CONFLICT,),
             )
             return result
         current = rebuilt.get("current", {})
@@ -554,7 +623,11 @@ class EngramCandidateAuthority:
             if not provenance.get("truth_available", False) or not isinstance(truth_value, bool):
                 result = {}
                 return result
-            response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth_value else 'false'}."
+            if operator in {GraphCompositionOperator.AND, GraphCompositionOperator.OR}:
+                joined = f" {operator.value.lower()} ".join(str(value) for value in predicate_labels)
+                response = f"{root_label} — {joined}: {'true' if truth_value else 'false'}."
+            else:
+                response = f"{root_label} — {operator.value.lower()} {chain}: {'true' if truth_value else 'false'}."
         else:
             aggregate = provenance.get("aggregate_value", "")
             if not provenance.get("aggregate_value_available", False) or not isinstance(aggregate, str) or not aggregate:
@@ -563,6 +636,56 @@ class EngramCandidateAuthority:
             response = f"{root_label} — {operator.value.lower()} {chain}: {aggregate}."
         result = {"response": response, "object_type": object_type}
         return result
+
+    def proposition_record_current(self, record: dict, frame: dict) -> bool:
+        """Revalidate one Proposition evidence record against the current by-ID graph state."""
+        evaluator = PropositionEligibilityEvaluator()
+        refs = record.get("canonical_references", {})
+        entries = [
+            (
+                record.get("proposition_id", ""),
+                refs.get("subject_entity_id", ""),
+                refs.get("predicate_id", ""),
+                refs.get("object_entity_id", ""),
+            )
+        ]
+        for step in record.get("path", ()):
+            if isinstance(step, dict):
+                entries.append(
+                    (
+                        step.get("proposition_id", ""),
+                        step.get("subject_entity_id", ""),
+                        step.get("predicate_id", ""),
+                        step.get("object_entity_id", ""),
+                    )
+                )
+        checked: set[str] = set()
+        for proposition_id, subj_id, pred_id, obj_id in entries:
+            if not proposition_id or proposition_id in checked:
+                continue
+            checked.add(proposition_id)
+            try:
+                current_values = self.internal_engram.current_proposition_projection(proposition_id, assertion_basis_window(frame))
+                current = (
+                    validate_proposition_projection(current_values[0])
+                    if isinstance(current_values, tuple) and len(current_values) == 1
+                    else {}
+                )
+            except ValueError:
+                current = {}
+            current_identity = (
+                current.get("subject_entity_id", ""),
+                current.get("predicate_id", ""),
+                current.get("object_entity_id", ""),
+            )
+            if (
+                not current
+                or current.get("projection_id", "") != PropositionProjectionQuery.BY_ID
+                or current_identity != (subj_id, pred_id, obj_id)
+                or not evaluator.evaluate(current, frame).get("eligible", False)
+            ):
+                return False
+        return True
 
     def composition_candidate(self, candidate: dict, frame: dict) -> dict:
         """Revalidate every Proposition and reconstruct one bounded composition phrase."""
@@ -575,6 +698,12 @@ class EngramCandidateAuthority:
             return result
         if candidate.get("scope", {}) != frame.get("scope", {}):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.CANDIDATE_SCOPE_MISMATCH,))
+            return result
+        if frame.get("required_source_label", ""):
+            result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_SOURCE_MISMATCH,))
+            return result
+        if frame.get("required_metadata", {}):
+            result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
             return result
         # The exact field-set check above guarantees every key, so the defaults are never read.
         tuple_values = (
@@ -592,8 +721,12 @@ class EngramCandidateAuthority:
         identity_chain = tuple_values[1]
         trust_chain = tuple_values[2]
         predicate_labels = tuple_values[3]
-        if not 1 <= len(proposition_ids) <= MAX_COMPOSITION_HOPS or not (
-            len(identity_chain) == len(trust_chain) == len(predicate_labels) == len(proposition_ids)
+        max_labels = MAX_COMPOSITION_HOPS * MAX_COMPOSITION_BRANCHES
+        max_propositions = MAX_COMPOSITION_ROWS * MAX_COMPOSITION_BRANCHES
+        if (
+            not 1 <= len(predicate_labels) <= max_labels
+            or not 1 <= len(proposition_ids) <= max_propositions
+            or not (len(identity_chain) == len(trust_chain) == len(proposition_ids))
         ):
             result = candidate_eligibility(False, False, False, (FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,))
             return result
@@ -1105,12 +1238,15 @@ class CandidateFusionEngine:
         weights = self.policy.get("weights", {})
         normalized_values = normalized.get("values", {})
         weighted = dict.fromkeys(FusionFeature, 0.0)
+        available_features = [
+            feature for feature in normalized.get("available", ()) if feature not in (FusionFeature.EXACT, FusionFeature.MARGIN)
+        ]
+        max_weight = max((weights.get(feature, 0.0) for feature in available_features), default=0.0)
+        scale = max_weight if max_weight > 1.0 else 1.0
         numerator = 0.0
         denominator = 0.0
-        for feature in normalized.get("available", ()):
-            if feature in (FusionFeature.EXACT, FusionFeature.MARGIN):
-                continue
-            weight = weights.get(feature, 0.0)
+        for feature in available_features:
+            weight = weights.get(feature, 0.0) / scale
             contribution = weight * normalized_values.get(feature, 0.0)
             weighted[feature] = contribution
             numerator += contribution
@@ -1403,6 +1539,43 @@ class CandidateFusionEngine:
         result = {"fused": fused, "reranked_scores": reranked_scores, "reranker_report": reranker_report}
         return result
 
+    def checked_graph_propositions(self, contribution_groups: dict) -> dict[str, bool]:
+        checked: dict[str, bool] = {}
+        stale_reasons = {
+            FusionPolicyReason.AUTHORITATIVE_STATEMENT_MISSING,
+            FusionPolicyReason.AUTHORITATIVE_RESPONSE_MISMATCH,
+            FusionPolicyReason.ARTIFACT_INELIGIBLE,
+            FusionPolicyReason.SUPPORT_REFERENCE_STALE,
+        }
+        for group_items in contribution_groups.values():
+            for contribution_item in group_items:
+                cand_item = contribution_item.get("candidate", {})
+                cand_prov = cand_item.get("provenance", {})
+                cand_producer = cand_prov.get("producer", "")
+                if cand_item.get("source", CandidateSource.EXACT) != CandidateSource.UTILITY:
+                    continue
+                cand_elig = contribution_item.get("eligibility", {})
+                cand_reasons = set(cand_elig.get("reason_codes", ()))
+                if cand_producer == RELATION_ONE_HOP_PRODUCER:
+                    prop_id = cand_item.get("statement_id", "")
+                    if prop_id:
+                        if cand_elig.get("evidence_eligible", False):
+                            checked[prop_id] = True
+                        elif cand_reasons & stale_reasons:
+                            checked[prop_id] = False
+                elif cand_producer == GRAPH_COMPOSITION_PRODUCER:
+                    prop_ids = cand_prov.get("proposition_ids", ())
+                    if isinstance(prop_ids, tuple):
+                        if cand_elig.get("evidence_eligible", False):
+                            for prop_id in prop_ids:
+                                if isinstance(prop_id, str) and prop_id:
+                                    checked[prop_id] = True
+                        elif cand_reasons & stale_reasons:
+                            for prop_id in prop_ids:
+                                if isinstance(prop_id, str) and prop_id:
+                                    checked.setdefault(prop_id, False)
+        return checked
+
     def decide(
         self,
         frame: dict,
@@ -1523,9 +1696,10 @@ class CandidateFusionEngine:
         )
         if ranked:
             margin_available = len(ranked) > 1
-            # A reranked leader with a lower fused score than the runner-up
-            # has no margin, so the disagreement resolves as ambiguous.
-            margin = max(0.0, ranked[0].get("score", 0.0) - ranked[1].get("score", 0.0)) if margin_available else 1.0
+            # Compare the leader against its strongest eligible competitor so reranking
+            # cannot manufacture a wider margin by placing a weaker fused score second.
+            strongest_competitor = max(item.get("score", 0.0) for item in ranked[1:]) if margin_available else 0.0
+            margin = max(0.0, ranked[0].get("score", 0.0) - strongest_competitor) if margin_available else 1.0
             top = ranked[0]
             values = dict(top.get("normalized", {}).get("values", {}))
             values[FusionFeature.MARGIN] = margin if margin_available else 0.0
@@ -1672,6 +1846,7 @@ class CandidateFusionEngine:
                 memory_limit,
             )
             return result
+        checked_propositions = self.checked_graph_propositions(contribution_groups)
         # The decision carries isolated copies of the engine-owned candidates it returns.
         result = {
             "outcome": outcome,
@@ -1684,6 +1859,7 @@ class CandidateFusionEngine:
             "reason_codes": tuple(dict.fromkeys(reasons)),
             "report": report,
             "working_memory_bytes": working_bytes,
+            "checked_propositions": checked_propositions,
         }
         return result
 

@@ -147,7 +147,7 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     )
 
     current = core.engram.sessions.get("Sarah", {}).get("previous_query_frame", {})
-    assert current.get("source_turn", 0) == 2
+    assert current.get("source_turn", 0) == 1
     assert current.get("operator", QueryOperator.UNKNOWN) == QueryOperator.WHERE
     assert current.get("subjects", ())[0].get("surface", "") == "Ada Lovelace"
     assert current.get("relation", {}).get("surface", "") == "born"

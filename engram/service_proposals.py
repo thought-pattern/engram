@@ -13,11 +13,12 @@ from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict
 from engram.constants import DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA, REGULATOR_OUTCOMES
 from engram.constants_artifacts import MAX_ARTIFACT_ID_BYTES, MAX_SOURCE_LABEL_BYTES, LifecycleState, Tier
+from engram.constants_evidence import EligibilityExclusionReason
 from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES, FeedbackObservationKind, FeedbackOutcome, LifecycleHandoffStatus
 from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES, ExactLookupOutcome
 from engram.constants_mutations import MAX_REQUEST_ID_BYTES
 from engram.constants_resolution import MAX_REASON_CODE_BYTES
-from engram.eligibility import capture_standalone_eligibility_context
+from engram.eligibility import capture_standalone_eligibility_context, validity_exclusion_reason
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, ResourceNotFoundError
 from engram.feedback import validate_feedback_observation
 from engram.feedback_values import canonical_utc
@@ -137,6 +138,7 @@ def propose(
             diagnostic_seed=f"proposal:{request_id}",
         )
         feedback_policy_value = policy_fingerprint(core.resolution_orchestrator.internal_fusion.policy)
+        frame_eligibility_context = feedback_frame.get("eligibility_context", {})
         response_artifacts = core.engram.response_repository.trusted_artifacts()
 
         def artifact_matches_scope(artifact: dict) -> bool:
@@ -153,6 +155,10 @@ def propose(
                 or getattr(artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
             ):
                 return False
+            if frame_eligibility_context.get("evaluation_time_available", False):
+                validity_reason = validity_exclusion_reason(artifact, frame_eligibility_context.get("evaluation_time", ""))
+                if validity_reason != EligibilityExclusionReason.ELIGIBLE:
+                    return False
             provenance = artifact.get("provenance", {})
             if required_source_label and provenance.get("source_label", "") != required_source_label:
                 return False
@@ -185,6 +191,7 @@ def propose(
                 scope,
                 limit=limit,
                 max_working_memory_bytes=64 * 1024 * 1024,
+                artifact_filter=artifact_matches_scope,
             )
             if sparse_discovery.get("complete", False):
                 sparse_matches = tuple(

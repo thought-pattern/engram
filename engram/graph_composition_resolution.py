@@ -3,6 +3,8 @@
 from hashlib import sha256 as hashlib_sha256
 
 from engram.composition import (
+    composition_branch_chains,
+    composition_order_descending,
     composition_plan_to_dict,
     execute_composition_plan,
     graph_composition_operator,
@@ -176,6 +178,7 @@ def compile_composition_plan(resolver, frame: dict, budget: dict, started: int, 
             predicates,
             operator,
             frame.get("expected_object_type", ExpectedObjectType.UNKNOWN),
+            descending=composition_order_descending(frame) if operator == GraphCompositionOperator.ORDER else False,
             max_rows=min(64, remaining_rows),
         )
     except InvalidRequestError as err:
@@ -206,6 +209,7 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
             cooperative_check=check,
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
             basis_window=assertion_basis_window(frame),
+            raise_on_failure=True,
         )
         return result
 
@@ -217,7 +221,11 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
         lambda projection: resolver.internal_eligibility_evaluator.revalidate(
             projection,
             checked_frame,
-            resolver.internal_engram.current_proposition_projection,
+            lambda prop_id, window: resolver.internal_engram.current_proposition_projection(
+                prop_id,
+                window,
+                raise_on_failure=True,
+            ),
             trusted_frame=True,
         ),
         check,
@@ -228,14 +236,19 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
 def composition_direct_suppression(complete_paths: tuple, include_historical: bool, temporal_axis: TemporalAxis) -> set[str]:
     """Name every reason a complete path may not be phrased as a direct composed answer."""
     direct_suppression_reasons: set[str] = set()
+    single_subject_values: dict[tuple[str, str], set[str]] = {}
     for path in complete_paths:
         for entry in path:
             proposition = entry.get("proposition", {})
             projection = proposition.get("projection", {})
+            cardinality = proposition.get("predicate_cardinality", PredicateCardinality.UNKNOWN)
             if not projection.get("supplied_trust_available", False):
                 direct_suppression_reasons.add(CompositionReason.TRUST_UNAVAILABLE.value)
-            if proposition.get("predicate_cardinality", PredicateCardinality.UNKNOWN) == PredicateCardinality.UNKNOWN:
+            if cardinality == PredicateCardinality.UNKNOWN:
                 direct_suppression_reasons.add(CompositionReason.CARDINALITY_UNKNOWN.value)
+            elif cardinality == PredicateCardinality.SINGLE:
+                pair = (projection.get("subject_entity_id", ""), projection.get("predicate_id", ""))
+                single_subject_values.setdefault(pair, set()).add(projection.get("object_entity_id", ""))
             if include_historical:
                 if temporal_axis == TemporalAxis.VALID_TIME:
                     lower_available = projection.get("valid_from_available", False)
@@ -245,6 +258,8 @@ def composition_direct_suppression(complete_paths: tuple, include_historical: bo
                     upper_available = projection.get("system_to_available", False)
                 if not (lower_available and upper_available):
                     direct_suppression_reasons.add(CompositionReason.TEMPORAL_BOUNDS_OPEN.value)
+    if any(len(values) > 1 for values in single_subject_values.values()):
+        direct_suppression_reasons.add(CompositionReason.CARDINALITY_CONFLICT.value)
     return direct_suppression_reasons
 
 
@@ -317,10 +332,19 @@ def composition_candidate(
     plan_operator: GraphCompositionOperator,
     subject: dict,
 ) -> dict:
-    """Phrase the first complete path as one request-local composed answer candidate."""
+    """Phrase complete paths as one request-local composed answer candidate backed by all contributing Propositions."""
     response = phrase_composition_result(plan, execution)
-    selected_path = execution.get("complete_paths", ())[0]
-    selected_projections = tuple(entry.get("proposition", {}).get("projection", {}) for entry in selected_path)
+    complete_paths = execution.get("complete_paths", ())
+    unique_projections = []
+    seen_proposition_ids: set[str] = set()
+    for path in complete_paths:
+        for entry in path:
+            projection = entry.get("proposition", {}).get("projection", {})
+            proposition_id = projection.get("proposition_id", "")
+            if proposition_id and proposition_id not in seen_proposition_ids:
+                seen_proposition_ids.add(proposition_id)
+                unique_projections.append(projection)
+    selected_projections = tuple(unique_projections)
     proposition_ids = tuple(projection.get("proposition_id", "") for projection in selected_projections)
     identity_chain = tuple(
         (
@@ -331,6 +355,12 @@ def composition_candidate(
         for projection in selected_projections
     )
     trust_chain = tuple(projection.get("supplied_trust", 0.0) for projection in selected_projections)
+    branch_chains = composition_branch_chains(plan.get("steps", ()))
+    predicate_labels = (
+        branch_chains
+        if plan_operator in {GraphCompositionOperator.AND, GraphCompositionOperator.OR}
+        else tuple(entry.get("step", {}).get("predicate_label", "") for entry in complete_paths[0])
+    )
     references = tuple(
         evidence_reference(
             evidence_id=proposition_id,
@@ -359,7 +389,7 @@ def composition_candidate(
             "operator": plan_operator.value,
             "root_entity_id": plan.get("root_entity_id", ""),
             "root_label": plan.get("root_label", ""),
-            "predicate_labels": tuple(entry.get("step", {}).get("predicate_label", "") for entry in selected_path),
+            "predicate_labels": predicate_labels,
             "proposition_ids": proposition_ids,
             "identity_chain": identity_chain,
             "trust_chain": trust_chain,
@@ -379,7 +409,7 @@ def composition_candidate(
 
 
 def fit_composition_output(records: list, candidates: list, budget: dict) -> dict:
-    """Trim records to the evidence-byte budget and candidates to the output budget, in place."""
+    """Trim records to the evidence-byte budget and both candidates and records to the total output budget."""
     exhausted = set()
     record_sizes = [encoded_size(trusted_proposition_evidence_record_to_dict(record)) for record in records]
     record_total = sum(record_sizes)
@@ -397,6 +427,11 @@ def fit_composition_output(records: list, candidates: list, budget: dict) -> dic
         candidates.pop()
         exhausted.add("output_bytes")
         output_bytes = record_bytes()
+    while records and record_bytes() > budget.get("max_output_bytes", 0):
+        records.pop()
+        record_total -= record_sizes.pop()
+        exhausted.add("output_bytes")
+    output_bytes = record_bytes() + sum(encoded_size(candidate_to_dict(value)) for value in candidates)
     if candidates and not records:
         candidates.clear()
         output_bytes = 0
@@ -413,8 +448,8 @@ def internal_composition_result(
     cooperative_check: object = (),
 ) -> tuple[dict, ...]:
     """Compile and execute a conservative composed request through fixed one-hop reads."""
-    normalized = frame.get("resolved_text", "").casefold()
-    if "'s" not in normalized and " of " not in normalized:
+    normalized = frame.get("resolved_text", "").replace("’", "'").replace("ʼ", "'").casefold()
+    if "'s" not in normalized and "s'" not in normalized and " of " not in normalized:
         result = ()
         return result
 

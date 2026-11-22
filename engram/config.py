@@ -601,7 +601,8 @@ def require_store_limits(capacity: object, max_sessions: object, session_ttl_sec
     if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
         raise ValueError("max_sessions must be an integer of at least 1")
     if (
-        (type(session_ttl_seconds) is not int and type(session_ttl_seconds) is not float)
+        isinstance(session_ttl_seconds, bool)
+        or not isinstance(session_ttl_seconds, (int, float))
         or not math_isfinite(session_ttl_seconds)
         or session_ttl_seconds <= 0
     ):
@@ -621,7 +622,7 @@ def scoring_weights(weight_base: object, weight_recency: object, weight_hit_rate
     )
     if any(weight < 0 for weight in weights):
         raise ValueError("scoring weights must be finite and non-negative")
-    if sum(weights) <= 0:
+    if max(weights) <= 0:
         raise ValueError("scoring weights must sum to a positive value")
     return weights
 
@@ -667,9 +668,8 @@ def admitted_config_mapping(values: object, base_directory: str, source: str) ->
     """
     data = require_known_keys(values, set(engram_config()), "", source)
     for name, builder in SECTION_BUILDERS:
-        section_values = data.get(name, {})
-        if section_values:
-            data[name] = require_known_keys(section_values, set(builder()), name, source)
+        if name in data:
+            data[name] = require_known_keys(data.get(name, {}), set(builder()), name, source)
     section = data.get("conversation", {})
     if section:
         for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
@@ -698,7 +698,7 @@ def read_config_mapping(path: str) -> dict:
         return result
     with open(path, encoding="utf-8") as handle:
         loaded = yaml_safe_load(handle)
-    if not loaded:
+    if not loaded and not isinstance(loaded, (bool, int, float, str, bytes, list, tuple, set, dict)):
         result = {}
         return result
     data = admitted_config_mapping(loaded, os_path.dirname(os_path.abspath(path)), path)

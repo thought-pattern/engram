@@ -32,6 +32,7 @@ from engram.constants import (
     EMPTY_CONFIG,
     GRPC_SERVER_OPTIONS,
 )
+from engram.constants_artifacts import MAX_METADATA_DEPTH, MAX_METADATA_ITEMS
 from engram.constants_resolution import MAX_DIAGNOSTIC_ID_BYTES
 from engram.constants_service import GRPC_REGULATOR_OUTCOME_NAMES
 from engram.engram_pb2_grpc import (
@@ -73,6 +74,10 @@ EVIDENCE_SERVICE_NAME = engram_pb2.DESCRIPTOR.services_by_name["EngramEvidenceSe
 outcome_names = {getattr(engram_pb2, name): outcome for name, outcome in GRPC_REGULATOR_OUTCOME_NAMES.items()}
 
 
+MIN_SIGNED_INT64 = -(1 << 63)
+MAX_SIGNED_INT64 = (1 << 63) - 1
+
+
 def to_struct(value: dict) -> struct_pb2.Struct:
     """Convert a JSON-ready core result to its protobuf representation."""
     result = struct_pb2.Struct()
@@ -81,18 +86,131 @@ def to_struct(value: dict) -> struct_pb2.Struct:
 
 
 def from_struct(value: struct_pb2.Struct) -> dict:
-    """Convert caller metadata without inventing a transport-specific schema."""
+    """Convert a Struct message into a Python dictionary."""
     result = json_format.MessageToDict(value, preserving_proto_field_name=True)
+    return result
+
+
+def to_metadata_value(value: object, depth: int = 0) -> engram_pb2.MetadataValue:
+    """Encode one native metadata value without collapsing integers and floats into doubles."""
+    if depth > MAX_METADATA_DEPTH:
+        raise InvalidRequestError(f"metadata exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
+    if isinstance(value, bool):
+        encoded = engram_pb2.MetadataValue(bool_value=value)
+        return encoded
+    if isinstance(value, int):
+        if not MIN_SIGNED_INT64 <= value <= MAX_SIGNED_INT64:
+            raise InvalidRequestError("metadata integer exceeds signed 64-bit range")
+        encoded = engram_pb2.MetadataValue(int_value=value)
+        return encoded
+    if isinstance(value, float):
+        encoded = engram_pb2.MetadataValue(float_value=value)
+        return encoded
+    if isinstance(value, str):
+        encoded = engram_pb2.MetadataValue(string_value=value)
+        return encoded
+    if isinstance(value, (list, tuple)):
+        encoded = engram_pb2.MetadataValue(
+            list_value=engram_pb2.MetadataList(values=[to_metadata_value(item, depth + 1) for item in value])
+        )
+        return encoded
+    if isinstance(value, dict):
+        encoded = engram_pb2.MetadataValue(map_value=to_metadata_map(value, depth + 1))
+        return encoded
+    raise InvalidRequestError("metadata contains an unsupported value")
+
+
+def to_metadata_map(value: dict, depth: int = 0) -> engram_pb2.MetadataMap:
+    """Encode a Python metadata dictionary into a typed protobuf MetadataMap."""
+    if not isinstance(value, dict):
+        raise InvalidRequestError("metadata must be an object")
+    if depth > MAX_METADATA_DEPTH:
+        raise InvalidRequestError(f"metadata exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
+    entries = []
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise InvalidRequestError("metadata keys must be strings")
+        entries.append(engram_pb2.MetadataEntry(key=key, value=to_metadata_value(item, depth + 1)))
+    encoded = engram_pb2.MetadataMap(entries=entries)
+    return encoded
+
+
+def decode_metadata_value(value: engram_pb2.MetadataValue, depth: int, item_count: list[int]) -> object:
+    """Decode one typed protobuf MetadataValue into its exact Python primitive or container."""
+    if depth > MAX_METADATA_DEPTH:
+        raise InvalidRequestError(f"metadata exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
+    item_count[0] += 1
+    if item_count[0] > MAX_METADATA_ITEMS:
+        raise InvalidRequestError(f"metadata exceeds the metadata item limit of {MAX_METADATA_ITEMS}")
+    selected_kind = value.WhichOneof("kind") or ""
+    if selected_kind == "bool_value":
+        bool_result = bool(value.bool_value)
+        return bool_result
+    if selected_kind == "int_value":
+        int_result = int(value.int_value)
+        return int_result
+    if selected_kind == "float_value":
+        float_result = float(value.float_value)
+        return float_result
+    if selected_kind == "string_value":
+        string_result = str(value.string_value)
+        return string_result
+    if selected_kind == "list_value":
+        items = [decode_metadata_value(item, depth + 1, item_count) for item in value.list_value.values]
+        return items
+    if selected_kind == "map_value":
+        mapped = decode_metadata_map(value.map_value, depth + 1, item_count)
+        return mapped
+    raise InvalidRequestError("metadata value has no kind set")
+
+
+def decode_metadata_map(value: engram_pb2.MetadataMap, depth: int, item_count: list[int]) -> dict:
+    """Decode a typed protobuf MetadataMap while rejecting duplicate keys and unbounded nesting."""
+    if depth > MAX_METADATA_DEPTH:
+        raise InvalidRequestError(f"metadata exceeds the metadata depth limit of {MAX_METADATA_DEPTH}")
+    decoded: dict = {}
+    for entry in value.entries:
+        if entry.key in decoded:
+            raise InvalidRequestError(f"duplicate metadata key: {entry.key}")
+        decoded[entry.key] = decode_metadata_value(entry.value, depth + 1, item_count)
+    return decoded
+
+
+def from_metadata_map(value: engram_pb2.MetadataMap) -> dict:
+    """Decode request metadata with exact boolean, signed 64-bit integer, and float types."""
+    item_count = [0]
+    decoded = decode_metadata_map(value, 0, item_count)
+    return decoded
+
+
+def to_conversation_report(value: dict) -> engram_pb2.ConversationReport:
+    """Translate one process-local conversation report while preserving signed 64-bit seeds."""
+    learned = value.get("learned_dynamic", [])
+    if not isinstance(learned, list) or not all(isinstance(item, dict) for item in learned):
+        raise InvalidRequestError("conversation report learned_dynamic must be a list of objects")
+    result = engram_pb2.ConversationReport(
+        started_at=str(value.get("started_at", "")),
+        finished_at=str(value.get("finished_at", "")),
+        user_id=str(value.get("user_id", "")),
+        initial_bot_text=str(value.get("initial_bot_text", "")),
+        random_seed=int(value.get("random_seed", 0)),
+        random_seed_present=bool(value.get("random_seed_present", False)),
+        summary=to_struct(value.get("summary", {})),
+        metrics_baseline=to_struct(value.get("metrics_baseline", {})),
+        metrics_final=to_struct(value.get("metrics_final", {})),
+        session=to_struct(value.get("session", {})),
+        learned_dynamic=[to_struct(item) for item in learned],
+    )
     return result
 
 
 def restore_contract_integers(value: object) -> object:
     """Restore integer JSON fields erased by protobuf Struct's number type."""
-    if type(value) is dict:
+    if isinstance(value, dict):
         result: object = {key: restore_contract_integers(item) for key, item in value.items()}
-    elif type(value) is list:
+    elif isinstance(value, list):
         result = [restore_contract_integers(item) for item in value]
-    elif type(value) is float and value.is_integer():
+    elif isinstance(value, float) and value.is_integer():
         result = int(value)
     else:
         result = value
@@ -209,6 +327,13 @@ def require_resolution_message(value: protobuf_Message) -> engram_pb2.Resolution
     return value
 
 
+def require_report_message(value: protobuf_Message) -> engram_pb2.ConversationReport:
+    """Require the concrete response type promised by FinishConversation."""
+    if not isinstance(value, engram_pb2.ConversationReport):
+        raise InvalidRequestError("FinishConversation returned an invalid protobuf message")
+    return value
+
+
 class EngramGrpcService(EngramServiceServicer):
     """Translate protobuf requests into calls on one shared core; GetStatus also carries the health page's snapshot."""
 
@@ -248,7 +373,7 @@ class EngramGrpcService(EngramServiceServicer):
             raise InvalidRequestError("gRPC operation must be callable")
         diagnostic_id = request_id
         if not (
-            type(diagnostic_id) is str
+            isinstance(diagnostic_id, str)
             and 0 < len(diagnostic_id) <= MAX_DIAGNOSTIC_ID_BYTES
             and diagnostic_id.isascii()
             and all(character.isprintable() and not character.isspace() for character in diagnostic_id)
@@ -337,17 +462,17 @@ class EngramGrpcService(EngramServiceServicer):
         result = require_struct_message(message, "InspectConversation")
         return result
 
-    def FinishConversation(self, request: engram_pb2.UserRequest, context) -> struct_pb2.Struct:
+    def FinishConversation(self, request: engram_pb2.UserRequest, context) -> engram_pb2.ConversationReport:
         message = self.invoke(
             context,
             "FinishConversation",
-            lambda: to_struct(
+            lambda: to_conversation_report(
                 self.core.finish_conversation(
                     normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
                 )
             ),
         )
-        result = require_struct_message(message, "FinishConversation")
+        result = require_report_message(message)
         return result
 
     def StopConversation(self, request: engram_pb2.UserRequest, context) -> struct_pb2.Struct:
@@ -404,7 +529,7 @@ class EngramGrpcService(EngramServiceServicer):
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     limit=limit,
-                    required_metadata=from_struct(request.required_metadata),
+                    required_metadata=from_metadata_map(request.required_metadata),
                     required_source_label=request.required_source_label,
                 )
             ),
@@ -444,7 +569,7 @@ class EngramGrpcService(EngramServiceServicer):
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     source_label=source_label,
-                    metadata=contract_from_struct(request.metadata),
+                    metadata=from_metadata_map(request.metadata),
                 )
             ),
             request_id=request.request_id,
@@ -511,7 +636,7 @@ class EngramEvidenceGrpcService(EngramEvidenceServiceServicer):
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     identity=identity_from_struct(request.identity),
-                    required_metadata=from_struct(request.required_metadata),
+                    required_metadata=from_metadata_map(request.required_metadata),
                     required_source_label=request.required_source_label,
                     budget=budget_from_struct(request.budget),
                     configured_resolvers=tuple(request.configured_resolvers),
@@ -540,6 +665,7 @@ class EngramGrpcServer:
         max_workers: int = DEFAULT_MAX_WORKERS,
         tls_certificate: bytes = b"",
         tls_private_key: bytes = b"",
+        use_tls: bool = False,
         http: dict = EMPTY_CONFIG,
         message_limit_bytes: int = 0,
     ) -> None:
@@ -547,10 +673,14 @@ class EngramGrpcServer:
             raise InvalidRequestError("bind_address must be a non-empty string")
         if not isinstance(max_workers, int) or isinstance(max_workers, bool) or max_workers < 1:
             raise InvalidRequestError("max_workers must be a positive integer")
-        if type(message_limit_bytes) is not int or message_limit_bytes < 0:
+        if isinstance(message_limit_bytes, bool) or not isinstance(message_limit_bytes, int) or message_limit_bytes < 0:
             raise InvalidRequestError("message_limit_bytes must be a non-negative integer")
+        if not isinstance(use_tls, bool):
+            raise InvalidRequestError("use_tls must be a boolean")
         if bool(tls_certificate) != bool(tls_private_key):
             raise InvalidRequestError("TLS certificate and private key must be configured together")
+        if use_tls and (not tls_certificate or not tls_private_key):
+            raise InvalidRequestError("TLS certificate and private key must not be empty")
 
         self.core = core
         self.bind_address = bind_address
@@ -661,10 +791,13 @@ def read_tls_files(parser: argparse_ArgumentParser, certificate_path: str, priva
         result = b"", b""
         return result
     try:
-        result = Path(certificate_path).read_bytes(), Path(private_key_path).read_bytes()
-        return result
+        certificate = Path(certificate_path).read_bytes()
+        private_key = Path(private_key_path).read_bytes()
     except OSError as err:
         parser.error(f"unable to read TLS files: {err}")
+    if not certificate or not private_key:
+        parser.error("TLS certificate and private key files must not be empty")
+    return certificate, private_key
 
 
 def main(argv: tuple[str, ...] = ()) -> int:
@@ -699,6 +832,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
             max_workers=args.max_workers,
             tls_certificate=certificate,
             tls_private_key=private_key,
+            use_tls=bool(args.tls_cert or args.tls_key),
             http=core.engram.config.get("http", EMPTY_CONFIG),
         )
         server_constructed = True

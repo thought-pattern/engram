@@ -12,7 +12,7 @@ service EngramService {
   rpc StartConversation(StartConversationRequest) returns (google.protobuf.Struct);
   rpc Chat(ChatRequest) returns (google.protobuf.Struct);
   rpc InspectConversation(UserRequest) returns (google.protobuf.Struct);
-  rpc FinishConversation(UserRequest) returns (google.protobuf.Struct);
+  rpc FinishConversation(UserRequest) returns (ConversationReport);
   rpc StopConversation(UserRequest) returns (google.protobuf.Struct);
 
   rpc AddFact(AddFactRequest) returns (google.protobuf.Struct);
@@ -50,6 +50,44 @@ message UserRequest {
   string conversation_token = 2;
 }
 
+message ConversationReport {
+  string started_at = 1;
+  string finished_at = 2;
+  string user_id = 3;
+  string initial_bot_text = 4;
+  int64 random_seed = 5;
+  bool random_seed_present = 6;
+  google.protobuf.Struct summary = 7;
+  google.protobuf.Struct metrics_baseline = 8;
+  google.protobuf.Struct metrics_final = 9;
+  google.protobuf.Struct session = 10;
+  repeated google.protobuf.Struct learned_dynamic = 11;
+}
+
+message MetadataEntry {
+  string key = 1;
+  MetadataValue value = 2;
+}
+
+message MetadataList {
+  repeated MetadataValue values = 1;
+}
+
+message MetadataMap {
+  repeated MetadataEntry entries = 1;
+}
+
+message MetadataValue {
+  oneof kind {
+    bool bool_value = 1;
+    int64 int_value = 2;
+    double float_value = 3;
+    string string_value = 4;
+    MetadataList list_value = 5;
+    MetadataMap map_value = 6;
+  }
+}
+
 message AddFactRequest {
   string text = 1;
   string source_label = 2;
@@ -78,7 +116,7 @@ message ProposeRequest {
   string namespace = 4;
   string context_fingerprint = 5;
   optional int32 limit = 6;
-  google.protobuf.Struct required_metadata = 7;
+  MetadataMap required_metadata = 7;
   string required_source_label = 8;
 }
 
@@ -106,7 +144,7 @@ message LearnResponseRequest {
   string namespace = 5;
   string context_fingerprint = 6;
   string source_label = 7;
-  google.protobuf.Struct metadata = 8;
+  MetadataMap metadata = 8;
 }
 
 message RetireResponseRequest {
@@ -126,7 +164,7 @@ message ResolveEvidenceRequest {
   string namespace = 4;
   string context_fingerprint = 5;
   google.protobuf.Struct identity = 6;
-  google.protobuf.Struct required_metadata = 7;
+  MetadataMap required_metadata = 7;
   string required_source_label = 8;
   google.protobuf.Struct budget = 9;
   repeated string configured_resolvers = 10;

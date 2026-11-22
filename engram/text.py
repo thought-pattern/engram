@@ -612,6 +612,9 @@ def get_synonyms(word: str, max_synonyms: int = 5) -> tuple[str, ...]:
     """
 
     synonyms = [word.lower()]
+    if max_synonyms <= 0:
+        unexpanded = tuple(synonyms)
+        return unexpanded
     # Loading takes NLTK_RESOURCES.lock, so it runs before the reader lock is held.
     NLTK_RESOURCES.require()
     with NLTK_RESOURCES.reader_lock:

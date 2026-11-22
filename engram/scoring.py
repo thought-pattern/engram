@@ -208,8 +208,12 @@ def score_statement_components(
     matched = [keyword for keyword, weight in match.items() if weight > 0]
     recency = calculate_recency(statement, recency_half_life_seconds, current_time)
     hit_rate = calculate_average_hit_rate(matched, keyword_index)
-    total_weight = weight_base + weight_recency + weight_hit_rate
-    relevance = overlap * (weight_base + weight_recency * recency + weight_hit_rate * hit_rate) / total_weight
+    scale = max(weight_base, weight_recency, weight_hit_rate)
+    scaled_base = weight_base / scale
+    scaled_recency = weight_recency / scale
+    scaled_hit_rate = weight_hit_rate / scale
+    total_weight = scaled_base + scaled_recency + scaled_hit_rate
+    relevance = overlap * (scaled_base + scaled_recency * recency + scaled_hit_rate * hit_rate) / total_weight
     result = {
         "score": relevance + statement.get("priority", 0),
         "overlap": overlap,

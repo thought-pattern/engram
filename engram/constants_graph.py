@@ -216,23 +216,26 @@ PROPOSITION_PROJECTION_RECORD_FIELDS = PROPOSITION_PROJECTION_FIELDS | set(
 RELATION_ONE_HOP_RESULT_FIELDS = PROPOSITION_PROJECTION_FIELDS | {"object_label", "object_type", "predicate_cardinality"}
 CANONICAL_ENTITY_MATCH_QUERY = (
     "MATCH (entity:Entity) "
-    "WITH entity, coalesce(entity.aliases, [])[0..12] AS aliases "
+    "WITH entity, coalesce(entity.aliases, []) AS aliases "
     "WHERE toLower(entity.primary_label) = toLower($surface) "
     "OR toLower($surface) IN [alias IN aliases | toLower(alias)] "
     "RETURN entity.canonical_id AS canonical_id, entity.primary_label AS primary_label, "
     "aliases, coalesce(entity.entity_type, 'UNKNOWN') AS entity_type "
-    "ORDER BY entity.canonical_id LIMIT $limit"
+    "ORDER BY CASE WHEN toLower(entity.primary_label) = toLower($surface) THEN 0 ELSE 1 END, "
+    "entity.canonical_id LIMIT $limit"
 )
 CANONICAL_PREDICATE_MATCH_QUERY = (
     "MATCH (predicate:Predicate) "
-    "WITH predicate, coalesce(predicate.synonyms, [])[0..12] AS synonyms "
+    "WITH predicate, coalesce(predicate.synonyms, []) AS synonyms "
     "WHERE toLower(predicate.canonical_id) = toLower($surface) "
     "OR toLower(coalesce(predicate.primary_label, predicate.label, predicate.canonical_id)) = toLower($surface) "
     "OR toLower($surface) IN [synonym IN synonyms | toLower(synonym)] "
     "RETURN predicate.canonical_id AS canonical_id, "
     "coalesce(predicate.primary_label, predicate.label, predicate.canonical_id) AS primary_label, "
     "synonyms, coalesce(predicate.object_type, 'UNKNOWN') AS object_type "
-    "ORDER BY predicate.canonical_id LIMIT $limit"
+    "ORDER BY CASE WHEN toLower(predicate.canonical_id) = toLower($surface) "
+    "OR toLower(coalesce(predicate.primary_label, predicate.label, predicate.canonical_id)) = toLower($surface) "
+    "THEN 0 ELSE 1 END, predicate.canonical_id LIMIT $limit"
 )
 # A Proposition carries a nonempty predicate_surface, the source's own predicate wording,
 # exactly when its Predicate is a generic one (generic_relation, generic_event), which is
@@ -363,8 +366,9 @@ PROPOSITION_PROJECTION_BY_ID_QUERY = (
     "MATCH (c)-[:HAS_ARGUMENT]->(object_binding:SemanticBinding)-[:BINDS_ENTITY]->(object:Entity) "
     "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
-    "AND c.id = $proposition_id AND c.lifecycle_disposition = 'active' "
-    "AND c.retired_at IS NULL AND assertion.lifecycle_disposition = 'active' "
+    "AND c.id = $proposition_id "
+    "AND ((c.lifecycle_disposition = 'active' AND c.retired_at IS NULL) OR c.retired_at IS NOT NULL) "
+    "AND assertion.lifecycle_disposition = 'active' "
     "AND assertion.retired_at IS NULL AND support.retired_at IS NULL "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION
     + PROPOSITION_PROJECTION_RETURN
@@ -379,7 +383,8 @@ RELATION_ONE_HOP_PROPOSITION_PROJECTION_QUERY = (
     "MATCH (c)-[support:SUPPORTED_BY]->(assertion:Assertion) "
     "WHERE subject_binding.role = 'subject' AND object_binding.role = 'object' "
     "AND subject.canonical_id = $subject_entity_id AND predicate.canonical_id = $predicate_id "
-    "AND ($include_historical = true OR (c.lifecycle_disposition = 'active' AND c.retired_at IS NULL)) "
+    "AND ((c.lifecycle_disposition = 'active' AND c.retired_at IS NULL) "
+    "OR ($include_historical = true AND c.retired_at IS NOT NULL)) "
     "AND assertion.lifecycle_disposition = 'active' AND assertion.retired_at IS NULL "
     "AND support.retired_at IS NULL "
     + PROPOSITION_PROJECTION_ASSERTION_SELECTION

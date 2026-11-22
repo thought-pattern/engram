@@ -19,7 +19,7 @@ from engram.constants_resolution import (
 )
 from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
-from engram.fusion import CandidateFusionEngine, permissive_candidate_authority
+from engram.fusion import CandidateFusionEngine
 from engram.graph import (
     proposition_projection,
     proposition_projection_from_graph_row,
@@ -59,6 +59,7 @@ from tests.resolver_fixtures import (
     FakeResolver,
     enable_graph_resolvers,
 )
+from tests.support_fixtures import permissive_candidate_authority
 
 
 def test_orchestrator_canonicalizes_cross_producer_proposition_without_candidacy_or_accounting(monkeypatch) -> None:

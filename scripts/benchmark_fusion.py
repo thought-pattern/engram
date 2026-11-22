@@ -12,13 +12,21 @@ from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, star
 from engram.constants_artifacts import LifecycleState
 from engram.constants_resolution import CandidateSource, EvidenceKind, ResolutionOutcome
 from engram.core import Engram
-from engram.fusion import CandidateFusionEngine, fusion_policy, fusion_policy_to_dict, permissive_candidate_authority
+from engram.fusion import CandidateFusionEngine, candidate_eligibility, fusion_policy, fusion_policy_to_dict
 from engram.identity import scope_key
 from engram.resolution import candidate as resolution_candidate, evidence_reference
 from engram.resolution_budget import capture_resolution_budget
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import QueryFrameBuilder
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
+
+
+def permissive_candidate_authority(candidate: dict, frame: dict) -> dict:
+    """Return benchmark-local eligibility for synthetic fusion throughput measurements."""
+    del candidate, frame
+    result = candidate_eligibility()
+    return result
+
 
 DEFAULT_OUTPUT = Path("eval/results/fusion/benchmark.json")
 START_NS = 1_000_000_000
