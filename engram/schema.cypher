@@ -2,8 +2,9 @@
 // Memgraph 3.9 Cypher DDL
 //
 // The definitions Engram needs from a knowledge graph. A graph is compatible
-// when it has all of them; it may have more. To create them on an empty graph:
-//   python3 scripts/setup_schema.py --apply
+// when it has all of them; it may have more. The graph's owner creates them;
+// Engram only reads the graph. To check a graph:
+//   PYTHONPATH=. python3 scripts/verify_schema.py
 //
 // Record IDs and Entity/Predicate canonical IDs are opaque strings owned by
 // the graph's writer (UUIDv7 in a Tapestry-managed graph). Existence,
@@ -40,9 +41,24 @@ CREATE CONSTRAINT ON (n:SemanticDefinition) ASSERT n.id IS UNIQUE;
 CREATE CONSTRAINT ON (n:SemanticBinding) ASSERT EXISTS (n.id);
 CREATE CONSTRAINT ON (n:SemanticBinding) ASSERT n.id IS UNIQUE;
 
+// Memgraph creates no implicit label index. Without one, a match on a label
+// alone, or on a label with only unindexed properties, scans every vertex.
+CREATE INDEX ON :AcquisitionReceipt;
+CREATE INDEX ON :Assertion;
+CREATE INDEX ON :Entity;
+CREATE INDEX ON :ExtractionReceipt;
+CREATE INDEX ON :GraphState;
+CREATE INDEX ON :Observation;
+CREATE INDEX ON :Passage;
+CREATE INDEX ON :Predicate;
+CREATE INDEX ON :Proposition;
+CREATE INDEX ON :SchemaRevision;
+CREATE INDEX ON :SemanticBinding;
+CREATE INDEX ON :SemanticDefinition;
+CREATE INDEX ON :Source;
+CREATE INDEX ON :SourceArtifact;
+
 CREATE INDEX ON :SchemaRevision(component);
-CREATE INDEX ON :SchemaRevision(representation_contract);
-CREATE INDEX ON :SchemaRevision(engram_support_contract);
 CREATE INDEX ON :GraphState(name);
 CREATE INDEX ON :GraphState(installation_state);
 CREATE INDEX ON :GraphState(graph_revision);
@@ -53,9 +69,6 @@ CREATE INDEX ON :Source(identity_namespace);
 CREATE INDEX ON :Source(trust_revision);
 CREATE INDEX ON :Source(lifecycle_disposition);
 CREATE INDEX ON :Source(ownership_category);
-CREATE INDEX ON :Source(visibility_kind);
-CREATE INDEX ON :Source(company_id);
-CREATE INDEX ON :Source(customer_id);
 CREATE INDEX ON :Source(engagement_id);
 CREATE INDEX ON :SourceArtifact(id);
 CREATE INDEX ON :SourceArtifact(source_id);
@@ -65,9 +78,6 @@ CREATE INDEX ON :SourceArtifact(content_digest);
 CREATE INDEX ON :SourceArtifact(lifecycle_disposition);
 CREATE INDEX ON :SourceArtifact(recorded_at);
 CREATE INDEX ON :SourceArtifact(retired_at);
-CREATE INDEX ON :SourceArtifact(visibility_kind);
-CREATE INDEX ON :SourceArtifact(company_id);
-CREATE INDEX ON :SourceArtifact(customer_id);
 CREATE INDEX ON :SourceArtifact(engagement_id);
 CREATE INDEX ON :Observation(id);
 CREATE INDEX ON :Observation(source_id);
@@ -76,19 +86,13 @@ CREATE INDEX ON :Observation(result_digest);
 CREATE INDEX ON :Observation(lifecycle_disposition);
 CREATE INDEX ON :Observation(recorded_at);
 CREATE INDEX ON :Observation(retired_at);
-CREATE INDEX ON :Observation(visibility_kind);
-CREATE INDEX ON :Observation(company_id);
-CREATE INDEX ON :Observation(customer_id);
 CREATE INDEX ON :Observation(engagement_id);
 CREATE INDEX ON :Passage(id);
 CREATE INDEX ON :Passage(basis_id);
 CREATE INDEX ON :Passage(locator_profile);
 CREATE INDEX ON :Passage(passage_digest);
-CREATE INDEX ON :Passage(visibility_kind);
 CREATE INDEX ON :ExtractionReceipt(id);
 CREATE INDEX ON :ExtractionReceipt(method_id);
-CREATE INDEX ON :ExtractionReceipt(method_version);
-CREATE INDEX ON :ExtractionReceipt(contract_version);
 CREATE INDEX ON :AcquisitionReceipt(id);
 CREATE INDEX ON :AcquisitionReceipt(basis_id);
 
@@ -103,12 +107,9 @@ CREATE INDEX ON :Proposition(support_revision);
 CREATE INDEX ON :Proposition(recorded_at);
 CREATE INDEX ON :Proposition(retired_at);
 CREATE INDEX ON :Proposition(ownership_category);
-CREATE INDEX ON :Proposition(visibility_kind);
-CREATE INDEX ON :Proposition(company_id);
-CREATE INDEX ON :Proposition(customer_id);
 CREATE INDEX ON :Proposition(engagement_id);
 CREATE INDEX ON :Proposition(embedded_at);
-CREATE INDEX ON :Proposition(embedding_model_version);
+CREATE INDEX ON :Proposition(embedding_model_id);
 CREATE INDEX ON :Proposition(reasoning_projection_member);
 
 CREATE INDEX ON :Assertion(id);
@@ -125,9 +126,6 @@ CREATE INDEX ON :Assertion(recorded_at);
 CREATE INDEX ON :Assertion(retired_at);
 CREATE INDEX ON :Assertion(trust_revision);
 CREATE INDEX ON :Assertion(ownership_category);
-CREATE INDEX ON :Assertion(visibility_kind);
-CREATE INDEX ON :Assertion(company_id);
-CREATE INDEX ON :Assertion(customer_id);
 CREATE INDEX ON :Assertion(engagement_id);
 
 CREATE INDEX ON :Entity(canonical_id);
@@ -143,7 +141,6 @@ CREATE INDEX ON :Predicate(semantic_class);
 CREATE INDEX ON :SemanticDefinition(id);
 CREATE INDEX ON :SemanticDefinition(definition_kind);
 CREATE INDEX ON :SemanticDefinition(identity_revision);
-CREATE INDEX ON :SemanticDefinition(registry_version);
 CREATE INDEX ON :SemanticBinding(id);
 CREATE INDEX ON :SemanticBinding(owner_kind);
 CREATE INDEX ON :SemanticBinding(owner_id);
@@ -167,60 +164,55 @@ WITH CONFIG {
 // internal JSON is prohibited. Missing scalar properties hydrate to native
 // empty mappings/lists at the application boundary.
 //
-// SchemaRevision: component, deployment_owner,
-// representation_contract, engram_support_contract, schema_digest,
-// installed_at.
+// SchemaRevision: component, deployment_owner, schema_digest, installed_at.
 // GraphState: name, deployment_owner, graph_revision,
 // installation_state.
 //
-// Source: id, schema_version, source_kind, identity_namespace, authority_key,
+// Source: id, source_kind, identity_namespace, authority_key,
 // trust_revision, lifecycle_disposition, state_revision, ownership_category,
-// classification_level, visibility_kind, company_id, customer_id,
-// engagement_id, recorded_at, retired_at.
-// SourceArtifact: id, schema_version, source_id, artifact_locator_profile,
+// owner_id, engagement_id, classification_level, recorded_at, retired_at.
+// SourceArtifact: id, source_id, artifact_locator_profile,
 // artifact_locator_key, source_revision, digest_algorithm, content_digest,
 // content_carrier_kind, content_inline or immutable content-reference fields,
 // byte_count, character_encoding, lifecycle/state, transaction-time,
-// classification, ownership, and visibility primitive properties.
-// Observation: id, schema_version, source_id, observation_kind,
+// classification and ownership primitive properties.
+// Observation: id, source_id, observation_kind,
 // event_namespace, event_key, result_digest, observed_at, adapter and producer
 // receipt identifiers, exactly one inline or immutable referenced result
-// carrier, lifecycle/state, transaction-time, classification, ownership, and
-// visibility primitive properties.
-// Passage: id, schema_version, basis_kind, basis_id, locator_profile,
-// locator_key, digest_algorithm, passage_digest, text, character_encoding,
-// byte_count, lifecycle/state, classification, ownership, and visibility
+// carrier, lifecycle/state, transaction-time, classification and ownership
 // primitive properties.
-// ExtractionReceipt: id, schema_version, method_id, method_version,
-// contract_version, candidate_output_digest, selection_count,
-// transformation_receipt_digest, classification, ownership, visibility,
-// recorded_at, and retired_at. AcquisitionReceipt records repeat acquisition
-// provenance by id, basis_id, method/version, acquired_at, and result status.
-// Proposition: id, schema_version, predicate_id, predicate_identity_revision,
+// Passage: id, basis_kind, basis_id, locator_profile,
+// locator_key, digest_algorithm, passage_digest, text, character_encoding,
+// byte_count, lifecycle/state, classification and ownership primitive
+// properties.
+// ExtractionReceipt: id, method_id, candidate_output_digest, selection_count,
+// transformation_receipt_digest, classification, ownership, recorded_at, and
+// retired_at. AcquisitionReceipt records repeat acquisition
+// provenance by id, basis_id, method, acquired_at, and result status.
+// Proposition: id, predicate_id, predicate_identity_revision,
 // polarity, modality_family, modality_operator, canonicalization_profile,
-// canonicalization_profile_version, ontology_version_digest,
-// unit_registry_version, lifecycle_disposition, state_revision,
+// lifecycle_disposition, state_revision,
 // support_revision, lifecycle_reason, superseded_by, recorded_at, retired_at,
-// ownership_category, classification_level, visibility_kind, company_id,
-// customer_id, engagement_id, rendering, embedding, embedded_at,
-// embedding_model_version, and reasoning_projection_member. Arguments,
+// ownership_category, owner_id, engagement_id, classification_level,
+// rendering, embedding, embedded_at,
+// embedding_model_id, and reasoning_projection_member. Arguments,
 // qualifications, semantic context, and applicability scope use owned
 // SemanticBinding nodes.
-// Assertion: id, schema_version, source_id, basis_kind, basis_id,
+// Assertion: id, source_id, basis_kind, basis_id,
 // proposition_id, valid_time kind/bounds/instant/precision/basis,
-// transaction-time, lifecycle/state, reliability, ownership/classification,
-// and visibility primitive properties. Exact selections and extraction lineage
+// transaction-time, lifecycle/state, reliability, ownership and classification
+// primitive properties. Exact selections and extraction lineage
 // use relationships; source qualifications and assertion context use bindings.
 // Entity: canonical_id, identity_key, identity_revision, primary_label,
-// entity_type, lifecycle/state, classification, ownership, and visibility.
+// entity_type, lifecycle/state, classification and ownership.
 // Predicate: canonical_id, identity_revision, label, arity, semantic_class,
-// role-contract and lifecycle/version properties. SemanticDefinition: id,
-// definition_kind, identity_revision, registry_version, content_digest,
-// lifecycle/state, classification, ownership, and visibility.
-// SemanticBinding: id, schema_version, owner_kind, owner_id, binding_kind,
-// role, position, value_kind, datatype, literal value, exact-decimal or rational
-// fields, dimension, canonical_unit_id, unit_registry_version, and binding-
-// profile version. Entity- and Proposition-valued bindings use relationships.
+// role-contract and lifecycle/state properties. SemanticDefinition: id,
+// definition_kind, identity_revision, definition_text, content_digest,
+// lifecycle/state, classification and ownership.
+// SemanticBinding: id, owner_kind, owner_id, binding_kind, role, position,
+// value_kind, datatype, literal value, exact-decimal or rational fields,
+// dimension, and canonical_unit_id. Entity- and Proposition-valued bindings use
+// relationships.
 //
 // SourceArtifact -[:FROM_SOURCE]-> Source
 // Observation -[:FROM_SOURCE]-> Source

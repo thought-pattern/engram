@@ -29,7 +29,7 @@ remain inspectable but are excluded from evidence and direct relation answers
 with `semantic_meaning_unrepresented`. Revalidation compares the semantic
 projection before evidence use. Chat surface-fact, vector surface-fact, and
 template triple reads apply the same guard; template triple reads also require
-active support, current valid time, and the configured graph visibility scope.
+active support and current valid time.
 
 ## Context and canonical identity
 
@@ -48,8 +48,11 @@ unavailable identity produces typed diagnostics and an `EVIDENCE` or `MISS` outc
 The relation path compiles one canonical subject and predicate into the fixed
 `relation_one_hop_proposition_projections` capability. Returned rows are strict
 `PropositionProjection` values plus a bounded object label and type. Current lifecycle,
-system time, valid time, trust inputs, ownership, scope, and publication identity are
-revalidated before a row becomes evidence.
+system time, valid time, trust inputs, scope, and publication identity are
+revalidated before a row becomes evidence. A projection carries no content flag
+(PUBLIC, COMPANY or a customer's label): every row that passes the time and meaning
+checks is eligible with the one reason `eligible`, and the evidence record carries
+the request frame's `scope` that the orchestrator checks against the current frame.
 
 Tapestry's open `Entity.entity_type` taxonomy is normalized at this boundary.
 Engram's scalar and coarse types retain their exact values; domain types such as
@@ -77,7 +80,7 @@ evidence; conflicting `SINGLE` rows abstain.
 Composition accepts a conservative possessive or `of` form that resolves one root
 entity and exactly two ordered predicates. The compiler emits only a closed two-step
 plan over the one-hop capability. Execution is bounded by request budgets and uses
-the same temporal, trust, visibility, and revalidation rules at both steps.
+the same temporal, trust, and revalidation rules at both steps.
 
 A composed `PropositionEvidenceRecord` path holds one or two typed steps instead of
 the Proposition's own ID. Cycles, excessive fan-out,
@@ -93,14 +96,7 @@ same `MISS` returned after a successful graph query with no rows, not a separate
 unavailable resolution outcome. Component diagnostics may still report the graph
 failure. Cooperative cancellation is checked around graph calls.
 
-Every graph call, connecting included, is bounded at 500 ms
-(`GRAPH_TIMEOUT_SECONDS`); an overrunning query is cancelled and its connection
-closed. After a timeout or a lost connection, the rest of the turn's graph reads fail
-immediately, so an unresponsive database costs a turn at most one timeout. When the
-turn ends (a chat or resolution request, or any gRPC call), the connection is
-replaced in the background without delaying the response, and graph reads resume
-once it succeeds. A failed reconnect is retried after the next turn. The schema
-scripts use a 30-second limit instead (`GRAPH_ADMIN_TIMEOUT_SECONDS`).
+A graph call has no deadline, and taking a pooled connection waits as long as that takes. Every socket the driver opens gets TCP keepalive as its watchdog (`engram/graph_keepalive.py`): after 30 seconds without traffic the kernel probes the database every 10 seconds and fails the socket after 3 unanswered probes, which the driver reports as a lost connection. A live database answers the probes from its kernel however long its query runs, so only a dead host or a broken network path ends a wait; the driver's connect window bounds only a TCP connect that gets no answer at all. The values are set explicitly because the system defaults (two hours of idle time on macOS) are too slow for a watchdog, and the driver's descriptors are configured in place, never duplicated or closed. After a lost connection, the rest of the turn's graph reads fail immediately. When the turn ends (a chat or resolution request, or any gRPC call), the connection is replaced in the background without delaying the response, and graph reads resume once it succeeds. A failed reconnect is retried after the next turn. The schema check uses the same connection.
 
 Evaluation artifacts report p50, p95, p99, and maximum resolution time.
 Fixed-cardinality graph telemetry reports consultations, hits, misses, failures,

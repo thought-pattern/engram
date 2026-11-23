@@ -3,43 +3,54 @@
 from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from gc import collect as gc_collect
-from importlib import metadata
 from json import dumps as json_dumps
 from os import cpu_count as os_cpu_count
 from pathlib import Path
-from platform import platform as platform_platform, processor as platform_processor, python_version as platform_python_version
+from platform import machine as platform_machine, processor as platform_processor
 from subprocess import run as subprocess_run
-from sys import argv as sys_argv, executable as sys_executable, path as sys_path, stderr as sys_stderr
+from sys import argv as sys_argv, executable as sys_executable, stderr as sys_stderr
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
-from sentence_transformers import SentenceTransformer
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
-
-from engram.artifacts import LifecycleState, artifact_provenance, artifact_statistics, cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, graph_config
-from engram.constants import Tier
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.core import Engram
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.service import EngramCore
 from scripts.benchmark_metadata import benchmark_source_state
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+
 DEFAULT_OUTPUT = Path("eval/results/runtime/benchmark.json")
-PACKAGE_NAMES = (
-    "grpcio",
-    "grpcio-tools",
-    "neo4j",
-    "nltk",
-    "protobuf",
-    "sentence-transformers",
-    "spacy",
-)
+# Read-only provenance shared by every synthetic artifact; artifact validation copies it.
+RUNTIME_BENCHMARK_PROVENANCE = {
+    "source_label": "runtime:benchmark",
+    "caller_id": "engineering",
+    "accepted_at": "2026-08-19T00:00:00Z",
+}
 
 
+def benchmark_engram_config(capacity: int) -> dict:
+    """Build one benchmark engine configuration sized for its corpus.
+
+    Every benchmark engine disables learning, polishing and lexical expansion so that only
+    the measured lookup work is timed.
+    """
+    config = engram_config(
+        capacity=capacity,
+        learn_user_facts=False,
+        polish_responses=False,
+        use_lemmatization=False,
+        use_spell_correction=False,
+        use_stemming=False,
+        use_synonyms=False,
+    )
+    return config
+
+
+# Benchmark double of the graph client: it accepts the engine's query arguments and returns fixed rows.
 class SyntheticVectorGraph:
     """Offline fixed-result graph used to measure support intersection cost."""
 
@@ -55,33 +66,17 @@ class SyntheticVectorGraph:
             }
         ]
 
-    def vector_search_propositions(self, embedding: list[float], **kwargs) -> list[dict]:
+    def vector_search_propositions(self, unused_embedding: list[float], **unused_keywords) -> list[dict]:
         result = list(self.rows)
         return result
 
-    def execute(self, query: str, parameters=()) -> list[dict]:
+    def execute(self, unused_query: str, unused_parameters=()) -> list[dict]:
         result = []
         return result
 
 
-class SyntheticEmbeddingModel(SentenceTransformer):
+class SyntheticEmbeddingModel:
     """Truthful benchmark marker for a locally replaced encoder operation."""
-
-    def __init__(self) -> None:
-        pass
-
-
-def benchmark_config(capacity: int) -> dict:
-    result = engram_config(
-        capacity=max(capacity + 10, 100),
-        learn_user_facts=False,
-        polish_responses=False,
-        use_lemmatization=False,
-        use_spell_correction=False,
-        use_stemming=False,
-        use_synonyms=False,
-    )
-    return result
 
 
 def internal_percentile(samples: list[float], fraction: float) -> float:
@@ -110,90 +105,74 @@ def internal_measure(operation: object, iterations: int) -> dict:
     return result
 
 
-def memory_build(builder):
-    if not callable(builder):
-        raise ValueError("benchmark builder must be callable")
+def artifact_result(corpus_size: int, iterations: int) -> dict:
+    # Corpus construction is traced in isolation: corpus_size - 1 unrelated artifacts and one target.
     gc_collect()
     tracemalloc_start()
-    value = builder()
-    current, peak = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
-    result = value, {"current_bytes": current, "peak_bytes": peak}
-    return result
-
-
-def prepare_artifact_benchmark(corpus_size: int) -> tuple[EngramCore, str, dict]:
-    def build() -> tuple[EngramCore, str]:
-        engram = Engram(config=benchmark_config(corpus_size))
-        selected_scope = scope_key()
-        artifacts = []
-        for index in range(max(0, corpus_size - 1)):
-            request = f"noise-token-{index} archive-entry-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-noise-{index}",
-                    generation=1,
-                    response=f"Synthetic response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        target_id = "runtime-target"
-        request = "What are the baseline support hours?"
+    engram = Engram(config=benchmark_engram_config(max(corpus_size + 10, 100)))
+    selected_scope = scope_key()
+    artifacts = []
+    for index in range(max(0, corpus_size - 1)):
+        noise_request = f"noise-token-{index} archive-entry-{index}"
         artifacts.append(
-            cached_response_artifact(
-                statement_id=target_id,
-                generation=1,
-                response="Baseline support is open from nine to five.",
-                query_identity=build_standalone_identity(request, selected_scope),
-                retrieval=build_retrieval_representation(request),
-                tier=Tier.STATIC,
-                lifecycle=LifecycleState.ACTIVE,
-                scope=selected_scope,
-                support_references=(),
-                valid_from="",
-                valid_from_available=False,
-                valid_until="",
-                valid_until_available=False,
-                superseded_by="",
-                provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                statistics=artifact_statistics(),
-                metadata={},
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-noise-{index}",
+                    "generation": 1,
+                    "response": f"Synthetic response {index}.",
+                    "query_identity": extract_standalone_identity(noise_request, selected_scope),
+                    "retrieval": retrieval_representation(noise_request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
             )
         )
-        engram.response_repository = ArtifactRepository(tuple(artifacts))
-        result = EngramCore(engram), target_id
-        return result
-
-    built, memory = memory_build(build)
-    if not isinstance(built, tuple) or len(built) != 2:
-        raise RuntimeError("artifact benchmark builder returned an invalid result")
-    core, target_id = built
-    if not isinstance(core, EngramCore) or not isinstance(target_id, str):
-        raise RuntimeError("artifact benchmark builder returned invalid values")
-    result = core, target_id, memory
-    return result
-
-
-def artifact_result(corpus_size: int, iterations: int) -> dict:
-    core, target_id, memory = prepare_artifact_benchmark(corpus_size)
+    target_id = "runtime-target"
     request = "What are the baseline support hours?"
+    artifacts.append(
+        validate_cached_response_artifact(
+            {
+                "statement_id": target_id,
+                "generation": 1,
+                "response": "Baseline support is open from nine to five.",
+                "query_identity": extract_standalone_identity(request, selected_scope),
+                "retrieval": retrieval_representation(request),
+                "tier": Tier.STATIC,
+                "lifecycle": LifecycleState.ACTIVE,
+                "scope": selected_scope,
+                "support_references": (),
+                "valid_from": "",
+                "valid_from_available": False,
+                "valid_until": "",
+                "valid_until_available": False,
+                "superseded_by": "",
+                "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                "statistics": INITIAL_ARTIFACT_STATISTICS,
+                "metadata": {},
+            }
+        )
+    )
+    engram.response_repository = ArtifactRepository(tuple(artifacts))
+    core = EngramCore(engram)
+    # The working list is not retained by the core; release it before reading current bytes.
+    del artifacts
+    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
+    memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_ids = []
 
-    def unique_proposal() -> object:
+    def unique_proposal() -> dict:
         request_id = f"artifact-{corpus_size}-{sequence[0]}"
         sequence[0] += 1
         proposal = core.propose(request, request_id=request_id)
@@ -220,95 +199,93 @@ def artifact_result(corpus_size: int, iterations: int) -> dict:
     return result
 
 
-def prepare_vector_benchmark(corpus_size: int, support_fanout: int) -> tuple[EngramCore, dict]:
-    proposition_id = "prp_" + "a" * 64
-
-    def build() -> EngramCore:
-        config = benchmark_config(corpus_size)
-        config["graph"] = graph_config(enabled=False, vector_enabled=False)
-        engram = Engram(config=config)
-        selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
-        support_reference = {
-            "record_kind": "proposition",
-            "id": proposition_id,
-            "state_revision": 0,
-            "support_revision": 0,
-            "representation_contract": "representation-v1",
-            "visibility_scope": {"kind": "global", "company_id": {}, "customer_id": {}, "engagement_id": {}},
-            "dependency_state_digest": "dep_" + "a" * 64,
-        }
-        artifacts = []
-        noise_count = max(0, corpus_size - support_fanout)
-        for index in range(noise_count):
-            request = f"unrelated-token-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-vector-noise-{index}",
-                    generation=1,
-                    response=f"Unrelated response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        for index in range(support_fanout):
-            request = f"supported-artifact-token-{index}"
-            artifacts.append(
-                cached_response_artifact(
-                    statement_id=f"runtime-vector-supported-{index}",
-                    generation=1,
-                    response=f"Supported response {index}.",
-                    query_identity=build_standalone_identity(request, selected_scope),
-                    retrieval=build_retrieval_representation(request),
-                    tier=Tier.STATIC,
-                    lifecycle=LifecycleState.ACTIVE,
-                    scope=selected_scope,
-                    support_references=(support_reference,),
-                    valid_from="",
-                    valid_from_available=False,
-                    valid_until="",
-                    valid_until_available=False,
-                    superseded_by="",
-                    provenance=artifact_provenance("runtime:benchmark", "engineering", "2026-08-19T00:00:00Z"),
-                    statistics=artifact_statistics(),
-                    metadata={},
-                )
-            )
-        engram.response_repository = ArtifactRepository(tuple(artifacts))
-        graph_settings = engram.config.get("graph", {})
-        graph_settings["enabled"] = True
-        graph_settings["vector_enabled"] = True
-        benchmark_engram = engram
-        benchmark_engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
-        benchmark_engram.graph_embedding_model = SyntheticEmbeddingModel()
-        benchmark_engram.encode_graph_query = lambda text: [0.0] * 384
-        result = EngramCore(engram)
-        return result
-
-    core, memory = memory_build(build)
-    if not isinstance(core, EngramCore):
-        raise RuntimeError("vector benchmark builder returned an invalid core")
-    result = core, memory
-    return result
-
-
 def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dict:
-    core, memory = prepare_vector_benchmark(corpus_size, support_fanout)
+    proposition_id = "prp_" + "a" * 64
+    # Corpus construction is traced in isolation: unrelated artifacts plus support_fanout artifacts
+    # citing the one Proposition the synthetic vector graph returns.
+    gc_collect()
+    tracemalloc_start()
+    config = benchmark_engram_config(max(corpus_size + 10, 100))
+    config["graph"] = graph_config(enabled=False, vector_enabled=False)
+    engram = Engram(config=config)
+    selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
+    # The five-field opaque support reference.
+    support_reference = {
+        "record_kind": "proposition",
+        "id": proposition_id,
+        "state_revision": 0,
+        "support_revision": 0,
+        "dependency_state_digest": "dep_" + "a" * 64,
+    }
+    artifacts = []
+    noise_count = max(0, corpus_size - support_fanout)
+    for index in range(noise_count):
+        request = f"unrelated-token-{index}"
+        artifacts.append(
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-vector-noise-{index}",
+                    "generation": 1,
+                    "response": f"Unrelated response {index}.",
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
+            )
+        )
+    for index in range(support_fanout):
+        request = f"supported-artifact-token-{index}"
+        artifacts.append(
+            validate_cached_response_artifact(
+                {
+                    "statement_id": f"runtime-vector-supported-{index}",
+                    "generation": 1,
+                    "response": f"Supported response {index}.",
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request),
+                    "tier": Tier.STATIC,
+                    "lifecycle": LifecycleState.ACTIVE,
+                    "scope": selected_scope,
+                    "support_references": (support_reference,),
+                    "valid_from": "",
+                    "valid_from_available": False,
+                    "valid_until": "",
+                    "valid_until_available": False,
+                    "superseded_by": "",
+                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                    "statistics": INITIAL_ARTIFACT_STATISTICS,
+                    "metadata": {},
+                }
+            )
+        )
+    engram.response_repository = ArtifactRepository(tuple(artifacts))
+    graph_settings = engram.config.get("graph", {})
+    graph_settings["enabled"] = True
+    graph_settings["vector_enabled"] = True
+    engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
+    engram.graph_embedding_model = SyntheticEmbeddingModel()
+    engram.encode_graph_query = lambda text: [0.0] * 384
+    core = EngramCore(engram)
+    # The working list is not retained by the core; release it before reading current bytes.
+    del artifacts
+    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
+    tracemalloc_stop()
+    memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_counts = []
 
-    def propose() -> object:
+    def propose() -> dict:
         request_id = f"vector-{corpus_size}-{support_fanout}-{sequence[0]}"
         sequence[0] += 1
         proposal = core.propose(
@@ -337,10 +314,11 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
 def startup_result(iterations: int) -> dict:
     warm_iterations = max(5, iterations)
     cold_iterations = max(3, min(5, iterations // 5))
-    warm = internal_measure(lambda: Engram(config=benchmark_config(100)), warm_iterations)
+    # Warm construction uses the 100-artifact benchmark profile (capacity 110).
+    warm = internal_measure(lambda: Engram(config=benchmark_engram_config(110)), warm_iterations)
     command = [sys_executable, "-c", "from engram.core import Engram; Engram()"]
 
-    def cold_start() -> object:
+    def cold_start():
         result = subprocess_run(command, cwd=REPOSITORY, check=True, capture_output=True, text=True)
         return result
 
@@ -351,16 +329,6 @@ def startup_result(iterations: int) -> dict:
         "mode": "offline graph-disabled startup",
     }
     return result
-
-
-def package_versions() -> dict[str, str]:
-    versions = {}
-    for package in PACKAGE_NAMES:
-        try:
-            versions[package] = metadata.version(package)
-        except metadata.PackageNotFoundError:
-            versions[package] = ""
-    return versions
 
 
 def reported(label: str, operation: object):
@@ -396,11 +364,9 @@ def run_benchmark(sizes: list[int], fanouts: list[int], iterations: int) -> dict
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {
-            "python": platform_python_version(),
-            "platform": platform_platform(),
+            "machine": platform_machine(),
             "processor": platform_processor(),
             "logical_cpu_count": os_cpu_count() or 0,
-            "packages": package_versions(),
         },
         "method": {
             "clock": "time.perf_counter_ns",

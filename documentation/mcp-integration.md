@@ -2,13 +2,21 @@
 
 ## Status and scope
 
+The Regulator names in this standalone Engram contract describe external
+proposal/verdict handling. Tapestry's Will owns that recall relationship and
+interprets/routes Channel input under `will.yml`. Tapestry Regulator only judges
+outbound Channel soundness and alone generates IDK; Utility serves inference
+wherever it is needed and sufficient. Tapestry selects only `model.actor` and `model.regulator`, with Will, Utility
+and Regulator using the latter through separate services. Existing Engram tools,
+enum names and receipts retain their standalone meaning.
+
 Engram provides an MCPServer stdio server for agents and LLM hosts that need a
 stateful conversational process or a Regulator-controlled response cache.
-The twelve tools expose one conversation lifecycle, inspection, explicit
+The eleven tools expose one conversation lifecycle, inspection, explicit
 shared-fact ingestion, in-memory reporting, unified evidence resolution, and a
 two-phase propose/resolve cache interface. `engram/mcp_server.py` is a thin adapter over the transport-neutral
 `EngramCore` in `engram/service.py`, which is also used by the gRPC adapter.
-The twelve names, input schemas, defaults, and descriptions are the current MCP
+The eleven names, input schemas, defaults, and descriptions are the current MCP
 interface. Output schemas remain unspecified. `engram_query`, the Python
 `resolve_request` operation, the CLI `query` command, and gRPC `ResolveEvidence`
 all invoke the same unified Proposition-evidence pipeline.
@@ -136,10 +144,10 @@ The returned turn event includes:
 - conversational fact-admission decisions;
 - elapsed time;
 - previous-response and predicate changes;
-- statements learned during that turn.
+- the facts this user taught during that turn.
 
-The call mutates conversation state and learns facts whose admission decision is
-`admitted`, regardless of whether a scripted pattern matched that turn, when
+The call mutates conversation state and learns, for this user only, the facts whose
+admission decision is `admitted`, regardless of whether a scripted pattern matched that turn, when
 `learn_user_facts` is enabled. Cache proposals use `engram_propose`.
 When graph access is enabled, graph-eligible turns consult it before accepting a
 scripted factual response. The shared runtime clock supplies the graph evaluation
@@ -263,9 +271,9 @@ is the receipt lifetime and retry boundary.
 - `source_label` records opaque provenance; MCP host policy supplies authorization.
 - `engram_add_fact` is an explicit write to shared Engram knowledge and should
   be granted only to callers authorized to add facts.
-- Runtime graph operations issue reads and no writes. This behavior does not
-  require restricted credentials or an interface incapable of mutation. Graph
-  schema setup remains a separate administrative utility.
+- Engram only reads the graph. Its graph client refuses mutating Cypher, so
+  this does not depend on restricted credentials. The graph's owner creates the
+  schema.
 - During resolution, a graph connection, query, or optional vector-index failure
   contributes no graph result. If no local resolver succeeds, the result is the
   same miss produced by a successful graph query with no rows; graph-health
@@ -301,8 +309,8 @@ Input:
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "required_metadata": {
-    "model_version": "model-7",
-    "policy_version": "regulator-4"
+    "actor_model": "model-7",
+    "policy_digest": "4f1c9e"
   },
   "required_source_label": "support-answers",
   "limit": 1
@@ -312,8 +320,8 @@ Input:
 `namespace` and `context_fingerprint` are exact-match scope keys. Empty values
 match only entries carrying empty scope values. `required_metadata` applies
 exact top-level matches to the metadata stored with each response, and
-`required_source_label` optionally filters provenance. This permits model,
-prompt, source-data, tool-set, and policy version isolation before regulation.
+`required_source_label` optionally filters provenance. This isolates responses
+by model, policy, or any other stored metadata before regulation.
 
 Output:
 
@@ -338,9 +346,9 @@ Output:
       "source_label": "support-answers",
       "introduced_by_user_id": "",
       "metadata": {
-        "model_version": "model-7",
-        "prompt_version": "support-12",
-        "policy_version": "regulator-4"
+        "actor_model": "model-7",
+        "regulator_model": "model-3",
+        "policy_digest": "4f1c9e"
       }
     }
   ],
@@ -396,17 +404,19 @@ of `IDK` are rejected. `source_label` defaults to `unknown`.
   "context_fingerprint": "account-tier:pro",
   "source_label": "support-answers",
   "metadata": {
-    "model_version": "model-7",
-    "prompt_version": "support-12",
-    "policy_version": "regulator-4"
+    "actor_model": "model-7",
+    "regulator_model": "model-3",
+    "policy_digest": "4f1c9e"
   }
 }
 ```
 
-The result returns `learned`, `statement_id`, `action` (`created` or
-`rejected_capacity`), scope, provenance, and `idempotent`. A canonical or alias collision
-in the same exact scope names the existing owner and is rejected; the
-transport-neutral supersession operation handles replacement. Learned responses remain shared knowledge
+The result returns `learned`, `statement_id`, `action` (`created`, `replaced` or
+`rejected_capacity`), scope, provenance, `idempotent`, `evicted_statement_ids` and
+`superseded_statement_ids`. The newest learned response replaces the one held for the
+same question: an ACTIVE artifact holding one of its retrieval keys in the same exact
+scope becomes SUPERSEDED by it in the same mutation and is named in
+`superseded_statement_ids`. Learned responses remain shared knowledge
 (`introduced_by_user_id` is `""`), while the calling user's previous-response
 context is updated. `request_id` makes retries idempotent and conflicting reuse
 is an error.
@@ -429,19 +439,9 @@ authorize retirement.
 Only dynamic, patternless entries can be retired through this tool. The result
 is retry-safe by `request_id`; conflicting request reuse is an error.
 
-### `engram_retire_responses`
-
-Accepts `entries`, an ordered list of one through ten native retirement mappings,
-using the same explicit staleness authority as `engram_retire_response`. Whole
-input validation precedes mutation; expected per-entry failures do not prevent
-later entries. Each success retains the scalar receipt and request-ID replay
-semantics. See the shared [ordered-retirement contract](python-api.md#ordered-retirement)
-for fields, byte bounds, outcomes, and failure behavior. The tool requires an
-active conversation and delegates to the same core operation as gRPC and Python.
-
 ### Process state
 
-Proposals and idempotency records are process-local, retained for five minutes,
+Proposals and idempotency records are process-local
 and bounded to 1,000 records of each kind. They are cleared by `engram_stop`
 and process exit. Learned responses, scope/provenance metadata, statistics,
 retirements, and user context share that process-only lifetime.
@@ -467,7 +467,7 @@ log.
 
 ## Verification checklist
 
-- The host can list all twelve tools after startup.
+- The host can list all eleven tools after startup.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
 - `user_id` defaults to `"0"` and preserves explicit case.
@@ -485,7 +485,7 @@ log.
 - A proposal records candidacy but earns a hit only after acceptance.
 - Scope and required metadata exclude responses that do not satisfy the request.
 - Proposal, learn, resolve, and retirement retries are idempotent; conflicting retries fail.
-- Transient proposals expire; learned responses last only for the process lifetime.
+- Transient proposals are bounded to 1,000 records; learned responses last only for the process lifetime.
 - Adaptive conversation tests observe every response before sending the next
   input.
 - The regulated-cache tools expose the schemas and lifecycle documented above.

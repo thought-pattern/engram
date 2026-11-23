@@ -5,16 +5,12 @@ from datetime import UTC, datetime
 from hashlib import sha256 as hashlib_sha256
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, python_version as platform_python_version
+from platform import machine as platform_machine
 from statistics import median as statistics_median
-from sys import path as sys_path
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
-REPOSITORY = Path(__file__).resolve().parent.parent
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
-
+from engram.constants_resolution import CostClass, ResolutionOutcome, ResolverState
 from engram.coordination import AtomicMutationCoordinator
 from engram.core import Engram
 from engram.evidence import (
@@ -25,32 +21,24 @@ from engram.evidence import (
 )
 from engram.identity import scope_key
 from engram.repository import tier_admission_policy
-from engram.resolution import (
-    CostClass,
-    DisclosureBasis,
-    PropositionOwnership,
-    QueryFrameBuilder,
-    ResolutionOutcome,
-    ResolverState,
-    budget_consumption_to_dict,
-    build_evidence_package,
+from engram.resolution import resolution_result_to_dict, resolver_result
+from engram.resolution_accounting import ResolutionAccountingFinalizer
+from engram.resolution_budget import budget_consumption_to_dict, capture_resolution_budget, resolution_budget
+from engram.resolution_evidence import (
     canonical_proposition_references,
-    capture_resolution_budget,
-    disclosure_decision,
-    evidence_package_from_json,
-    evidence_package_to_json,
     feature_set,
     proposition_evidence_record,
-    proposition_evidence_record_from_json,
+    proposition_evidence_record_from_dict,
     proposition_evidence_record_to_dict,
-    proposition_evidence_record_to_json,
     proposition_trust_inputs,
     proposition_validity_inputs,
-    resolution_budget,
-    resolution_result_to_json,
-    resolver_result,
 )
-from engram.resolvers import ResolutionAccountingFinalizer, ResolutionOrchestrator, ResolverExecutor, ResolverRegistry
+from engram.resolution_frame import QueryFrameBuilder
+from engram.resolution_orchestrator import ResolutionOrchestrator
+from engram.resolution_package import build_evidence_package, evidence_package_from_dict, evidence_package_to_dict
+from engram.resolution_sizing import encoded_size
+from engram.resolver_execution import ResolverExecutor
+from engram.resolver_plan import ResolverRegistry
 from engram.responses import AcceptedResponseService
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
@@ -85,40 +73,7 @@ def measure(operation, samples: int) -> dict[str, float]:
     return result
 
 
-def record(index: int) -> dict:
-    """Construct one content-neutral, currently eligible synthetic record."""
-    proposition_id = f"proposition-benchmark-{index:04d}"
-    result = proposition_evidence_record(
-        proposition_id=proposition_id,
-        source_resolver="structured_graph",
-        source_contributions=("structured_graph",),
-        features=feature_set(
-            values={"canonical_completeness": 1.0, "structured_match": 1.0},
-            unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
-        ),
-        canonical_references=canonical_proposition_references(
-            f"entity:subject-{index:04d}",
-            "predicate:benchmark",
-            f"entity:object-{index:04d}",
-        ),
-        validity=proposition_validity_inputs(
-            "2026-08-16T16:00:00Z",
-            True,
-            True,
-            True,
-        ),
-        trust=proposition_trust_inputs(),
-        disclosure=disclosure_decision(
-            PropositionOwnership.PUBLIC,
-            DisclosureBasis.PUBLIC_RULE,
-            SCOPE,
-        ),
-        path=(proposition_id,),
-        selection_reasons=("canonical_complete", "public", "structured_match"),
-    )
-    return result
-
-
+# Benchmark double of the resolver protocol: it accepts the frame and budget every resolver receives and uses neither.
 class SyntheticResolver:
     """Bounded synthetic resolver used only by the offline benchmark."""
 
@@ -129,11 +84,11 @@ class SyntheticResolver:
         self.internal_result = result
         self.internal_fail = fail
 
-    def available(self, frame: dict) -> bool:
+    def available(self, unused_frame: dict) -> bool:
         result = True
         return result
 
-    def resolve(self, frame: dict, budget: dict, cooperative_check=()) -> dict:
+    def resolve(self, unused_frame: dict, unused_budget: dict, cooperative_check=()) -> dict:
         if cooperative_check:
             cooperative_check()
         if self.internal_fail:
@@ -142,16 +97,46 @@ class SyntheticResolver:
         return result
 
 
-def measure_evidence(samples: int) -> dict[str, object]:
+def measure_evidence(samples: int) -> dict:
     """Run warmed engineering benchmarks and return a bounded evidence artifact."""
-    records = tuple(record(index) for index in range(1_000))
+    # One thousand content-neutral, currently eligible synthetic records.
+    synthetic_records = []
+    for index in range(1_000):
+        proposition_id = f"proposition-benchmark-{index:04d}"
+        synthetic_records.append(
+            proposition_evidence_record(
+                proposition_id=proposition_id,
+                source_resolver="structured_graph",
+                source_contributions=("structured_graph",),
+                features=feature_set(
+                    values={"canonical_completeness": 1.0, "structured_match": 1.0},
+                    unavailable=("semantic_similarity", "source_agreement", "supplied_trust"),
+                ),
+                canonical_references=canonical_proposition_references(
+                    f"entity:subject-{index:04d}",
+                    "predicate:benchmark",
+                    f"entity:object-{index:04d}",
+                ),
+                validity=proposition_validity_inputs(
+                    "2026-08-16T16:00:00Z",
+                    True,
+                    True,
+                    True,
+                ),
+                trust=proposition_trust_inputs(),
+                scope=SCOPE,
+                path=(proposition_id,),
+                selection_reasons=("canonical_complete", "public", "structured_match"),
+            )
+        )
+    records = tuple(synthetic_records)
     ten_records = records[:10]
     policy = evidence_usefulness_policy()
-    encoded_record = proposition_evidence_record_to_json(records[0])
+    encoded_record = proposition_evidence_record_to_dict(records[0])
 
-    codec = measure(lambda: proposition_evidence_record_to_json(proposition_evidence_record_from_json(encoded_record)), samples)
+    codec = measure(lambda: proposition_evidence_record_to_dict(proposition_evidence_record_from_dict(encoded_record)), samples)
     package = measure(
-        lambda: evidence_package_from_json(evidence_package_to_json(build_evidence_package(ten_records))),
+        lambda: evidence_package_from_dict(evidence_package_to_dict(build_evidence_package(ten_records))),
         samples,
     )
     normalization_samples = max(10, samples // 5)
@@ -225,7 +210,7 @@ def measure_evidence(samples: int) -> dict[str, object]:
     orchestration = measure(resolve_partial_failure, samples)
     partial_result, partial_finalization = resolve_partial_failure()
     package_value = build_evidence_package(ten_records)
-    package_bytes = len(evidence_package_to_json(package_value).encode("utf-8"))
+    package_bytes = encoded_size(evidence_package_to_dict(package_value))
     all_included = all(evaluate_evidence_usefulness(policy, value).get("included", False) for value in records)
     gates = {
         "thousand_record_peak_under_64_mib": peak_bytes < 67_108_864,
@@ -246,8 +231,7 @@ def measure_evidence(samples: int) -> dict[str, object]:
             partial_finalization.get("candidate_statement_ids", ()) == () and not partial_finalization.get("success_applied", False)
         ),
         "complete_output_accounting_is_exact": (
-            partial_result.get("budget", {}).get("output_bytes", 0)
-            == len(resolution_result_to_json(partial_result).encode("utf-8"))
+            partial_result.get("budget", {}).get("output_bytes", 0) == encoded_size(resolution_result_to_dict(partial_result))
         ),
         "working_memory_within_frame_budget": (
             partial_result.get("budget", {}).get("working_memory_bytes", 0)
@@ -258,7 +242,7 @@ def measure_evidence(samples: int) -> dict[str, object]:
         "benchmark_id": "section7-evidence-benchmark",
         "recorded_at": recorded_at(),
         "source": benchmark_source_state(),
-        "environment": {"python": platform_python_version(), "platform": platform_platform()},
+        "environment": {"machine": platform_machine()},
         "policy": evidence_usefulness_policy_to_dict(policy),
         "policy_provenance": {
             "selection": "hand_authored_conservative_unfitted",

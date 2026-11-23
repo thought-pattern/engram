@@ -1,29 +1,13 @@
-"""Exact corrected support-reference fixtures for Engram tests."""
+"""Exact corrected support-reference and accepted-artifact fixtures for Engram tests."""
 
-from engram.artifacts import (
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
-)
-from engram.constants import Tier
-from engram.identity import build_retrieval_representation, build_standalone_identity, scope_key
-
-GLOBAL_VISIBILITY = {
-    "kind": "global",
-    "company_id": {},
-    "customer_id": {},
-    "engagement_id": {},
-}
+from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
+from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 
 ASSERTION_REFERENCE_A = {
-    "schema_version": "tapestry-engram-support",
     "record_kind": "assertion",
     "id": "ast_" + "a" * 64,
     "state_revision": 0,
     "support_revision": {},
-    "representation_contract": "representation-v1",
-    "visibility_scope": GLOBAL_VISIBILITY,
     "dependency_state_digest": "dep_" + "a" * 64,
 }
 
@@ -74,37 +58,27 @@ REFERENCE_IDS = {
     "proposition_c": PROPOSITION_REFERENCE_C.get("id", ""),
 }
 
+TENANT_SCOPE = scope_key(namespace="tenant-a", context_fingerprint="account:pro")
 
-def accepted_artifact(**overrides) -> dict:
-    """Build one current accepted-response artifact for cross-module tests."""
-    selected_scope = overrides.pop(
-        "scope",
-        scope_key(namespace="tenant-a", context_fingerprint="account:pro"),
-    )
-    request = overrides.pop("request", "Who acquired GitHub?")
-    values = {
-        "statement_id": "stmt-response-1",
-        "generation": 1,
-        "response": "Microsoft acquired GitHub in 2018.",
-        "query_identity": build_standalone_identity(request, selected_scope),
-        "retrieval": build_retrieval_representation(request, ("GitHub acquirer",)),
-        "tier": Tier.STATIC,
-        "lifecycle": LifecycleState.ACTIVE,
-        "scope": selected_scope,
-        "support_references": (ASSERTION_REFERENCE_A,),
-        "valid_from": "",
-        "valid_from_available": False,
-        "valid_until": "",
-        "valid_until_available": False,
-        "superseded_by": "",
-        "provenance": artifact_provenance(
-            source_label="released",
-            caller_id="regulator-a",
-            accepted_at="2026-08-12T16:00:00Z",
-        ),
-        "statistics": artifact_statistics(),
-        "metadata": {},
-    }
-    values.update(overrides)
-    result = cached_response_artifact(**values)
-    return result
+# Fields of the shared current accepted-response artifact for "Who acquired GitHub?" in TENANT_SCOPE. Tests pass a
+# copy with their changed fields to validate_cached_response_artifact, recomputing query_identity and retrieval when
+# they change the request or scope.
+ACCEPTED_ARTIFACT_FIELDS = {
+    "statement_id": "stmt-response-1",
+    "generation": 1,
+    "response": "Microsoft acquired GitHub in 2018.",
+    "query_identity": extract_standalone_identity("Who acquired GitHub?", TENANT_SCOPE),
+    "retrieval": retrieval_representation("Who acquired GitHub?", ("GitHub acquirer",)),
+    "tier": Tier.STATIC,
+    "lifecycle": LifecycleState.ACTIVE,
+    "scope": TENANT_SCOPE,
+    "support_references": (ASSERTION_REFERENCE_A,),
+    "valid_from": "",
+    "valid_from_available": False,
+    "valid_until": "",
+    "valid_until_available": False,
+    "superseded_by": "",
+    "provenance": {"source_label": "released", "caller_id": "regulator-a", "accepted_at": "2026-08-12T16:00:00Z"},
+    "statistics": INITIAL_ARTIFACT_STATISTICS,
+    "metadata": {},
+}

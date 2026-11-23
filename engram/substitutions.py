@@ -1,40 +1,18 @@
-"""Text substitution maps for ENGRAM.
+"""Text substitution and sentence splitting for ENGRAM.
 
-This module provides substitution maps for normalizing input text and
-performing pronoun/person transformations in templates.
+Applies word substitution maps to normalize input text and to perform
+pronoun/person transformations in templates; the maps themselves
+(``DEFAULT_CONTRACTIONS``, ``DEFAULT_GENDER``) belong to ``constants``. Also
+splits text into sentences with NLTK's punkt tokenizer, whose data
+``nltk_data.NLTK_RESOURCES`` requires and loads.
 """
 
-from functools import lru_cache
+from re import Match, sub as re_sub
 
 from nltk.tokenize import sent_tokenize
 
-from engram.constants import DEFAULT_CONTRACTIONS, DEFAULT_GENDER, DEFAULT_PERSON, DEFAULT_PERSON2
-from engram.nltk_data import ensure_resource
-
-
-@lru_cache(maxsize=1)
-def ensure_punkt() -> None:
-    """Ensure the punkt tokenizers are present (cached, runs once)."""
-    ensure_resource("tokenizers/punkt", "punkt")
-    ensure_resource("tokenizers/punkt_tab", "punkt_tab")
-
-
-def substitution_maps(
-    contractions=DEFAULT_CONTRACTIONS,
-    person=DEFAULT_PERSON,
-    person2=DEFAULT_PERSON2,
-    gender=DEFAULT_GENDER,
-    custom=(),
-) -> dict:
-    """Build a container dict holding all substitution maps."""
-    maps = {
-        "contractions": dict(contractions),
-        "person": dict(person),
-        "person2": dict(person2),
-        "gender": dict(gender),
-        "custom": dict(custom or ()),
-    }
-    return maps
+from engram.constants_language import DEFAULT_CONTRACTIONS, DEFAULT_GENDER
+from engram.nltk_data import NLTK_RESOURCES
 
 
 def get_all_input_subs(maps: dict) -> dict[str, str]:
@@ -48,11 +26,42 @@ def get_all_input_subs(maps: dict) -> dict[str, str]:
     return result
 
 
+def substitute_word(match: Match, subs: dict[str, str]) -> str:
+    """Substitute one non-whitespace token while preserving surrounding punctuation and case."""
+    word = match.group(0)
+    prefix = ""
+    suffix = ""
+    core = word
+
+    while core and not core[0].isalnum():
+        prefix += core[0]
+        core = core[1:]
+
+    while core and not core[-1].isalnum():
+        suffix = core[-1] + suffix
+        core = core[:-1]
+
+    if not core:
+        return word
+
+    lower_core = core.lower()
+    if lower_core not in subs:
+        return word
+
+    replacement = subs.get(lower_core, "")
+    if core.isupper():
+        replacement = replacement.upper()
+    elif core[0].isupper():
+        replacement = replacement.capitalize()
+    substituted = prefix + replacement + suffix
+    return substituted
+
+
 def apply_substitutions(text: str, subs: dict[str, str]) -> str:
-    """Apply word-by-word substitutions to text.
+    """Apply word-by-word substitutions to text while preserving whitespace and line breaks.
 
     Substitutions are applied to whole words only (not partial matches).
-    Case is preserved in the output.
+    Case, indentation, and line breaks are preserved in the output.
 
     Args:
         text: Input text.
@@ -64,38 +73,7 @@ def apply_substitutions(text: str, subs: dict[str, str]) -> str:
     if not subs or not text:
         return text
 
-    words = text.split()
-    result = []
-
-    for word in words:
-        prefix = ""
-        suffix = ""
-        core = word
-
-        while core and not core[0].isalnum():
-            prefix += core[0]
-            core = core[1:]
-
-        while core and not core[-1].isalnum():
-            suffix = core[-1] + suffix
-            core = core[:-1]
-
-        if not core:
-            result.append(word)
-            continue
-
-        lower_core = core.lower()
-        if lower_core in subs:
-            replacement = subs.get(lower_core, "")
-            if core.isupper():
-                replacement = replacement.upper()
-            elif core[0].isupper():
-                replacement = replacement.capitalize()
-            result.append(prefix + replacement + suffix)
-        else:
-            result.append(word)
-
-    substituted = " ".join(result)
+    substituted = re_sub(r"\S+", lambda match: substitute_word(match, subs), text)
     return substituted
 
 
@@ -138,12 +116,15 @@ def split_sentences(text: str) -> list[str]:
 
     Returns:
         List of sentences (stripped of leading/trailing whitespace).
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
     if not text or not text.strip():
         result = []
         return result
 
-    ensure_punkt()
+    NLTK_RESOURCES.require()
     sentences = sent_tokenize(text)
 
     cleaned = [s.strip() for s in sentences if s.strip()]

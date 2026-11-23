@@ -1,48 +1,105 @@
-"""Configuration for ENGRAM.
+"""Configuration boundary for ENGRAM.
 
-Configurations are plain dictionaries returned by validating normalizers.
+This module owns validation of Engram's configuration: each section normalizer
+returns a plain dictionary with a fixed field set, and unknown keys are refused.
+Defaults and limits come from ``engram.constants``; the module sits just above
+the constants, scope and utility contracts and below every runtime component.
+
+A configuration has one source, chosen by the caller: ``load_config`` reads
+Engram's own YAML file, and ``config_from_dict`` takes the complete mapping a
+host such as Tapestry passes and reads no file. Either one may enable the
+graph database or leave it off; no setting selects between the two sources.
 """
 
-from logging import getLogger as logging_getLogger
+from datetime import timedelta
+from ipaddress import ip_address, ip_network
 from math import isfinite as math_isfinite
 from os import path as os_path
 
 from yaml import safe_load as yaml_safe_load
 
-from engram.constants import DEFAULT_STOPWORDS, EMPTY_CONFIG, RolloutMode, SessionOverflow
-from engram.scope import validate_visibility_scope
+from engram.constants import (
+    APPROVED_SEMANTIC_BACKEND,
+    APPROVED_SEMANTIC_DIMENSION,
+    APPROVED_SEMANTIC_LICENSE_ID,
+    APPROVED_SEMANTIC_MODEL_ID,
+    CONVERSATION_DUPLICATE_POLICIES,
+    DEFAULT_BOT_NAME,
+    DEFAULT_CAPACITY,
+    DEFAULT_CONVERSATION_DUPLICATE_POLICY,
+    DEFAULT_GRAPH_HOST,
+    DEFAULT_GRAPH_PORT,
+    DEFAULT_GRAPH_VECTOR_LIMIT,
+    DEFAULT_GRAPH_VECTOR_MODEL,
+    DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
+    DEFAULT_GRAPH_VECTOR_WEIGHT,
+    DEFAULT_HTTP_ENABLED,
+    DEFAULT_HTTP_HOST,
+    DEFAULT_HTTP_PORT,
+    DEFAULT_HTTP_REFRESH_SECONDS,
+    DEFAULT_MAX_SESSIONS,
+    DEFAULT_MAX_SYNONYMS_PER_WORD,
+    DEFAULT_RECENCY_HALF_LIFE_SECONDS,
+    DEFAULT_RERANKER_MAX_INPUT_BYTES,
+    DEFAULT_RERANKER_SHORTLIST_SIZE,
+    DEFAULT_SEMANTIC_BATCH_SIZE,
+    DEFAULT_SEMANTIC_MAX_INPUT_BYTES,
+    DEFAULT_SEMANTIC_MAX_RECORDS,
+    DEFAULT_SEMANTIC_MAX_SCAN_RECORDS,
+    DEFAULT_SESSION_TTL_SECONDS,
+    DEFAULT_SPARSE_MAX_POSTING_VISITS,
+    DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS,
+    DEFAULT_SPARSE_MAX_QUERY_TERMS,
+    DEFAULT_SRAI_DEPTH_LIMIT,
+    DEFAULT_STOPWORDS,
+    DEFAULT_VECTOR_MIN_SIMILARITY,
+    DEFAULT_WEIGHT_BASE,
+    DEFAULT_WEIGHT_HIT_RATE,
+    DEFAULT_WEIGHT_RECENCY,
+    EMPTY_CONFIG,
+    HTTP_LAN_NETWORKS,
+    MAX_GRAPH_VECTOR_LIMIT,
+    MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
+    MAX_RERANKER_INPUT_BYTES,
+    MAX_RERANKER_SHORTLIST_SIZE,
+    MAX_SEMANTIC_BATCH_SIZE,
+    MAX_SEMANTIC_DIMENSION,
+    MAX_SEMANTIC_INPUT_BYTES,
+    MAX_SEMANTIC_RECORDS,
+    MAX_SEMANTIC_SCAN_RECORDS,
+    MAX_SPARSE_POSTING_VISITS,
+    MAX_SPARSE_PREFIX_EXPANSIONS,
+    MAX_SPARSE_QUERY_TERMS,
+    PROPOSITION_VECTOR_DIMENSION,
+    PROPOSITION_VECTOR_INDEX_NAME,
+    RERANKER_IMPLEMENTATION,
+    SEMANTIC_BACKENDS,
+    RolloutMode,
+    SessionOverflow,
+)
 from engram.utilities import utility_config
 
-logger = logging_getLogger(__name__)
-
-EMPTY_SPARSE_CONFIG = EMPTY_CONFIG
-EMPTY_SEMANTIC_CONFIG = EMPTY_CONFIG
-EMPTY_RERANKER_CONFIG = EMPTY_CONFIG
-EMPTY_ROLLOUT_CONFIG = EMPTY_CONFIG
-EMPTY_UTILITY_CONFIG = EMPTY_CONFIG
-EMPTY_CONVERSATION_CONFIG = EMPTY_CONFIG
 # The config.yml beside the engram package: the repository root in a source checkout.
 DEFAULT_CONFIG_PATH = os_path.join(os_path.dirname(os_path.dirname(os_path.abspath(__file__))), "config.yml")
 
 
 def graph_config(
-    host: str = "localhost",
-    port: int = 7687,
+    host: str = DEFAULT_GRAPH_HOST,
+    port: int = DEFAULT_GRAPH_PORT,
     username: str = "",
     password: str = "",
     enabled: bool = False,
-    visibility_scope: dict = EMPTY_CONFIG,
     vector_enabled: bool = False,
-    vector_index_name: str = "proposition_embeddings",
-    vector_model: str = "all-MiniLM-L6-v2",
+    vector_index_name: str = PROPOSITION_VECTOR_INDEX_NAME,
+    vector_model: str = DEFAULT_GRAPH_VECTOR_MODEL,
     vector_model_path: str = "",
-    vector_dimension: int = 384,
-    vector_limit: int = 250,
-    vector_support_scan_limit: int = 100000,
-    vector_min_similarity: float = 0.45,
-    vector_weight: float = 0.75,
+    vector_dimension: int = PROPOSITION_VECTOR_DIMENSION,
+    vector_limit: int = DEFAULT_GRAPH_VECTOR_LIMIT,
+    vector_support_scan_limit: int = DEFAULT_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT,
+    vector_min_similarity: float = DEFAULT_VECTOR_MIN_SIMILARITY,
+    vector_weight: float = DEFAULT_GRAPH_VECTOR_WEIGHT,
 ) -> dict:
-    """Build a Knowledge Graph connection configuration dict.
+    """Validate and normalize a Knowledge Graph connection configuration.
 
     Connects to a Bolt graph database with the neo4j driver over host/port.
     Startup checks that the graph's schema is compatible with Engram's.
@@ -57,27 +114,26 @@ def graph_config(
         raise ValueError("graph password must be a string")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
-    scope = validate_visibility_scope(visibility_scope)
     if not isinstance(vector_enabled, bool):
         raise ValueError("graph vector_enabled must be a boolean")
     if vector_enabled and not enabled:
         raise ValueError("graph vector_enabled requires graph enabled")
-    if vector_index_name != "proposition_embeddings":
-        raise ValueError("graph vector_index_name must be proposition_embeddings")
+    if vector_index_name != PROPOSITION_VECTOR_INDEX_NAME:
+        raise ValueError(f"graph vector_index_name must be {PROPOSITION_VECTOR_INDEX_NAME}")
     if not isinstance(vector_model, str) or not vector_model.strip():
         raise ValueError("graph vector_model must be a non-empty string")
     if not isinstance(vector_model_path, str):
         raise ValueError("graph vector_model_path must be a string")
     if not isinstance(vector_dimension, int) or isinstance(vector_dimension, bool) or vector_dimension < 1:
         raise ValueError("graph vector_dimension must be a positive integer")
-    if not isinstance(vector_limit, int) or isinstance(vector_limit, bool) or not 1 <= vector_limit <= 1000:
-        raise ValueError("graph vector_limit must be an integer from 1 through 1000")
+    if not isinstance(vector_limit, int) or isinstance(vector_limit, bool) or not 1 <= vector_limit <= MAX_GRAPH_VECTOR_LIMIT:
+        raise ValueError(f"graph vector_limit must be an integer from 1 through {MAX_GRAPH_VECTOR_LIMIT}")
     if (
         not isinstance(vector_support_scan_limit, int)
         or isinstance(vector_support_scan_limit, bool)
-        or not 1 <= vector_support_scan_limit <= 1_000_000
+        or not 1 <= vector_support_scan_limit <= MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT
     ):
-        raise ValueError("graph vector_support_scan_limit must be an integer from 1 through 1000000")
+        raise ValueError(f"graph vector_support_scan_limit must be an integer from 1 through {MAX_GRAPH_VECTOR_SUPPORT_SCAN_LIMIT}")
     if (
         not isinstance(vector_min_similarity, (int, float))
         or isinstance(vector_min_similarity, bool)
@@ -99,7 +155,6 @@ def graph_config(
         "username": username,
         "password": password,
         "enabled": enabled,
-        "visibility_scope": scope,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),
         "vector_model": vector_model.strip(),
@@ -116,19 +171,19 @@ def graph_config(
 def sparse_config(
     enabled: bool = False,
     include_response_text: bool = False,
-    max_query_terms: int = 64,
-    max_posting_visits: int = 100_000,
-    max_prefix_expansions: int = 64,
+    max_query_terms: int = DEFAULT_SPARSE_MAX_QUERY_TERMS,
+    max_posting_visits: int = DEFAULT_SPARSE_MAX_POSTING_VISITS,
+    max_prefix_expansions: int = DEFAULT_SPARSE_MAX_PREFIX_EXPANSIONS,
 ) -> dict:
-    """Build configuration for request-local sparse retrieval."""
+    """Validate configuration for sparse keyword retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("sparse enabled must be a boolean")
     if not isinstance(include_response_text, bool):
         raise ValueError("sparse include_response_text must be a boolean")
     for name, value, maximum in (
-        ("max_query_terms", max_query_terms, 256),
-        ("max_posting_visits", max_posting_visits, 10_000_000),
-        ("max_prefix_expansions", max_prefix_expansions, 1_024),
+        ("max_query_terms", max_query_terms, MAX_SPARSE_QUERY_TERMS),
+        ("max_posting_visits", max_posting_visits, MAX_SPARSE_POSTING_VISITS),
+        ("max_prefix_expansions", max_prefix_expansions, MAX_SPARSE_PREFIX_EXPANSIONS),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"sparse {name} must be an integer from 1 through {maximum}")
@@ -145,26 +200,25 @@ def sparse_config(
 def semantic_config(
     enabled: bool = False,
     model_path: str = "",
-    model_id: str = "sentence-transformers/all-MiniLM-L6-v2",
-    model_version: str = "",
-    license_id: str = "apache-2.0",
+    model_id: str = APPROVED_SEMANTIC_MODEL_ID,
+    model_revision: str = "",
+    license_id: str = APPROVED_SEMANTIC_LICENSE_ID,
     artifact_sha256: str = "",
-    dimension: int = 384,
-    backend: str = "native",
-    normalization_version: int = 1,
-    batch_size: int = 32,
-    max_input_bytes: int = 16_384,
-    max_records: int = 100_000,
-    max_scan_records: int = 100_000,
-    min_similarity: float = 0.45,
+    dimension: int = APPROVED_SEMANTIC_DIMENSION,
+    backend: str = APPROVED_SEMANTIC_BACKEND,
+    batch_size: int = DEFAULT_SEMANTIC_BATCH_SIZE,
+    max_input_bytes: int = DEFAULT_SEMANTIC_MAX_INPUT_BYTES,
+    max_records: int = DEFAULT_SEMANTIC_MAX_RECORDS,
+    max_scan_records: int = DEFAULT_SEMANTIC_MAX_SCAN_RECORDS,
+    min_similarity: float = DEFAULT_VECTOR_MIN_SIMILARITY,
 ) -> dict:
-    """Build configuration for offline standalone semantic retrieval."""
+    """Validate and normalize configuration for offline standalone semantic retrieval."""
     if not isinstance(enabled, bool):
         raise ValueError("semantic enabled must be a boolean")
     for name, value in (
         ("model_path", model_path),
         ("model_id", model_id),
-        ("model_version", model_version),
+        ("model_revision", model_revision),
         ("license_id", license_id),
         ("artifact_sha256", artifact_sha256),
         ("backend", backend),
@@ -173,19 +227,16 @@ def semantic_config(
             raise ValueError(f"semantic {name} must be a string")
     if not model_id.strip():
         raise ValueError("semantic model_id must be a non-empty string")
-    if license_id.strip().casefold() not in {"apache-2.0", "mit", "bsd-3-clause"}:
-        raise ValueError("semantic license_id is not approved")
-    if backend not in {"native", "onnx", "quantized"}:
-        raise ValueError("semantic backend must be native, onnx, or quantized")
+    if backend not in SEMANTIC_BACKENDS:
+        raise ValueError(f"semantic backend must be one of {', '.join(sorted(SEMANTIC_BACKENDS))}")
     if artifact_sha256 and (len(artifact_sha256) != 64 or any(value not in "0123456789abcdefABCDEF" for value in artifact_sha256)):
         raise ValueError("semantic artifact_sha256 must be a SHA-256 hex digest")
     for name, value, maximum in (
-        ("dimension", dimension, 65_536),
-        ("normalization_version", normalization_version, 1_000_000),
-        ("batch_size", batch_size, 1_024),
-        ("max_input_bytes", max_input_bytes, 1_048_576),
-        ("max_records", max_records, 10_000_000),
-        ("max_scan_records", max_scan_records, 10_000_000),
+        ("dimension", dimension, MAX_SEMANTIC_DIMENSION),
+        ("batch_size", batch_size, MAX_SEMANTIC_BATCH_SIZE),
+        ("max_input_bytes", max_input_bytes, MAX_SEMANTIC_INPUT_BYTES),
+        ("max_records", max_records, MAX_SEMANTIC_RECORDS),
+        ("max_scan_records", max_scan_records, MAX_SEMANTIC_SCAN_RECORDS),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"semantic {name} must be an integer from 1 through {maximum}")
@@ -196,18 +247,17 @@ def semantic_config(
         or not 0.0 <= min_similarity <= 1.0
     ):
         raise ValueError("semantic min_similarity must be between 0 and 1")
-    if enabled and (not model_path.strip() or not model_version.strip() or not artifact_sha256):
-        raise ValueError("enabled semantic retrieval requires model_path, model_version, and artifact_sha256")
+    if enabled and (not model_path.strip() or not model_revision.strip() or not artifact_sha256):
+        raise ValueError("enabled semantic retrieval requires model_path, model_revision, and artifact_sha256")
     result: dict = {
         "enabled": enabled,
         "model_path": model_path.strip(),
         "model_id": model_id.strip(),
-        "model_version": model_version.strip(),
+        "model_revision": model_revision.strip(),
         "license_id": license_id.strip().casefold(),
         "artifact_sha256": artifact_sha256.casefold(),
         "dimension": dimension,
         "backend": backend,
-        "normalization_version": normalization_version,
         "batch_size": batch_size,
         "max_input_bytes": max_input_bytes,
         "max_records": max_records,
@@ -219,47 +269,41 @@ def semantic_config(
 
 def reranker_config(
     enabled: bool = False,
-    implementation: str = "transparent_logistic",
-    model_version: str = "transparent-logistic",
-    shortlist_size: int = 8,
-    max_input_bytes: int = 65_536,
-    max_model_time_ms: int = 25,
+    implementation: str = RERANKER_IMPLEMENTATION,
+    shortlist_size: int = DEFAULT_RERANKER_SHORTLIST_SIZE,
+    max_input_bytes: int = DEFAULT_RERANKER_MAX_INPUT_BYTES,
 ) -> dict:
-    """Build the bounded optional reranker configuration."""
+    """Validate the bounded optional reranker configuration."""
     if not isinstance(enabled, bool):
         raise ValueError("reranker enabled must be a boolean")
-    if implementation != "transparent_logistic":
-        raise ValueError("reranker implementation must be transparent_logistic")
-    if not isinstance(model_version, str) or not model_version.strip():
-        raise ValueError("reranker model_version must be a non-empty string")
+    if implementation != RERANKER_IMPLEMENTATION:
+        raise ValueError(f"reranker implementation must be {RERANKER_IMPLEMENTATION}")
     for name, value, maximum in (
-        ("shortlist_size", shortlist_size, 64),
-        ("max_input_bytes", max_input_bytes, 1_048_576),
-        ("max_model_time_ms", max_model_time_ms, 10_000),
+        ("shortlist_size", shortlist_size, MAX_RERANKER_SHORTLIST_SIZE),
+        ("max_input_bytes", max_input_bytes, MAX_RERANKER_INPUT_BYTES),
     ):
         if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= maximum:
             raise ValueError(f"reranker {name} must be an integer from 1 through {maximum}")
     result: dict = {
         "enabled": enabled,
         "implementation": implementation,
-        "model_version": model_version.strip(),
         "shortlist_size": shortlist_size,
         "max_input_bytes": max_input_bytes,
-        "max_model_time_ms": max_model_time_ms,
     }
     return result
 
 
-def rollout_config(
-    default_mode: RolloutMode = RolloutMode.REGULATED_DIRECT_ANSWER,
-    namespaces: dict = EMPTY_CONFIG,
-) -> dict:
-    """Build the small namespace rollout policy used by unified resolution."""
+def rollout_config(default_mode=RolloutMode.REGULATED_DIRECT_ANSWER, namespaces: dict = EMPTY_CONFIG) -> dict:
+    """Validate the small namespace rollout policy used by unified resolution.
+
+    ``default_mode`` and each namespace mode accept a ``RolloutMode`` or its
+    string value from YAML; both normalize to the enum member.
+    """
     if not isinstance(default_mode, RolloutMode):
         try:
             default_mode = RolloutMode(default_mode)
-        except (TypeError, ValueError) as error:
-            raise ValueError("rollout default_mode is invalid") from error
+        except (TypeError, ValueError) as err:
+            raise ValueError("rollout default_mode is invalid") from err
     if not isinstance(namespaces, dict):
         raise ValueError("rollout namespaces must be an object")
     selected_namespaces = {}
@@ -268,12 +312,9 @@ def rollout_config(
             raise ValueError("rollout namespace keys must be non-empty strings")
         try:
             selected_namespaces[namespace] = mode if isinstance(mode, RolloutMode) else RolloutMode(mode)
-        except (TypeError, ValueError) as error:
-            raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from error
-    result: dict = {
-        "default_mode": default_mode,
-        "namespaces": selected_namespaces,
-    }
+        except (TypeError, ValueError) as err:
+            raise ValueError(f"rollout mode for namespace {namespace!r} is invalid") from err
+    result: dict = {"default_mode": default_mode, "namespaces": selected_namespaces}
     return result
 
 
@@ -298,20 +339,22 @@ def conversation_optional_path(entry, label: str) -> str:
 
 
 def conversation_config(
-    bot_name: str = "ENGRAM",
-    seed_files: list | tuple = (),
-    duplicate_policy: str = "error",
-    set_files: list | tuple = (),
-    map_files: list | tuple = (),
+    bot_name: str = DEFAULT_BOT_NAME,
+    seed_files=(),
+    duplicate_policy: str = DEFAULT_CONVERSATION_DUPLICATE_POLICY,
+    set_files=(),
+    map_files=(),
     properties_file: str = "",
     predicate_file: str = "",
     substitution_file: str = "",
 ) -> dict:
-    """Build the conversation persona and the files loaded at startup.
+    """Validate the conversation persona and the files loaded at startup.
 
-    An empty ``seed_files`` list loads no categories. Paths stored here are
-    used as given; ``load_config`` resolves paths from a YAML file before this
-    runs. Set, map, property, predicate, and substitution files load before
+    ``seed_files``, ``set_files`` and ``map_files`` accept a list or tuple of
+    non-empty strings and normalize to a list of stripped paths. An empty
+    ``seed_files`` list loads no categories. Paths stored here are
+    used as given; ``load_config`` and ``config_from_dict`` resolve them before
+    this runs. Set, map, property, predicate, and substitution files load before
     the categories. This function does not require the files to exist.
 
     ``duplicate_policy`` is ``error``, ``last``, or ``first``. ``error`` rejects
@@ -320,7 +363,7 @@ def conversation_config(
     """
     if not isinstance(bot_name, str) or not bot_name.strip():
         raise ValueError("conversation bot_name must be a non-empty string")
-    if duplicate_policy not in {"error", "last", "first"}:
+    if duplicate_policy not in CONVERSATION_DUPLICATE_POLICIES:
         raise ValueError("conversation duplicate_policy must be error, last, or first")
     config = {
         "bot_name": bot_name.strip(),
@@ -335,160 +378,85 @@ def conversation_config(
     return config
 
 
-def resolve_conversation_path_list(entries, config_path: str, key: str, kind: str) -> list:
-    """Resolve a list of conversation files against the YAML file's directory.
+def resolve_conversation_path_list(entries, base_directory: str, source: str, key: str, kind: str) -> list:
+    """Resolve a list of conversation files against ``base_directory``.
 
     Absolute entries stay absolute. A missing file, a directory, or any other
-    non-file raises an error that names the path and the config file.
+    non-file raises an error that names the path and ``source``, the
+    configuration that listed it.
     """
     if isinstance(entries, str) or not isinstance(entries, (list, tuple)):
-        raise ValueError(f"conversation {key} in {config_path} must be a list of strings")
-    config_directory = os_path.dirname(os_path.abspath(config_path))
+        raise ValueError(f"conversation {key} in {source} must be a list of strings")
     resolved = []
     for entry in entries:
         if not isinstance(entry, str) or not entry.strip():
-            raise ValueError(f"conversation {key} in {config_path} must contain non-empty strings")
+            raise ValueError(f"conversation {key} in {source} must contain non-empty strings")
         raw_path = entry.strip()
         if os_path.isabs(raw_path):
             candidate = os_path.abspath(raw_path)
         else:
-            candidate = os_path.abspath(os_path.join(config_directory, raw_path))
+            candidate = os_path.abspath(os_path.join(base_directory, raw_path))
         if not os_path.isfile(candidate):
-            raise ValueError(f"conversation {kind} {candidate} listed in {config_path} is missing or is not a file")
+            raise ValueError(f"conversation {kind} {candidate} listed in {source} is missing or is not a file")
         resolved.append(candidate)
     return resolved
 
 
-def resolve_conversation_optional_file(entry, config_path: str, key: str, kind: str) -> str:
+def resolve_conversation_optional_file(entry, base_directory: str, source: str, key: str, kind: str) -> str:
     """Resolve one optional conversation file. A blank entry stays blank."""
     if not isinstance(entry, str):
-        raise ValueError(f"conversation {key} in {config_path} must be a string")
+        raise ValueError(f"conversation {key} in {source} must be a string")
     if not entry.strip():
         result = ""
         return result
-    resolved = resolve_conversation_path_list([entry], config_path, key, kind)
+    resolved = resolve_conversation_path_list([entry], base_directory, source, key, kind)
     result = resolved[0]
     return result
 
 
-def engram_config(
-    # Capacity settings
-    capacity: int = 10000,
-    max_sessions: int = 10000,
-    session_ttl_seconds: float = 86400.0,  # 24 hours
-    # Scoring weights
-    weight_base: float = 0.5,
-    weight_recency: float = 0.3,
-    weight_hit_rate: float = 0.2,
-    recency_half_life_seconds: float = 604800.0,  # 7 days: recency decay half-life
-    # Session overflow behavior
-    session_overflow: SessionOverflow = SessionOverflow.LRU,
-    # Stopwords
-    stopwords=DEFAULT_STOPWORDS,
-    # Input processing
-    expand_contractions: bool = True,
-    retrieval_rewrites_enabled: bool = False,
-    learn_user_facts: bool = True,
-    srai_depth_limit: int = 100,
-    # Matching enhancements
-    use_stemming: bool = True,  # Enable stemmed matching (run matches running)
-    use_lemmatization: bool = True,  # Enable WordNet-lemmatized matching (precise)
-    use_synonyms: bool = True,  # Enable synonym expansion at query time
-    max_synonyms_per_word: int = 3,  # Maximum synonyms to consider per word
-    use_spell_correction: bool = True,  # Correct input typos toward the store vocabulary
-    use_spacy_facts: bool = False,  # Opt-in spaCy dependency-parse fact extraction
-    use_spacy_lemmatization: bool = False,  # spaCy POS-aware lemmas in the matcher
-    use_phrase_keywords: bool = False,  # Noun-chunk phrase keywords for retrieval
-    # Output processing
-    polish_responses: bool = True,  # Repair casing in pattern-path responses
-    # Fallback response when no pattern matches
-    fallback_response: str = "",  # Empty means an empty response on no match
-    # Knowledge Graph settings
-    graph: dict = EMPTY_CONFIG,
-    # Rebuildable local sparse retrieval
-    sparse: dict = EMPTY_SPARSE_CONFIG,
-    # Rebuildable local standalone semantic retrieval and optional reranking
-    semantic: dict = EMPTY_SEMANTIC_CONFIG,
-    reranker: dict = EMPTY_RERANKER_CONFIG,
-    rollout: dict = EMPTY_ROLLOUT_CONFIG,
-    # Allow-listed deterministic utility operations
-    utility: dict = EMPTY_UTILITY_CONFIG,
-    # Persona name, categories, and AIML tables loaded once at startup
-    conversation: dict = EMPTY_CONVERSATION_CONFIG,
+def http_listen_address_allowed(host: str) -> bool:
+    """Whether ``host`` is localhost, a loopback address, or a private unicast address in ``HTTP_LAN_NETWORKS``.
+
+    Unspecified, multicast, link-local, reserved and public addresses are refused, and so is any other name.
+    """
+    if host == "localhost":
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    networks = [ip_network(network) for network in HTTP_LAN_NETWORKS]
+    lan = any(address.version == network.version and address in network for network in networks)
+    allowed = (
+        lan and not address.is_unspecified and not address.is_multicast and not address.is_link_local and not address.is_reserved
+    )
+    return allowed
+
+
+def http_config(
+    enabled: bool = DEFAULT_HTTP_ENABLED,
+    host: str = DEFAULT_HTTP_HOST,
+    port: int = DEFAULT_HTTP_PORT,
+    refresh_seconds: float = DEFAULT_HTTP_REFRESH_SECONDS,
 ) -> dict:
-    """Build (and validate) a configuration dict for an ENGRAM instance."""
-    if not isinstance(graph, dict):
-        raise ValueError("graph config must be an object")
-    if not isinstance(sparse, dict):
-        raise ValueError("sparse config must be an object")
-    if not isinstance(semantic, dict):
-        raise ValueError("semantic config must be an object")
-    if not isinstance(reranker, dict):
-        raise ValueError("reranker config must be an object")
-    if not isinstance(rollout, dict):
-        raise ValueError("rollout config must be an object")
-    if not isinstance(utility, dict):
-        raise ValueError("utility config must be an object")
-    if not isinstance(conversation, dict):
-        raise ValueError("conversation config must be an object")
-    if capacity < 1:
-        raise ValueError("capacity must be at least 1")
-    if max_sessions < 1:
-        raise ValueError("max_sessions must be at least 1")
-    if session_ttl_seconds <= 0:
-        raise ValueError("session_ttl_seconds must be positive")
-
-    weights = (weight_base, weight_recency, weight_hit_rate)
-    if any(not math_isfinite(weight) or weight < 0 for weight in weights):
-        raise ValueError("scoring weights must be finite and non-negative")
-    if sum(weights) <= 0:
-        raise ValueError("scoring weights must sum to a positive value")
-    if not math_isfinite(recency_half_life_seconds) or recency_half_life_seconds <= 0:
-        raise ValueError("recency_half_life_seconds must be finite and positive")
-    if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
-        raise ValueError("srai_depth_limit must be an integer")
-    if srai_depth_limit < 1:
-        raise ValueError("srai_depth_limit must be at least 1")
-    if not isinstance(max_synonyms_per_word, int) or isinstance(max_synonyms_per_word, bool):
-        raise ValueError("max_synonyms_per_word must be an integer")
-    if max_synonyms_per_word < 0:
-        raise ValueError("max_synonyms_per_word must be non-negative")
-    if not isinstance(retrieval_rewrites_enabled, bool):
-        raise ValueError("retrieval_rewrites_enabled must be a boolean")
-
-    config = {
-        "capacity": capacity,
-        "max_sessions": max_sessions,
-        "session_ttl_seconds": session_ttl_seconds,
-        "weight_base": weight_base,
-        "weight_recency": weight_recency,
-        "weight_hit_rate": weight_hit_rate,
-        "recency_half_life_seconds": recency_half_life_seconds,
-        "session_overflow": session_overflow,
-        "stopwords": set(stopwords or DEFAULT_STOPWORDS),
-        "expand_contractions": expand_contractions,
-        "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
-        "learn_user_facts": learn_user_facts,
-        "srai_depth_limit": srai_depth_limit,
-        "use_stemming": use_stemming,
-        "use_lemmatization": use_lemmatization,
-        "use_synonyms": use_synonyms,
-        "max_synonyms_per_word": max_synonyms_per_word,
-        "use_spell_correction": use_spell_correction,
-        "use_spacy_facts": use_spacy_facts,
-        "use_spacy_lemmatization": use_spacy_lemmatization,
-        "use_phrase_keywords": use_phrase_keywords,
-        "polish_responses": polish_responses,
-        "fallback_response": fallback_response,
-        "graph": dict(graph),
-        "sparse": sparse_config(**sparse) if sparse else sparse_config(),
-        "semantic": semantic_config(**semantic) if semantic else semantic_config(),
-        "reranker": reranker_config(**reranker) if reranker else reranker_config(),
-        "rollout": rollout_config(**rollout) if rollout else rollout_config(),
-        "utility": utility_config(**utility) if utility else utility_config(),
-        "conversation": conversation_config(**conversation) if conversation else conversation_config(),
-    }
-    return config
+    """Validate the health page and API listener: its switch, address, exact port and page refresh interval."""
+    if not isinstance(enabled, bool):
+        raise ValueError("http enabled must be a boolean")
+    if not isinstance(host, str) or not http_listen_address_allowed(host):
+        raise ValueError("http host must be a loopback or private LAN unicast address")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ValueError("http port must be an integer from 1 through 65535")
+    if (
+        not isinstance(refresh_seconds, (int, float))
+        or isinstance(refresh_seconds, bool)
+        or not math_isfinite(refresh_seconds)
+        or refresh_seconds <= 0
+    ):
+        raise ValueError("http refresh_seconds must be a finite positive number")
+    result: dict = {"enabled": enabled, "host": host, "port": port, "refresh_seconds": refresh_seconds}
+    return result
 
 
 SECTION_BUILDERS = (
@@ -499,32 +467,231 @@ SECTION_BUILDERS = (
     ("rollout", rollout_config),
     ("utility", utility_config),
     ("conversation", conversation_config),
+    ("http", http_config),
 )
 
 
-def known_keys(values: object, allowed: set, section: str, source: str) -> dict:
-    """Keep only the keys this release reads.
+def require_finite_number(value: object, name: str) -> float:
+    """Return a finite native int or float as a float; Booleans and other types are rejected."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math_isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+    result = float(value)
+    return result
 
-    An extra or stale key is dropped rather than stopping startup; each one is
-    logged so a misspelled setting is still visible.
+
+def require_stopwords(value: object) -> set[str]:
+    """Return a copy of a stopword collection; an empty collection means no stopwords."""
+    if not isinstance(value, (set, list, tuple)) or not all(isinstance(word, str) and word for word in value):
+        raise ValueError("stopwords must be a collection of non-empty strings")
+    result = set(value)
+    return result
+
+
+def engram_config(
+    capacity: int = DEFAULT_CAPACITY,
+    max_sessions: int = DEFAULT_MAX_SESSIONS,
+    session_ttl_seconds: float = DEFAULT_SESSION_TTL_SECONDS,
+    weight_base: float = DEFAULT_WEIGHT_BASE,
+    weight_recency: float = DEFAULT_WEIGHT_RECENCY,
+    weight_hit_rate: float = DEFAULT_WEIGHT_HIT_RATE,
+    recency_half_life_seconds: float = DEFAULT_RECENCY_HALF_LIFE_SECONDS,
+    session_overflow: SessionOverflow = SessionOverflow.LRU,
+    stopwords=DEFAULT_STOPWORDS,
+    expand_contractions: bool = True,
+    retrieval_rewrites_enabled: bool = False,
+    learn_user_facts: bool = True,
+    srai_depth_limit: int = DEFAULT_SRAI_DEPTH_LIMIT,
+    use_stemming: bool = True,
+    use_lemmatization: bool = True,
+    use_synonyms: bool = True,
+    max_synonyms_per_word: int = DEFAULT_MAX_SYNONYMS_PER_WORD,
+    use_spell_correction: bool = True,
+    use_spacy_facts: bool = False,
+    use_spacy_lemmatization: bool = False,
+    use_phrase_keywords: bool = False,
+    polish_responses: bool = True,
+    fallback_response: str = "",
+    graph: dict = EMPTY_CONFIG,
+    sparse: dict = EMPTY_CONFIG,
+    semantic: dict = EMPTY_CONFIG,
+    reranker: dict = EMPTY_CONFIG,
+    rollout: dict = EMPTY_CONFIG,
+    utility: dict = EMPTY_CONFIG,
+    conversation: dict = EMPTY_CONFIG,
+    http: dict = EMPTY_CONFIG,
+) -> dict:
+    """Validate and normalize the configuration dict for an ENGRAM instance.
+
+    Every section is built by its own normalizer, so the result has the same
+    complete shape whether a section was supplied or left at its defaults.
+    ``fallback_response`` is the reply when nothing matches; empty means none.
     """
+    sections = {
+        "graph": graph,
+        "sparse": sparse,
+        "semantic": semantic,
+        "reranker": reranker,
+        "rollout": rollout,
+        "utility": utility,
+        "conversation": conversation,
+        "http": http,
+    }
+    require_section_objects(sections)
+    require_store_limits(capacity, max_sessions, session_ttl_seconds)
+    weights = scoring_weights(weight_base, weight_recency, weight_hit_rate)
+    half_life = require_finite_number(recency_half_life_seconds, "recency_half_life_seconds")
+    if half_life <= 0:
+        raise ValueError("recency_half_life_seconds must be finite and positive")
+    require_matching_limits(srai_depth_limit, max_synonyms_per_word, session_overflow, fallback_response)
+    flags = {
+        "expand_contractions": expand_contractions,
+        "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
+        "learn_user_facts": learn_user_facts,
+        "use_stemming": use_stemming,
+        "use_lemmatization": use_lemmatization,
+        "use_synonyms": use_synonyms,
+        "use_spell_correction": use_spell_correction,
+        "use_spacy_facts": use_spacy_facts,
+        "use_spacy_lemmatization": use_spacy_lemmatization,
+        "use_phrase_keywords": use_phrase_keywords,
+        "polish_responses": polish_responses,
+    }
+    for name, flag in flags.items():
+        if not isinstance(flag, bool):
+            raise ValueError(f"{name} must be a boolean")
+    built_sections = {
+        name: builder(**require_known_keys(sections.get(name, {}), set(builder()), name, "engram_config"))
+        for name, builder in SECTION_BUILDERS
+    }
+    config = {
+        "capacity": capacity,
+        "max_sessions": max_sessions,
+        "session_ttl_seconds": session_ttl_seconds,
+        "weight_base": weights[0],
+        "weight_recency": weights[1],
+        "weight_hit_rate": weights[2],
+        "recency_half_life_seconds": half_life,
+        "session_overflow": session_overflow,
+        "stopwords": require_stopwords(stopwords),
+        "srai_depth_limit": srai_depth_limit,
+        "max_synonyms_per_word": max_synonyms_per_word,
+        **flags,
+        "fallback_response": fallback_response,
+        **built_sections,
+    }
+    return config
+
+
+def require_section_objects(sections: dict) -> bool:
+    """Refuse a section given as anything but an object, in section order."""
+    for name, section in sections.items():
+        if not isinstance(section, dict):
+            raise ValueError(f"{name} config must be an object")
+    return True
+
+
+def require_store_limits(capacity: object, max_sessions: object, session_ttl_seconds: object) -> bool:
+    """Refuse store and session limits that could not bound admission.
+
+    Store and session counts compare against these limits on every admission,
+    so only a native positive integer bounds them; NaN and infinity never trip.
+    """
+    if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
+        raise ValueError("capacity must be an integer of at least 1")
+    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
+        raise ValueError("max_sessions must be an integer of at least 1")
+    if (
+        (type(session_ttl_seconds) is not int and type(session_ttl_seconds) is not float)
+        or not math_isfinite(session_ttl_seconds)
+        or session_ttl_seconds <= 0
+    ):
+        raise ValueError("session_ttl_seconds must be a finite positive number")
+    try:
+        timedelta(seconds=session_ttl_seconds)
+    except OverflowError as err:
+        raise ValueError("session_ttl_seconds exceeds the representable session interval") from err
+    return True
+
+
+def scoring_weights(weight_base: object, weight_recency: object, weight_hit_rate: object) -> tuple:
+    """Return the base, recency and hit-rate weights as floats; each is finite and non-negative and their sum positive."""
+    weights = tuple(
+        require_finite_number(weight, name)
+        for name, weight in (("weight_base", weight_base), ("weight_recency", weight_recency), ("weight_hit_rate", weight_hit_rate))
+    )
+    if any(weight < 0 for weight in weights):
+        raise ValueError("scoring weights must be finite and non-negative")
+    if sum(weights) <= 0:
+        raise ValueError("scoring weights must sum to a positive value")
+    return weights
+
+
+def require_matching_limits(
+    srai_depth_limit: object, max_synonyms_per_word: object, session_overflow: object, fallback_response: object
+) -> bool:
+    """Refuse a recursion depth below one, a negative synonym limit, an unknown overflow policy or a non-text fallback."""
+    if not isinstance(srai_depth_limit, int) or isinstance(srai_depth_limit, bool):
+        raise ValueError("srai_depth_limit must be an integer")
+    if srai_depth_limit < 1:
+        raise ValueError("srai_depth_limit must be at least 1")
+    if not isinstance(max_synonyms_per_word, int) or isinstance(max_synonyms_per_word, bool):
+        raise ValueError("max_synonyms_per_word must be an integer")
+    if max_synonyms_per_word < 0:
+        raise ValueError("max_synonyms_per_word must be non-negative")
+    if not isinstance(session_overflow, SessionOverflow):
+        raise ValueError("session_overflow must be a SessionOverflow")
+    if not isinstance(fallback_response, str):
+        raise ValueError("fallback_response must be a string")
+    return True
+
+
+def require_known_keys(values: object, allowed: set, section: str, source: str) -> dict:
+    """Return a copy of ``values`` after rejecting every key this release does not read."""
     label = f"{section} config" if section else "config"
     if not isinstance(values, dict):
         raise ValueError(f"{label} in {source} must be an object")
     unknown = sorted(str(key) for key in values if key not in allowed)
     if unknown:
-        logger.warning("Ignoring unknown %s key(s) in %s: %s", label, source, ", ".join(unknown))
-    result = {key: value for key, value in values.items() if key in allowed}
+        raise ValueError(f"unknown {label} key(s) in {source}: {', '.join(unknown)}")
+    result = dict(values)
     return result
 
 
-def read_config_mapping(path: str) -> dict:
-    """Read one YAML configuration file into the keys this release reads.
+def admitted_config_mapping(values: object, base_directory: str, source: str) -> dict:
+    """Return a copy of a config.yml-shaped mapping that holds only keys this release reads.
 
-    A missing or empty file is an empty mapping. Top-level and section keys are
-    filtered with ``known_keys``, and conversation file paths are resolved
-    against this file's directory and stored absolute, so the mapping no longer
-    depends on the file's location. Values are not yet validated.
+    An unknown top-level or section key raises ``ValueError`` naming the key and
+    ``source``. Conversation file paths are resolved against ``base_directory``
+    and stored absolute, so the mapping no longer depends on where it came from.
+    Values are not yet validated.
+    """
+    data = require_known_keys(values, set(engram_config()), "", source)
+    for name, builder in SECTION_BUILDERS:
+        section_values = data.get(name, {})
+        if section_values:
+            data[name] = require_known_keys(section_values, set(builder()), name, source)
+    section = data.get("conversation", {})
+    if section:
+        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
+            if key in section:
+                section[key] = resolve_conversation_path_list(section.get(key, []), base_directory, source, key, kind)
+        for key, kind in (
+            ("properties_file", "properties file"),
+            ("predicate_file", "predicate file"),
+            ("substitution_file", "substitution file"),
+        ):
+            if key in section:
+                section[key] = resolve_conversation_optional_file(section.get(key, ""), base_directory, source, key, kind)
+    return data
+
+
+def read_config_mapping(path: str) -> dict:
+    """Read one YAML configuration file into a mapping of the keys this release reads.
+
+    A missing or empty file is an empty mapping. An unknown top-level or section
+    key raises ``ValueError`` naming the key and this file. Conversation file
+    paths are resolved against this file's directory and stored absolute, so the
+    mapping no longer depends on the file's location. Values are not yet validated.
     """
     if not os_path.exists(path):
         result: dict = {}
@@ -534,79 +701,52 @@ def read_config_mapping(path: str) -> dict:
     if not loaded:
         result = {}
         return result
-    data = known_keys(loaded, set(engram_config()), "", path)
-    for name, builder in SECTION_BUILDERS:
-        if name in data and data.get(name):
-            data[name] = known_keys(data.get(name), set(builder()), name, path)
-    section = data.get("conversation") or {}
-    if section:
-        for key, kind in (("seed_files", "seed file"), ("set_files", "set file"), ("map_files", "map file")):
-            if key in section:
-                section[key] = resolve_conversation_path_list(section.get(key), path, key, kind)
-        for key, kind in (
-            ("properties_file", "properties file"),
-            ("predicate_file", "predicate file"),
-            ("substitution_file", "substitution file"),
-        ):
-            if key in section:
-                section[key] = resolve_conversation_optional_file(section.get(key), path, key, kind)
+    data = admitted_config_mapping(loaded, os_path.dirname(os_path.abspath(path)), path)
     return data
 
 
 def validated_config(data: dict, source: str) -> dict:
     """Build a validated config dict from a config.yml-shaped mapping.
 
-    ``session_overflow`` may be its string value and ``stopwords`` any
-    collection of words. Nested mappings are built with their section
-    normalizers; missing keys fall back to the ``engram_config`` defaults.
+    ``session_overflow`` may be its string value and ``stopwords`` a list of
+    words. Nested mappings are built with their section normalizers; missing
+    keys fall back to the ``engram_config`` defaults, and an unknown key raises
+    ``ValueError`` naming ``source``.
     """
-    params = known_keys(data, set(engram_config()), "", source)
+    params = require_known_keys(data, set(engram_config()), "", source)
     if "session_overflow" in params:
-        params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
-    if "stopwords" in params:
-        params["stopwords"] = set(params.get("stopwords", set()))
+        try:
+            params["session_overflow"] = SessionOverflow(params.get("session_overflow", ""))
+        except ValueError as err:
+            raise ValueError(f"session_overflow in {source} is invalid") from err
     for name, builder in SECTION_BUILDERS:
         section = params.get(name, {})
         if name in params and section:
-            params[name] = builder(**known_keys(section, set(builder()), name, source))
+            params[name] = require_known_keys(section, set(builder()), name, source)
     config = engram_config(**params)
     return config
 
 
-def config_from_dict(data: dict, base_path: str = DEFAULT_CONFIG_PATH) -> dict:
-    """Build a validated config from Engram's config.yml overridden by a host mapping.
+def config_from_dict(data: dict, base_directory: str = "") -> dict:
+    """Build a validated config from the complete configuration a host passes in memory.
 
-    For a host, such as Tapestry, that supplies Engram's settings in memory.
-    The configuration file at ``base_path`` (by default the ``config.yml``
-    beside the ``engram`` package) is read first, with its conversation paths
-    resolved against that file. ``data`` then overrides it: a top-level value
-    replaces the file's value, and a section such as ``graph`` or
-    ``conversation`` overrides the file's section key by key. Paths in ``data``
-    are used as given. A missing file, or an empty ``base_path``, leaves only
-    the ``engram_config`` defaults underneath. An unknown key is ignored and
-    logged, except the retired ``graph.deployment_mode``, which existing hosts
-    still send and which is dropped without a warning.
+    For a host, such as Tapestry, that keeps Engram's settings in its own
+    configuration. ``data`` is the whole configuration, with the same keys as
+    Engram's ``config.yml``: no configuration file is read, and a setting
+    ``data`` leaves out keeps its ``engram_config`` default. Relative
+    conversation file paths resolve against ``base_directory``, or against the
+    working directory when it is empty, and must name existing files. An
+    unknown key raises ``ValueError`` naming it.
     """
     if not isinstance(data, dict):
         raise ValueError("config must be an object")
     source = "config mapping"
-    merged = read_config_mapping(base_path) if base_path else {}
-    overrides = known_keys(data, set(engram_config()), "", source)
-    graph = overrides.get("graph", {})
-    if isinstance(graph, dict) and "deployment_mode" in graph:
-        overrides["graph"] = {key: value for key, value in graph.items() if key != "deployment_mode"}
-    sections = {name for name, _ in SECTION_BUILDERS}
-    for key, value in overrides.items():
-        current = merged.get(key, {})
-        if key in sections and isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = {**current, **value}
-        else:
-            merged[key] = value
-    config = validated_config(merged, source)
+    mapping = admitted_config_mapping(data, os_path.abspath(base_directory), source)
+    config = validated_config(mapping, source)
     return config
 
 
-def load_config(path: str = "config.yml") -> dict:
+def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict:
     """Build a config dict from a YAML file.
 
     A missing or empty file returns the ``engram_config`` defaults. Scalar keys
@@ -614,8 +754,8 @@ def load_config(path: str = "config.yml") -> dict:
     and nested mappings are built with their section normalizers. Conversation
     file paths are resolved against this file's directory and stored absolute.
     A missing file, a directory, or a non-file raises ValueError naming that
-    path and this file. An unknown key is ignored and logged, so a stale or
-    extra setting cannot stop startup.
+    path and this file. An unknown key raises ValueError naming the key, so a
+    misspelled setting stops startup instead of silently keeping its default.
 
     Args:
         path: Path to the YAML configuration file.

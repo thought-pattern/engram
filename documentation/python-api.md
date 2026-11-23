@@ -5,13 +5,26 @@
 
 ## Boundary
 
+External Regulator outcome names below belong to Engram's standalone API, not
+Tapestry's component ownership. Tapestry Will owns Channel input interpretation
+under `will.yml`, routing and recall sufficiency; Regulator only reviews outbound
+Channel soundness and alone generates IDK. Utility serves inference wherever it
+is needed and sufficient. Tapestry's only selections are `model.actor` and `model.regulator`,
+with Will/Utility/Regulator sharing the latter; this does not alter Engram's API.
+
 `EngramCore.resolve_request` is the Python entry point for unified
 resolution. It accepts concrete Python values and returns one validated
-dictionary. Callers use keyed access and may use the explicit codecs in
-`engram.resolution` when a JSON-compatible or serialized value is required.
+dictionary. Callers read dictionaries with `.get(key, concrete_default)`.
+Candidate, evidence-reference and result codecs belong to `engram.resolution`;
+frame and provenance codecs to `engram.resolution_frame`; resource limits and
+consumption to `engram.resolution_budget`; full-Proposition evidence to
+`engram.resolution_evidence`; and bounded evidence collections to
+`engram.resolution_package`. Shared native-value validation and explicit public
+JSON codecs belong to `engram.resolution_values`. Python handoffs retain native
+values; use a codec only at its documented external interchange boundary.
 
 Lower-level `Engram` statement, pattern, graph, and conversation operations are
-current first-party interfaces. MCP and the unversioned gRPC services are
+current first-party interfaces. MCP and the gRPC services are
 separate `EngramCore` adapters.
 
 Conversation methods use canonical unknown user `"0"` for omitted or empty
@@ -24,6 +37,21 @@ Starting `"0"` returns a `conversation_token`; `chat`, `inspect_conversation`,
 `finish_conversation`, and `stop_conversation` for `"0"` must pass it as
 `conversation_token` or raise `ConversationOwnershipError`. An unknown-user
 conversation idle for 300 seconds no longer blocks a new start.
+Active conversations are bounded by `max_sessions`, since each owns one session.
+A start first releases conversations whose session was evicted or expired. At
+capacity, `session_overflow` applies to conversations as it does to sessions:
+`reject` raises `SessionLimitExceededError`, `expire_oldest` releases the earliest
+started conversation, and `lru` the least recently active. A conversation with a
+turn in flight is never released.
+
+`close` drains in-flight work, then releases conversations as stop does and
+discards tokens, activity, cached resolutions, retry accounting, negative results,
+and proposal state. A core that built its own `Engram` also clears its sessions;
+the named sessions of a supplied `Engram` remain its caller's.
+
+## Clock and graph encoder boundaries
+
+`Engram` accepts an injected callable clock. Its `clock()` method validates that each result is an aware UTC datetime before timestamp consumers use it. The configured graph encoder is an optional capability: encoding requires a callable `encode` operation whose NumPy result contains one row, then checks that row against the configured vector dimension. Invalid clock results and malformed or absent encoders fail at their owning boundary. Matcher tables and conversational confidence/context limits retain their existing shape, type and finite-value validation before work begins.
 
 ## Process lifetime and static startup data
 
@@ -42,7 +70,7 @@ counters are not copied or recovered.
 
 `engram.phrasing.phrase_fact` and `phrase_facts` render canonical triples for
 recall without changing their identity. The idiomatic frames come from the
-packaged `engram/data/fact-phrasing.toml` resource through `engram.constants`.
+packaged `engram/data/fact-phrasing.toml` resource through `engram.constants_language`.
 There is one inventory, also read as data by Tapestry's independent Research
 process. Engram does not import Tapestry. Startup validates the resource's
 bounded mapping and strictly bare subject/object placeholders; missing or
@@ -74,14 +102,15 @@ lists retain their supplied order. Phrasing does not establish source entailment
 | `required_source_label` | string, default `""` | Empty accepts every source label |
 | `budget` | mapping, default `{}` | Empty captures the default bounded budget; nonempty must be a validated `ResolutionBudget` |
 | `configured_resolvers` | tuple of nonempty strings, default `()` | Empty selects the configured plan |
-| `accept_exact` | boolean, default `false` | Explicit direct-answer permission for one eligible exact result |
+| `accept_exact` | boolean, default `false` | Explicit direct-answer permission for one eligible exact result; without it that result is returned as `EVIDENCE` with reason `exact_answer_not_permitted` and earns no success credit |
 | `cancellation_check` | zero-argument callable, default `()` | Transient cooperative check; raises `ResolutionCancelledError` when the caller cancels |
 
 Falsey non-mapping identity or budget values such as `()`, `[]`, `""`, `0`,
 and `false` are malformed. This preserves
 one concrete absence type at the public boundary.
 
-The cancellation callback is invoked before expensive resolver work and at
+The cancellation callback is invoked while a request waits behind another
+request with its request ID or user, before expensive resolver work, and at
 cooperative structured, semantic, and composition boundaries. It remains transient
 and outside the `request_id` signature. Cancellation discards partial resolution and
 permits retry with the same request ID. An executing external driver call continues
@@ -126,8 +155,8 @@ package_available = result["evidence_package_available"]
 proposition_records = result["evidence_package"]["records"]
 ```
 
-`resolution_result_to_dict`, `resolution_result_to_json`, and their strict
-decoders preserve concrete absence, exact accepted text, and
+`resolution_result_to_dict` and its strict decoder,
+`resolution_result_from_dict`, preserve concrete absence, exact accepted text, and
 bounded evidence. Full Proposition records occur
 inside `evidence_package`; fusion authorizes an Engram answer.
 
@@ -147,7 +176,10 @@ proposal-verdict operation; it is distinct from unified `resolve_request`.
 Accepted-response candidacy and success statistics mutate only the authoritative
 artifact collection. The conversational statement matcher has separate accounting.
 
-`learn_response` admits one new artifact without implicit replacement.
+`learn_response` admits one new artifact. The newest learned response replaces the
+one held for the same question: every ACTIVE artifact holding one of its retrieval
+keys in the same scope becomes SUPERSEDED by it in the same mutation, and the result
+names them in `superseded_statement_ids` with `action` `replaced`.
 Its idempotency signature preserves the exact admitted request and response,
 including tab, line-feed, and carriage-return characters; canonical JSON escaping
 does not rewrite the stored text. Other control characters and surrogates remain
@@ -156,24 +188,6 @@ invalid.
 explicit replacement, while `retire_response` removes an artifact established as
 globally stale. Generated conversational or pipeline responses are not admitted by
 any implicit learning hook.
-
-### Ordered retirement
-
-`retire_responses(entries)` accepts one native list of one through ten mappings,
-each containing exactly `statement_id`, `reason`, and `request_id`. Fields must
-be nonblank strings within 256, 512, and 256 UTF-8 bytes respectively. The core
-validates the entire list before cleanup or mutation, then processes entries in
-order under its service lock using the existing scalar retirement owner.
-
-The result contains exactly `results`, an ordered list of envelopes containing
-the three original request fields plus `response`, `error_code`, and `error`.
-Successful `response` values retain `retired`, the three request fields,
-`idempotent`, and `generation`, with empty error strings. Expected failures
-carry `response={}` and fixed `not_found`, `conflict`, `invalid_request`, or
-`lifecycle_unavailable` diagnostics; later entries still run. Unexpected failures
-propagate. Earlier successful mutations are not rolled back, and retry uses the
-same per-entry request IDs and scalar replay state. No batch replay record is
-created. Python, gRPC and MCP use this same core operation.
 
 ## Operational telemetry
 
@@ -190,8 +204,15 @@ consultation/hit/miss/failure counters through fixed aggregate keys.
   malformed boundary values, and the shared core's restart and close lifecycle.
 - `tests/test_resolution_contracts.py` covers deterministic codecs, exact
   fields, schema rejection, concrete absence, and outcome invariants.
-- `tests/test_resolvers.py` covers response candidates, full Proposition packages,
-  accounting, bounded execution, cancellation, and fail-soft dependency behavior.
+- `tests/test_resolvers.py` covers the exact, structured graph, and support-linked
+  semantic resolver adapters and their full Proposition evidence.
+- `tests/test_resolver_execution.py` covers registry plans, bounded fail-soft
+  execution, lease and reservation codecs, cancellation, and accounting.
+- `tests/test_orchestrator_proposition_evidence.py` and
+  `tests/test_resolution_orchestrator.py` cover full Proposition packages, fused
+  outcomes, cancellation, and the complete output budget.
+- `tests/test_service_resolution.py` covers exact answers, transient accounting,
+  and receipts through `EngramCore`.
 - `tests/test_grpc_server.py` and `tests/test_mcp_server.py` cover the public
   transport adapters and their process lifecycle.
 - `tests/test_service.py` proves transient cancellation and identical request-ID retry.

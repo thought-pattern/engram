@@ -1,11 +1,12 @@
 """Independent static and live catalog contracts for Engram Memgraph DDL."""
 
 from importlib.resources import files
-from importlib.resources.abc import Traversable
-from re import IGNORECASE as IGNORECASE, MULTILINE as MULTILINE, compile as re_compile
+from re import IGNORECASE, MULTILINE, compile as re_compile
 
+# A label index has no properties; single and composite node property indexes carry their ordered property tuple.
 ORDINARY_INDEX_PATTERN = re_compile(
-    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)" r"\((?P<property>[A-Za-z][A-Za-z0-9_]*)\)",
+    r"CREATE\s+INDEX\s+ON\s+:(?P<label>[A-Za-z][A-Za-z0-9_]*)"
+    r"(?:\((?P<properties>[A-Za-z][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z][A-Za-z0-9_]*)*)\))?",
     IGNORECASE,
 )
 TEXT_INDEX_PATTERN = re_compile(
@@ -37,11 +38,16 @@ RELATIONSHIP_PATTERN = re_compile(
     r"^//\s+(?P<origin>[A-Za-z][A-Za-z0-9_]*)\s+-\[:" r"(?P<relationship>[A-Z][A-Z0-9_]*)\]->\s+(?P<target>.+?)\s*$",
     MULTILINE,
 )
-CONFIG_VALUE_PATTERN = re_compile(
-    r'"(?P<name>dimension|capacity|metric|scalar_kind|resize_coefficient)"' r"\s*:\s*(?P<value>\"[^\"]*\"|[0-9]+)"
+# One "field": value entry of a closed vector configuration map, followed by a comma or
+# the end of the map. Values are a quoted string without escapes or an unsigned decimal
+# integer without leading zeros; fractions, exponents, signs, and other syntax do not match.
+VECTOR_CONFIG_ENTRY_PATTERN = re_compile(
+    r'\s*"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(?P<value>"[^"\\]*"|0|[1-9][0-9]*)\s*(?P<separator>,|\Z)'
 )
+VECTOR_CONFIG_INTEGER_FIELDS = {"dimension", "capacity", "resize_coefficient"}
+VECTOR_CONFIG_TEXT_FIELDS = {"metric", "scalar_kind"}
 TEXT_INDEX_NAME_PATTERN = re_compile(r"name:\s*([A-Za-z][A-Za-z0-9_]*)", IGNORECASE)
-REQUIRED_VECTOR_CONFIG_FIELDS = {"dimension", "capacity", "metric", "scalar_kind", "resize_coefficient"}
+REQUIRED_VECTOR_CONFIG_FIELDS = VECTOR_CONFIG_INTEGER_FIELDS | VECTOR_CONFIG_TEXT_FIELDS
 
 REQUIRED_IDENTITY_PROPERTIES = {
     ("SchemaRevision", "component"),
@@ -106,7 +112,7 @@ REQUIRED_VECTOR_INDEXES = {
 }
 
 
-def packaged_schema() -> Traversable:
+def packaged_schema():
     """Return Engram's schema file as installed with the package."""
     result = files("engram").joinpath("schema.cypher")
     return result
@@ -191,14 +197,31 @@ def cypher_statements(text: str) -> list[str]:
 
 
 def vector_config(config_text: str) -> dict:
-    """Parse one closed vector-index configuration mapping."""
+    """Parse one closed vector-index configuration map.
+
+    The whole text must be comma-separated entries, each declared field once: an integer
+    for dimension, capacity, and resize coefficient, a quoted string for metric and scalar kind.
+    """
     values = {}
-    for match in CONFIG_VALUE_PATTERN.finditer(config_text):
+    position = 0
+    separator = ","
+    while separator == ",":
+        match = VECTOR_CONFIG_ENTRY_PATTERN.match(config_text, position)
+        if not match:
+            raise ValueError("vector configuration must be a closed map of quoted fields and literal values")
         name = match.group("name")
         if name in values:
             raise ValueError(f"vector configuration duplicates {name}")
         value = match.group("value")
-        values[name] = value[1:-1] if value.startswith('"') else int(value)
+        quoted = value.startswith('"')
+        if name in VECTOR_CONFIG_TEXT_FIELDS and quoted:
+            values[name] = value[1:-1]
+        elif name in VECTOR_CONFIG_INTEGER_FIELDS and not quoted:
+            values[name] = int(value)
+        else:
+            raise ValueError(f"vector configuration field {name} is undeclared or has the wrong kind")
+        position = match.end()
+        separator = match.group("separator")
     if set(values) != REQUIRED_VECTOR_CONFIG_FIELDS:
         raise ValueError("vector configuration fields do not match the contract")
     return values
@@ -227,7 +250,16 @@ def schema_catalog(text: str) -> dict:
         normalized = statement
         match = ORDINARY_INDEX_PATTERN.fullmatch(normalized)
         if match:
-            catalog.get("ordinary_indexes", []).append({"label": match.group("label"), "property": match.group("property")})
+            raw_properties = match.group("properties") or ""
+            properties = tuple(value.strip() for value in raw_properties.split(",") if value.strip())
+            catalog.get("ordinary_indexes", []).append(
+                {
+                    "index_type": "label+property" if properties else "label",
+                    "label": match.group("label"),
+                    "properties": properties,
+                    "property": ",".join(properties),
+                }
+            )
             continue
         match = TEXT_INDEX_PATTERN.fullmatch(normalized)
         if match:
@@ -297,17 +329,26 @@ def validate_schema_contract(text: str) -> dict:
     existence_properties = {
         (label, property_name) for constraint_type, label, property_name in constraints if constraint_type == "exists"
     }
-    if unique_properties - existence_properties or unique_properties - indexed:
+    single_property_indexes = {
+        (label, properties[0])
+        for index_type, label, properties in indexed
+        if index_type == "label+property" and len(properties) == 1
+    }
+    if unique_properties - existence_properties or unique_properties - single_property_indexes:
         raise ValueError("every unique identity requires an existence constraint and lookup index")
     if not REQUIRED_IDENTITY_PROPERTIES.issubset(unique_properties):
         raise ValueError("Engram schema is missing a required corrected identity")
-    if not REQUIRED_SOURCE_BASIS_INDEXES.issubset(indexed):
+    if not REQUIRED_SOURCE_BASIS_INDEXES.issubset(single_property_indexes):
         raise ValueError("Engram source-basis indexes do not match the v1 contract")
 
     admitted_labels = {label for label, _ in REQUIRED_IDENTITY_PROPERTIES}
     for group in ("ordinary_indexes", "constraints"):
         if any(value.get("label", "") not in admitted_labels for value in catalog.get(group, [])):
             raise ValueError("schema contains an unknown current label")
+    # Memgraph has no implicit label index, so a label match without an indexed property scans every vertex.
+    label_indexes = {label for index_type, label, properties in indexed if index_type == "label" and not properties}
+    if admitted_labels - label_indexes:
+        raise ValueError("every current label requires a label index")
 
     relationships = {
         (value.get("origin", ""), value.get("relationship", ""), value.get("target", ""))
@@ -359,10 +400,11 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
     catalog = {"ordinary_indexes": [], "text_indexes": [], "vector_indexes": [], "constraints": [], "relationships": []}
     for row in index_rows:
         index_type = str(row.get("index type", "") or "")
-        if "vector" in index_type.casefold():
+        folded_type = index_type.strip().casefold()
+        if "vector" in folded_type:
             continue
         properties = catalog_properties(row.get("property", ()))
-        if "text" in index_type.casefold():
+        if "text" in folded_type and "edge" not in folded_type:
             name = str(row.get("name", "") or "")
             if not name:
                 match = TEXT_INDEX_NAME_PATTERN.search(index_type)
@@ -371,14 +413,22 @@ def live_catalog(index_rows: list[dict], constraint_rows: list[dict], vector_row
                 {"name": name, "label": str(row.get("label", "") or ""), "properties": properties}
             )
         else:
-            for property_name in properties:
-                catalog.get("ordinary_indexes", []).append({"label": str(row.get("label", "") or ""), "property": property_name})
+            normalized_type = "label+property" if folded_type == "label+property (desc)" else folded_type
+            catalog.get("ordinary_indexes", []).append(
+                {
+                    "index_type": normalized_type,
+                    "label": str(row.get("label", "") or ""),
+                    "properties": properties,
+                    "property": ",".join(properties),
+                }
+            )
     for row in constraint_rows:
         constraint_type = str(row.get("constraint type", "") or "").casefold()
-        for property_name in catalog_properties(row.get("properties", ())):
-            catalog.get("constraints", []).append(
-                {"constraint_type": constraint_type, "label": str(row.get("label", "") or ""), "property": property_name}
-            )
+        # A composite uniqueness constraint is one definition; its sorted property names are joined by commas.
+        properties = ",".join(sorted(catalog_properties(row.get("properties", ()))))
+        catalog.get("constraints", []).append(
+            {"constraint_type": constraint_type, "label": str(row.get("label", "") or ""), "property": properties}
+        )
     for row in vector_rows:
         index_type = str(row.get("index_type", "") or "")
         catalog.get("vector_indexes", []).append(
@@ -400,7 +450,14 @@ def catalog_keys(catalog: dict, group: str) -> set[tuple]:
     """Return comparable immutable keys for one catalog group."""
     values = catalog.get(group, [])
     if group == "ordinary_indexes":
-        result = {(value.get("label", ""), value.get("property", "")) for value in values}
+        result = {
+            (
+                value.get("index_type", "label+property" if value.get("property", "") else "label"),
+                value.get("label", ""),
+                tuple(value.get("properties", (value.get("property", ""),) if value.get("property", "") else ())),
+            )
+            for value in values
+        }
         return result
     if group == "text_indexes":
         result = {(value.get("name", ""), value.get("label", ""), tuple(value.get("properties", ()))) for value in values}

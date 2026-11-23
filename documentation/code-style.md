@@ -53,10 +53,14 @@ Regenerate them from `engram/engram.proto`.
 
 ## Constants
 
-Centralize application constants in `engram/constants.py`. A value that controls
-behavior, defines a limit, names a policy or schema, supplies a fixed identifier,
-or changes separately from an algorithm belongs in that module. Import the named
-constant where it is used.
+Centralize application constants in `engram/constants.py` and the
+`engram/constants_<domain>.py` modules beside it. A value that controls behavior,
+defines a limit, names a policy or schema, supplies a fixed identifier, or changes
+separately from an algorithm belongs in one of those modules. `constants.py` keeps
+the shared sentinels, the deployment paths, and the configuration defaults with
+every value they are built from, and imports no domain module. A domain module may
+import `constants.py` or a lower domain module, never a higher one. Each constant
+has one owner module; import the named constant from that owner where it is used.
 
 Values derived during one operation are local variables. Compiler-generated
 constants remain in reproducible generated files.

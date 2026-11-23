@@ -1,5 +1,7 @@
 [project]
 name = "engram"
+# The packaging standard requires a version field. Engram is deployed atomically and
+# carries no version, so setuptools records its 0.0.0 placeholder.
 dynamic = ["version"]
 description = "In-process conversational retrieval and regulated response resolution"
 license = {text = "Apache-2.0"}
@@ -61,10 +63,7 @@ where = ["."]
 include = ["engram*"]
 
 [tool.setuptools.package-data]
-engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json", "data/*.toml"]
-
-[tool.setuptools.dynamic]
-version = {attr = "engram.constants.VERSION"}
+engram = ["*.proto", "*.pyi", "schema.cypher", "data/*.json", "data/*.toml", "health_assets/*"]
 
 [tool.ruff]
 line-length = 132
@@ -78,21 +77,24 @@ typeCheckingMode = "basic"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "TID251"]
-ignore = ["E501"]
+# CODE-STYLE.md prohibits union types and requires from-style imports with module-qualified aliases.
+ignore = ["E501", "N811", "UP038"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing".msg = "Use native Python types and runtime validation; do not import typing."
 "typing_extensions".msg = "Use native Python types and runtime validation; do not import typing_extensions."
 
 [tool.ruff.lint.isort]
+# Matches the repository isort configuration: one module order for plain and from imports.
 combine-as-imports = true
+force-sort-within-sections = true
+known-first-party = ["engram"]
 
 [tool.ruff.lint.per-file-ignores]
-# Runnable entrypoints put the repo root on sys.path before importing the
-# package, so their package imports are intentionally not at the top of file.
-"scripts/*" = ["E402"]
 # Generated gRPC method names follow the protobuf service contract.
 "engram/grpc_server.py" = ["N802"]
+# The standard library's HTTP handler answers GET only through a method named do_GET.
+"engram/health.py" = ["N802"]
 # These files are compiler output; regenerate them with scripts/regenerate_protocol.py.
 "engram/engram_pb2*" = ["ALL"]
 
@@ -111,13 +113,17 @@ profile = "black"
 line_length = 132
 known_first_party = ["engram"]
 combine_as_imports = true
+force_sort_within_sections = true
 skip_glob = ["engram/engram_pb2*"]
 
 [tool.vulture]
-paths = ["engram", "scripts"]
+paths = ["engram", "scripts", "tests"]
 exclude = ["engram/engram_pb2*.py"]
 min_confidence = 65
-ignore_names = ["exc_type", "exc_value", "traceback"]
+ignore_names = ["exc_type", "exc_value", "internal_*", "traceback", "unused_*"]
+
+[tool.bandit]
+exclude_dirs = ["/.venv/", "/build/", "/data/", "/dist/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

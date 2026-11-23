@@ -20,60 +20,37 @@ Usage:
     print(result["source"], result["response"])
 """
 
+from math import isfinite as math_isfinite
+
 from engram import sessions as sessions_mod
-from engram.constants import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
+from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_USER_ID
+from engram.constants_artifacts import MAX_RESPONSE_BYTES
+from engram.constants_language import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
 from engram.nlp import input_kind
-
-
-def pipeline_result(
-    response: str,
-    source: str,
-    score: float = 0.0,
-    matches=(),
-    keywords=(),
-    pattern: str = "",
-    captured=(),
-    user_id: str = "",
-) -> dict:
-    """Build a pipeline response dict.
-
-    source is "pattern" (scripted match), "graph" (read-only graph recall),
-    "statement" (confident conversational-statement retrieval), "llm" (generated via llm_fn), or
-    "none" (nothing confident and no llm_fn). matches and keywords carry the keyword retrieval outcome so a
-    "none" caller can still inspect what was found; pattern and captured carry
-    the pattern-match outcome for debugging ("" / [] off the pattern path).
-    """
-    result = {
-        "response": response,
-        "source": source,
-        "score": score,
-        "matches": list(matches or ()),
-        "keywords": list(keywords or ()),
-        "pattern": pattern,
-        "captured": list(captured or ()),
-        "user_id": user_id,
-        "dialogue_act": "",
-        "active_topic": "",
-        "entities": [],
-        "fact_admissions": [],
-    }
-    return result
+from engram.validation import Characters, require_text
 
 
 def attach_dialogue_state(engram, result: dict, session_id: str) -> dict:
-    """Attach the latest per-user discourse state to an API result."""
+    """Return a copy of an API result carrying the session's latest discourse state.
+
+    Without a session the copy keeps the result's own discourse fields.
+    """
+    attached = dict(result)
+    unknown = attached.get("unknown", False)
+    if type(unknown) is not bool:
+        raise ValueError("conversation unknown must be a Boolean")
+    attached["unknown"] = unknown
     if not session_id:
-        return result
+        return attached
     with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
-        if not session:
-            return result
-        history = session.get("dialogue_act_history", [])
-        result["dialogue_act"] = history[0] if history else ""
-        result["active_topic"] = session.get("active_topic", "")
-        result["entities"] = list(session.get("entities", []))
-        result["fact_admissions"] = list(session.get("last_fact_admissions", []))
-    return result
+        session = sessions_mod.get_session(engram, session_id, create_if_missing=False)
+        if session:
+            history = session.get("dialogue_act_history", [])
+            attached["dialogue_act"] = history[0] if history else ""
+            attached["active_topic"] = session.get("active_topic", "")
+            attached["entities"] = list(session.get("entities", []))
+            attached["fact_admissions"] = list(session.get("last_fact_admissions", []))
+    return attached
 
 
 def retract_response(engram, session_id: str, response: str) -> bool:
@@ -87,7 +64,7 @@ def retract_response(engram, session_id: str, response: str) -> bool:
     if not session_id or not response:
         return False
     with engram.session_lock:
-        session = engram.sessions.get(session_id, {})
+        session = sessions_mod.get_session(engram, session_id, create_if_missing=False)
         if not session:
             return False
         history = session.get("response_history", [])
@@ -105,8 +82,9 @@ def update_session(engram, session_id: str, response: str) -> bool:
     """Record a response into the session context, creating the session if needed."""
     if not session_id:
         return False
-    sessions_mod.get_session(engram, session_id, create_if_missing=True)
-    sessions_mod.update_session_context(engram, session_id, response)
+    with engram.session_lock:
+        sessions_mod.get_session(engram, session_id, create_if_missing=True)
+        sessions_mod.update_session_context(engram, session_id, response)
     return True
 
 
@@ -115,8 +93,8 @@ def respond(
     text: str,
     context_id: str = "",
     llm_fn=(),
-    high_confidence: float = 0.7,
-    context_limit: int = 3,
+    high_confidence: object = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    context_limit: object = DEFAULT_PIPELINE_CONTEXT_LIMIT,
     user_id: str = "",
     evaluation_time: str = "",
 ) -> dict:
@@ -141,20 +119,37 @@ def respond(
         text: User input text.
         context_id: Optional conversation context for turn state.
         llm_fn: Optional callable (text, context_statements) -> response str.
+            Its response must be text of at most MAX_RESPONSE_BYTES.
         high_confidence: Calibrated score at or above which a conversational statement
-            answers without the LLM (scores run 0.0 - 1.0).
-        context_limit: Maximum retrieved statements passed to llm_fn.
-        user_id: Optional caller-owned identity for learned-fact attribution.
+            answers without the LLM (a finite number from 0.0 to 1.0).
+        context_limit: Maximum retrieved statements passed to llm_fn (a
+            non-negative integer).
+        user_id: The speaker; empty means the anonymous user "0". Facts the
+            turn teaches belong to the speaker, and no other person's facts
+            answer or reach llm_fn.
         evaluation_time: Optional canonical UTC timestamp used by graph
             recall for this turn.
 
     Returns:
-        Pipeline result dict (response, source, score, matches, keywords).
+        Pipeline result dict. source is "pattern" (scripted match), "graph"
+        (read-only graph recall), "statement" (confident conversational-statement
+        retrieval), "llm" (generated via llm_fn), or "none" (nothing confident
+        and no llm_fn). matches and keywords carry the keyword retrieval
+        outcome so a "none" caller can still inspect what was found; pattern
+        and captured carry the pattern-match outcome for debugging ("" / []
+        off the pattern path). user_id is the turn's context, and
+        dialogue_act, active_topic, entities and fact_admissions carry that
+        session's latest discourse state ("" / [] without a session).
     """
-    if not 0 <= high_confidence <= 1:
-        raise ValueError("high_confidence must be between 0 and 1")
-    if context_limit < 0:
-        raise ValueError("context_limit must be non-negative")
+    if (
+        isinstance(high_confidence, bool)
+        or not isinstance(high_confidence, (int, float))
+        or not math_isfinite(high_confidence)
+        or not 0 <= high_confidence <= 1
+    ):
+        raise ValueError("high_confidence must be a number between 0 and 1")
+    if isinstance(context_limit, bool) or not isinstance(context_limit, int) or context_limit < 0:
+        raise ValueError("context_limit must be a non-negative integer")
 
     # Tier 1: a matched category, including a pure wildcard, or graph recall.
     # The configured fallback text is not a category answer.
@@ -170,89 +165,131 @@ def respond(
     if pattern_result:
         stmt, captured, response = pattern_result
 
-    # Graph recall takes precedence for questions and commands, applied once
-    # for the complete turn with the turn's evaluation clock.
-    graph_enabled = bool((engram.config.get("graph") or {}).get("enabled"))
-    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION}
+    # Known conversational answers retain their identity and speaker context.
+    # Graph recall may replace an explicitly unknown reply, once per complete turn.
+    graph_config = engram.config.get("graph", {})
+    graph_enabled = isinstance(graph_config, dict) and bool(graph_config.get("enabled", False))
+    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION} and (not pattern_result or stmt.get("unknown", False))
     graph_response = engram.graph_lookup(text, evaluation_time=evaluation_time) if graph_enabled and graph_eligible else ""
     if graph_response:
         if response:
             retract_response(engram, context_id, response)
         update_session(engram, context_id, graph_response)
-        graph_result = pipeline_result(
-            graph_response,
-            "graph",
-            score=1.0,
-            user_id=context_id,
-        )
+        graph_result = {
+            "response": graph_response,
+            "source": "graph",
+            "score": 1.0,
+            "matches": [],
+            "keywords": [],
+            "pattern": "",
+            "captured": [],
+            "user_id": context_id,
+            "dialogue_act": "",
+            "active_topic": "",
+            "entities": [],
+            "fact_admissions": [],
+        }
         result = attach_dialogue_state(engram, graph_result, context_id)
         return result
 
     if pattern_result:
-        matched_pattern = stmt["pattern"] if stmt else ""
-        is_fallback = not stmt and response == engram.config["fallback_response"]
+        matched_pattern = stmt.get("pattern", "")
+        is_fallback = not stmt and response == engram.config.get("fallback_response", "")
         if response and not is_fallback:
             source = "pattern" if stmt else "graph"
-            tier1 = pipeline_result(
-                response,
-                source,
-                score=1.0,
-                pattern=matched_pattern,
-                captured=captured,
-                user_id=context_id,
-            )
+            tier1 = {
+                "response": response,
+                "unknown": stmt.get("unknown", False),
+                "source": source,
+                "score": 1.0,
+                "matches": [],
+                "keywords": [],
+                "pattern": matched_pattern,
+                "captured": list(captured),
+                "user_id": context_id,
+                "dialogue_act": "",
+                "active_topic": "",
+                "entities": [],
+                "fact_admissions": [],
+            }
             result = attach_dialogue_state(engram, tier1, context_id)
             return result
 
     # Tier 2: confident conversational statement via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
-    # why why") is no evidence, however perfectly it overlaps something.
-    retrieval = engram.query(text, context_id=context_id, limit=max(context_limit, 1))
-    matches = retrieval["matches"]
-    keywords = retrieval["keywords"]
+    # why why") is no evidence, however perfectly it overlaps something. Only
+    # shared statements and the speaker's own facts are candidates.
+    retrieval = engram.query(
+        text, context_id=context_id, limit=max(context_limit, 1), owner=sessions_mod.normalize_user_id(user_id)
+    )
+    matches = retrieval.get("matches", [])
+    keywords = retrieval.get("keywords", [])
     content_keywords = [kw for kw in keywords if kw not in QUESTION_WORDS]
     if matches and content_keywords:
         top_stmt, top_score = matches[0]
         if top_score >= high_confidence:
-            engram.record_hit(keywords, statement_id=top_stmt["id"])
-            update_session(engram, context_id, top_stmt["text"])
-            tier2 = pipeline_result(
-                top_stmt["text"],
-                "statement",
-                score=top_score,
-                matches=matches,
-                keywords=keywords,
-                user_id=context_id,
-            )
+            top_text = top_stmt.get("text", "")
+            engram.record_hit(keywords, statement_id=top_stmt.get("id", ""))
+            update_session(engram, context_id, top_text)
+            tier2 = {
+                "response": top_text,
+                "unknown": top_stmt.get("template", {}).get("unknown", False),
+                "source": "statement",
+                "score": top_score,
+                "matches": list(matches),
+                "keywords": list(keywords),
+                "pattern": "",
+                "captured": [],
+                "user_id": context_id,
+                "dialogue_act": "",
+                "active_topic": "",
+                "entities": [],
+                "fact_admissions": [],
+            }
             result = attach_dialogue_state(engram, tier2, context_id)
             return result
 
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
-        context_statements = [stmt["text"] for stmt, _ in matches[:context_limit]]
-        response = llm_fn(text, context_statements)
+        context_statements = [context_stmt.get("text", "") for context_stmt, _ in matches[:context_limit]]
+        generated = llm_fn(text, context_statements)
+        response = require_text(generated, "llm_fn response", MAX_RESPONSE_BYTES, allow_empty=True, characters=Characters.LINES)
         if response:
             update_session(engram, context_id, response)
-            tier3 = pipeline_result(
-                response,
-                "llm",
-                matches=matches,
-                keywords=keywords,
-                user_id=context_id,
-            )
+            tier3 = {
+                "response": response,
+                "source": "llm",
+                "score": 0.0,
+                "matches": list(matches),
+                "keywords": list(keywords),
+                "pattern": "",
+                "captured": [],
+                "user_id": context_id,
+                "dialogue_act": "",
+                "active_topic": "",
+                "entities": [],
+                "fact_admissions": [],
+            }
             result = attach_dialogue_state(engram, tier3, context_id)
             return result
 
     # Tier 4: nothing matched and nothing confident.
     top_score = matches[0][1] if matches else 0.0
-    tier4 = pipeline_result(
-        "",
-        "none",
-        score=top_score,
-        matches=matches,
-        keywords=keywords,
-        user_id=context_id,
-    )
+    tier4 = {
+        "response": "",
+        "unknown": True,
+        "source": "none",
+        "score": top_score,
+        "matches": list(matches),
+        "keywords": list(keywords),
+        "pattern": "",
+        "captured": [],
+        "user_id": context_id,
+        "dialogue_act": "",
+        "active_topic": "",
+        "entities": [],
+        "fact_admissions": [],
+    }
     result = attach_dialogue_state(engram, tier4, context_id)
     return result
 
@@ -260,10 +297,10 @@ def respond(
 def chat(
     engram,
     text: str,
-    user_id: str = "0",
+    user_id: str = DEFAULT_USER_ID,
     llm_fn=(),
-    high_confidence: float = 0.7,
-    context_limit: int = 3,
+    high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
+    context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
 ) -> dict:
     """Run the chatbot for one caller-owned user context."""
     normalized_user_id = sessions_mod.normalize_user_id(user_id)

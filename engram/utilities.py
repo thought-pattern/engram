@@ -6,14 +6,15 @@ plugins dynamically, execute Python expressions, or consult ambient time.
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException, localcontext
-from importlib.metadata import version as package_version
+from hashlib import sha256 as hashlib_sha256
 from importlib.resources import files
 from logging import getLogger as logging_getLogger
-from re import IGNORECASE as IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
+from re import IGNORECASE, compile as re_compile, fullmatch as re_fullmatch, match as re_match
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from engram.constants import (
+from engram.constants import EMPTY_MAPPING
+from engram.constants_resolution import (
     UTILITY_MAX_ABSOLUTE_EXPONENT,
     UTILITY_MAX_COLLECTION_ITEM_BYTES,
     UTILITY_MAX_COLLECTION_ITEMS,
@@ -31,7 +32,6 @@ from engram.constants import (
 
 logger = logging_getLogger(__name__)
 
-UTILITY_TZDATA_VERSION = package_version("tzdata")
 UTILITY_ALLOWED_TIMEZONES = {
     "UTC",
     "America/New_York",
@@ -48,8 +48,10 @@ UTILITY_SEMVER_RE = re_compile(
 )
 UTILITY_UUID_RE = re_compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\Z")
 UTILITY_SLUG_RE = re_compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+# RFC 3339 section 5.6 limits offset hours to 00-23 and minutes to 00-59;
+# fromisoformat would otherwise normalize "+00:99" into a different offset.
 UTILITY_RFC3339_RE = re_compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z",
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z",
     IGNORECASE,
 )
 
@@ -79,8 +81,8 @@ def utility_config(enabled: bool = False, plugins=UTILITY_PLUGIN_NAMES) -> dict:
     return {"enabled": enabled, "plugins": selected}
 
 
-def internal_contract(name: str, input_schema: str, result_schema: str, errors: tuple[str, ...]) -> dict:
-    return {
+UTILITY_PLUGIN_CONTRACTS = {
+    name: {
         "name": name,
         "accepted_frame_types": ("direct_request",),
         "input_schema": input_schema,
@@ -97,51 +99,50 @@ def internal_contract(name: str, input_schema: str, result_schema: str, errors: 
         "errors": errors,
         "health": "ready when the built-in plugin is configured and the utility resolver is enabled",
     }
-
-
-UTILITY_PLUGIN_CONTRACTS = {
-    "arithmetic": internal_contract(
-        "arithmetic",
-        "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
-        "canonical decimal text",
-        ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
-    ),
-    "boolean": internal_contract(
-        "boolean",
-        "boolean followed by true|false, not, and, xor, or, and parentheses",
-        "lowercase true or false",
-        ("boolean_syntax", "operation_limit"),
-    ),
-    "set": internal_contract(
-        "set",
-        "set union|intersection|difference|symmetric difference {items} and {items}",
-        "unique items sorted by Unicode code point in braces",
-        ("set_syntax", "collection_limit", "collection_item_invalid"),
-    ),
-    "date_time": internal_contract(
-        "date_time",
-        "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
-        "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
-        ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
-    ),
-    "unit_conversion": internal_contract(
-        "unit_conversion",
-        "convert <decimal> <allow-listed unit> to <same-dimension unit>",
-        "canonical decimal and canonical target unit",
-        ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
-    ),
-    "version": internal_contract(
-        "version",
-        "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
-        "left version, one of < = >, and right version; build metadata does not affect precedence",
-        ("version_syntax", "version_limit"),
-    ),
-    "identifier": internal_contract(
-        "identifier",
-        "validate uuid|slug <bounded ASCII identifier>",
-        "valid/invalid label and canonical identifier when valid",
-        ("identifier_syntax", "identifier_limit"),
-    ),
+    for name, input_schema, result_schema, errors in (
+        (
+            "arithmetic",
+            "calculate|arithmetic followed by decimal literals, + - * / % **, and parentheses",
+            "canonical decimal text",
+            ("arithmetic_syntax", "arithmetic_domain", "operation_limit", "numeric_limit"),
+        ),
+        (
+            "boolean",
+            "boolean followed by true|false, not, and, xor, or, and parentheses",
+            "lowercase true or false",
+            ("boolean_syntax", "operation_limit"),
+        ),
+        (
+            "set",
+            "set union|intersection|difference|symmetric difference {items} and {items}",
+            "unique items sorted by Unicode code point in braces",
+            ("set_syntax", "collection_limit", "collection_item_invalid"),
+        ),
+        (
+            "date_time",
+            "ISO Gregorian date arithmetic, days between dates, or aware RFC3339 timestamp conversion",
+            "ISO 8601 date, integer days, or timestamp preserving its fractional-second value with target zone",
+            ("date_time_syntax", "date_time_domain", "timezone_not_allowed"),
+        ),
+        (
+            "unit_conversion",
+            "convert <decimal> <allow-listed unit> to <same-dimension unit>",
+            "canonical decimal and canonical target unit",
+            ("unit_syntax", "unit_unknown", "dimension_mismatch", "numeric_limit"),
+        ),
+        (
+            "version",
+            "compare version <SemVer 2.0.0> and|to|with <SemVer 2.0.0>",
+            "left version, one of < = >, and right version; build metadata does not affect precedence",
+            ("version_syntax", "version_limit"),
+        ),
+        (
+            "identifier",
+            "validate uuid|slug <bounded ASCII identifier>",
+            "valid/invalid label and canonical identifier when valid",
+            ("identifier_syntax", "identifier_limit"),
+        ),
+    )
 }
 
 
@@ -165,8 +166,8 @@ def numeric_literal(value: str) -> Decimal:
         raise UtilityInputError("numeric_limit")
     try:
         result = Decimal(value)
-    except DecimalException as error:
-        raise UtilityInputError("arithmetic_syntax") from error
+    except DecimalException as err:
+        raise UtilityInputError("arithmetic_syntax") from err
     result = checked_decimal(result)
     return result
 
@@ -207,18 +208,32 @@ def arithmetic_tokens(expression: str) -> tuple[str, ...]:
     return result
 
 
+def arithmetic_unary(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
+    """Parse a signed power.
+
+    Precedence follows Python's documented expression grammar: a unary sign
+    binds more loosely than ``**`` on its left and more tightly on its right,
+    so ``-2 ** 2`` is ``-4`` and ``2 ** -2`` is ``0.25``.
+    """
+    if depth > UTILITY_MAX_NESTING:
+        raise UtilityInputError("operation_limit")
+    if index < len(tokens) and tokens[index] in {"+", "-"}:
+        token = tokens[index]
+        value, next_index, count = arithmetic_unary(tokens, index + 1, operations + 1, depth + 1)
+        if count > UTILITY_MAX_OPERATIONS:
+            raise UtilityInputError("operation_limit")
+        result = ((checked_decimal(-value) if token == "-" else value), next_index, count)
+        return result
+    result = arithmetic_power(tokens, index, operations, depth)
+    return result
+
+
 def arithmetic_atom(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
     if depth > UTILITY_MAX_NESTING:
         raise UtilityInputError("operation_limit")
     if index >= len(tokens):
         raise UtilityInputError("arithmetic_syntax")
     token = tokens[index]
-    if token in {"+", "-"}:
-        value, next_index, count = arithmetic_atom(tokens, index + 1, operations + 1, depth + 1)
-        if count > UTILITY_MAX_OPERATIONS:
-            raise UtilityInputError("operation_limit")
-        result = ((checked_decimal(-value) if token == "-" else value), next_index, count)
-        return result
     if token == "(":
         value, next_index, count = arithmetic_expression(tokens, index + 1, operations, depth + 1)
         if next_index >= len(tokens) or tokens[next_index] != ")":
@@ -233,22 +248,23 @@ def arithmetic_atom(tokens: tuple[str, ...], index: int, operations: int, depth:
 
 def arithmetic_power(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
     left, index, operations = arithmetic_atom(tokens, index, operations, depth)
+    # The exponent is a signed power, which makes ``**`` right-associative.
     if index < len(tokens) and tokens[index] == "**":
-        right, index, operations = arithmetic_power(tokens, index + 1, operations + 1, depth + 1)
+        right, index, operations = arithmetic_unary(tokens, index + 1, operations + 1, depth + 1)
         if operations > UTILITY_MAX_OPERATIONS or right != right.to_integral_value() or abs(right) > UTILITY_MAX_POWER:
             raise UtilityInputError("operation_limit")
         try:
             left = checked_decimal(left ** int(right))
-        except DecimalException as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except DecimalException as err:
+            raise UtilityInputError("arithmetic_domain") from err
     return left, index, operations
 
 
 def arithmetic_term(tokens: tuple[str, ...], index: int, operations: int, depth: int) -> tuple[Decimal, int, int]:
-    value, index, operations = arithmetic_power(tokens, index, operations, depth)
+    value, index, operations = arithmetic_unary(tokens, index, operations, depth)
     while index < len(tokens) and tokens[index] in {"*", "/", "%"}:
         operator = tokens[index]
-        right, index, operations = arithmetic_power(tokens, index + 1, operations + 1, depth)
+        right, index, operations = arithmetic_unary(tokens, index + 1, operations + 1, depth)
         if operations > UTILITY_MAX_OPERATIONS:
             raise UtilityInputError("operation_limit")
         try:
@@ -259,8 +275,8 @@ def arithmetic_term(tokens: tuple[str, ...], index: int, operations: int, depth:
             else:
                 value %= right
             value = checked_decimal(value)
-        except (DecimalException, ZeroDivisionError) as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except (DecimalException, ZeroDivisionError) as err:
+            raise UtilityInputError("arithmetic_domain") from err
     return value, index, operations
 
 
@@ -284,8 +300,8 @@ def evaluate_arithmetic(text: str) -> tuple[str, str, int]:
         context.prec = UTILITY_NUMERIC_PRECISION_DIGITS
         try:
             value, index, operations = arithmetic_expression(tokens, 0, 0, 0)
-        except DecimalException as error:
-            raise UtilityInputError("arithmetic_domain") from error
+        except DecimalException as err:
+            raise UtilityInputError("arithmetic_domain") from err
     if index != len(tokens):
         raise UtilityInputError("arithmetic_syntax")
     result = (decimal_text(value), "calculate " + " ".join(tokens), operations)
@@ -447,8 +463,8 @@ def evaluate_set(text: str) -> tuple[str, str, int]:
 def iso_date(value: str) -> date:
     try:
         parsed = date.fromisoformat(value)
-    except ValueError as error:
-        raise UtilityInputError("date_time_domain") from error
+    except ValueError as err:
+        raise UtilityInputError("date_time_domain") from err
     return parsed
 
 
@@ -476,8 +492,8 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
         delta = count if arithmetic.group(2).casefold() == "plus" else -count
         try:
             response = (source + timedelta(days=delta)).isoformat()
-        except OverflowError as error:
-            raise UtilityInputError("date_time_domain") from error
+        except OverflowError as err:
+            raise UtilityInputError("date_time_domain") from err
         result = (response, f"date {source.isoformat()} {arithmetic.group(2).casefold()} {count} days", 1)
         return result
     difference = re_fullmatch(
@@ -499,8 +515,8 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
             source_text = source_text[:-1] + "+00:00"
         try:
             source = datetime.fromisoformat(source_text)
-        except ValueError as error:
-            raise UtilityInputError("date_time_domain") from error
+        except ValueError as err:
+            raise UtilityInputError("date_time_domain") from err
         if source.tzinfo is None or source.utcoffset() is None:
             raise UtilityInputError("date_time_domain")
         requested_zone = conversion.group(2)
@@ -664,82 +680,88 @@ def internal_accepts(plugin_name: str, text: str) -> bool:
     return result
 
 
-def evaluation(
-    status: str,
-    plugin_name: str = "",
-    response: str = "",
-    canonical_input: str = "",
-    error_code: str = "",
-    operations: int = 0,
-) -> dict:
-    result = {
-        "status": status,
-        "plugin_name": plugin_name,
-        "response": response,
-        "canonical_input": canonical_input,
-        "error_code": error_code,
-        "operations": operations,
-    }
+# The fields of every utility evaluation; each outcome copies this record and sets its own values.
+EMPTY_UTILITY_EVALUATION = {
+    "status": "",
+    "plugin_name": "",
+    "response": "",
+    "canonical_input": "",
+    "error_code": "",
+    "operations": 0,
+}
+
+
+def utility_statement_id(plugin_name: str, canonical_input: str) -> str:
+    """Return the deterministic statement ID of one plugin's answer to one canonical input."""
+    digest = hashlib_sha256(f"{plugin_name}:{canonical_input}".encode()).hexdigest()
+    result = f"utility:{plugin_name}:sha256:{digest}"
     return result
 
 
 def evaluate_named_utility(request: object, plugin_name: object) -> dict:
     """Evaluate exactly one compiled-in plugin, used for authority rechecks."""
     if not isinstance(request, str) or not isinstance(plugin_name, str) or plugin_name not in UTILITY_EVALUATORS:
-        result = evaluation("rejected", error_code="invalid_boundary")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "invalid_boundary"}
         return result
     if len(request.encode("utf-8")) > UTILITY_MAX_INPUT_BYTES:
-        result = evaluation("rejected", plugin_name, error_code="input_limit")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": "input_limit"}
         return result
     if not internal_accepts(plugin_name, request):
-        result = evaluation("miss")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
         return result
     try:
         evaluator = UTILITY_EVALUATORS.get(plugin_name, evaluate_arithmetic)
         response, canonical_input, operations = evaluator(request)
-    except UtilityInputError as error:
-        result = evaluation("rejected", plugin_name, error_code=error.code)
+    except UtilityInputError as err:
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "plugin_name": plugin_name, "error_code": err.code}
         return result
-    except Exception as error:
-        logger.warning("Utility plugin %s failed", plugin_name, exc_info=error)
-        result = evaluation("failed", plugin_name, error_code="plugin_failure")
+    except Exception as err:
+        logger.warning("Utility plugin %s failed", plugin_name, exc_info=err)
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "failed", "plugin_name": plugin_name, "error_code": "plugin_failure"}
         return result
     if len(response.encode("utf-8")) > UTILITY_MAX_OUTPUT_BYTES:
-        result = evaluation("failed", plugin_name, error_code="output_limit")
+        result = {**EMPTY_UTILITY_EVALUATION, "status": "failed", "plugin_name": plugin_name, "error_code": "output_limit"}
         return result
-    result = evaluation("resolved", plugin_name, response, canonical_input, operations=operations)
+    result = {
+        "status": "resolved",
+        "plugin_name": plugin_name,
+        "response": response,
+        "canonical_input": canonical_input,
+        "error_code": "",
+        "operations": operations,
+    }
     return result
 
 
 class UtilityRegistry:
     """Configured view of the fixed built-in plugin table."""
 
-    def __init__(self, config: object = {}) -> None:
+    def __init__(self, config: object = EMPTY_MAPPING) -> None:
         if not isinstance(config, dict):
             raise ValueError("utility registry config must be an object")
         settings = utility_config() if config == {} else utility_config(**config)
-        self.enabled = settings["enabled"]
-        self.plugin_names = settings["plugins"]
+        self.enabled = settings.get("enabled", False)
+        self.plugin_names = settings.get("plugins", ())
 
     def evaluate(self, request: object) -> dict:
         if not self.enabled:
-            result = evaluation("miss")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
             return result
         if not isinstance(request, str):
-            result = evaluation("rejected", error_code="invalid_boundary")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "invalid_boundary"}
             return result
         if len(request.encode("utf-8")) > UTILITY_MAX_INPUT_BYTES:
-            result = evaluation("rejected", error_code="input_limit")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "input_limit"}
             return result
         matches = tuple(name for name in self.plugin_names if internal_accepts(name, request))
         # Prefix overlap is intentionally resolved by the more specific grammar.
         if "date_time" in matches and "unit_conversion" in matches:
             matches = tuple(name for name in matches if name != "unit_conversion")
         if not matches:
-            result = evaluation("miss")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "miss"}
             return result
         if len(matches) != 1:
-            result = evaluation("rejected", error_code="ambiguous_plugin")
+            result = {**EMPTY_UTILITY_EVALUATION, "status": "rejected", "error_code": "ambiguous_plugin"}
             return result
         result = evaluate_named_utility(request, matches[0])
         return result
@@ -757,7 +779,6 @@ class UtilityRegistry:
             }
             for name in UTILITY_PLUGIN_NAMES
         }
-        plugins.get("date_time", {})["timezone_database_version"] = UTILITY_TZDATA_VERSION
         result = {
             "enabled": self.enabled,
             "ready": self.available(),

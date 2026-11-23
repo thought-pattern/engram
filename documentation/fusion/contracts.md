@@ -1,7 +1,7 @@
 # Candidate fusion and ambiguity contract
 
 **Status:** Current implemented and qualified contract
-**Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolvers.py`
+**Owners:** `engram/fusion.py` and the fusion boundary in `engram/resolution_orchestrator.py`
 **Current policy:** the built-in weights and gates below
 
 ## Scope and selection boundary

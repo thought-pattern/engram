@@ -4,31 +4,25 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from collections import Counter
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
-from sys import path as sys_path
 
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
-
-from engram.constants import QueryOperator
+from engram.constants_identity import QueryOperator
 from engram.rewrite import RewriteEngine, lint_rewrite_corpus, load_default_rewrite_corpus
 from scripts.benchmark_metadata import benchmark_source_state, recorded_at
 
-DEFAULT_CASES = Path("eval/section11-rewrite.json")
 DEFAULT_OUTPUT = Path("eval/results/rewrite/lint.json")
 
 
 def internal_cases(path: Path) -> list[dict[str, object]]:
     decoded = json_loads(path.read_text(encoding="utf-8"))
-    if not isinstance(decoded, dict) or not isinstance(decoded.get("cases"), list):
+    if not isinstance(decoded, dict) or "cases" not in decoded or not isinstance(decoded.get("cases", []), list):
         raise ValueError("rewrite evaluation corpus must be an object with cases")
-    cases = decoded["cases"]
+    cases = decoded.get("cases", [])
     if not all(isinstance(case, dict) for case in cases):
         raise ValueError("rewrite evaluation cases must be objects")
     return cases
 
 
-def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
+def lint(cases_path: Path) -> dict[str, object]:
     rules = load_default_rewrite_corpus()
     structural = list(lint_rewrite_corpus(rules))
     engine = RewriteEngine(rules)
@@ -43,10 +37,11 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
                 subject=str(case.get("subject", "")),
                 inherited_subject=case.get("inherited_subject", False) is True,
             )
-        except (KeyError, ValueError) as error:
-            regressions.append({"severity": "error", "code": "malformed_regression", "case_id": case_id, "detail": str(error)})
+        except (KeyError, ValueError) as err:
+            regressions.append({"severity": "error", "code": "malformed_regression", "case_id": case_id, "detail": str(err)})
             continue
-        if execution["final_text"] != case.get("expected_final", ""):
+        chain = execution.get("chain", ())
+        if execution.get("final_text", "") != case.get("expected_final", ""):
             regressions.append(
                 {
                     "severity": "error",
@@ -56,18 +51,18 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
                 }
             )
         expected_rewrite = case.get("should_rewrite", False) is True
-        if bool(execution["chain"]) != expected_rewrite:
+        if bool(chain) != expected_rewrite:
             regressions.append(
                 {
                     "severity": "error",
-                    "code": "unexpected_rewrite" if execution["chain"] else "unreachable_rule",
+                    "code": "unexpected_rewrite" if chain else "unreachable_rule",
                     "case_id": case_id,
                     "detail": "rewrite application differs from the frozen expectation",
                 }
             )
     findings = [*structural, *regressions]
-    counts = Counter(str(finding["code"]) for finding in findings)
-    errors = sum(finding["severity"] == "error" for finding in findings)
+    counts = Counter(str(finding.get("code", "")) for finding in findings)
+    errors = sum(finding.get("severity", "") == "error" for finding in findings)
     result = {
         "created_at": recorded_at(),
         "source_state": benchmark_source_state(),
@@ -96,14 +91,16 @@ def lint(cases_path: Path = DEFAULT_CASES) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse_ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    # The tree carries no Section 11 corpus, so the input is always named explicitly.
+    parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     report = lint(args.cases)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json_dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json_dumps({"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"]}))
-    result = 0 if report["passed"] else 1
+    passed = report.get("passed", False)
+    print(json_dumps({"passed": passed, "errors": report.get("errors", 0), "warnings": report.get("warnings", 0)}))
+    result = 0 if passed else 1
     return result
 
 

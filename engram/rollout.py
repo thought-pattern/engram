@@ -1,19 +1,15 @@
-"""Small policy-versioned rollout controls for unified resolution."""
+"""Small policy-driven rollout controls for unified resolution."""
 
 from collections import Counter
 
 from engram.config import rollout_config
 from engram.constants import RolloutMode
+from engram.constants_resolution import ResolutionOutcome
 from engram.errors import InvalidRequestError
-from engram.resolution import (
-    ResolutionOutcome,
-    budget_consumption_with_changes,
-    empty_candidate,
-    empty_evidence_package,
-    resolution_result_to_json,
-    resolution_result_with_changes,
-    validate_resolution_result,
-)
+from engram.resolution import empty_candidate, resolution_result_to_dict, resolution_result_with_changes, validate_resolution_result
+from engram.resolution_budget import budget_consumption_with_changes
+from engram.resolution_package import empty_evidence_package
+from engram.resolution_sizing import encoded_size
 
 
 def select_rollout(config: dict, namespace: str) -> dict:
@@ -44,7 +40,7 @@ def rollout_status(config: dict) -> dict:
     result = {
         "default_mode": default_mode.value,
         "namespace_override_count": len(namespaces),
-        "namespace_modes": {mode.value: counts[mode] for mode in RolloutMode},
+        "namespace_modes": {mode.value: counts.get(mode, 0) for mode in RolloutMode},
     }
     return result
 
@@ -69,11 +65,13 @@ def apply_rollout(result: dict, selection: dict) -> dict:
         "frame_diagnostics": {**current.get("frame_diagnostics", {}), "rollout": diagnostics},
     }
     if mode in {RolloutMode.DISABLED, RolloutMode.SHADOW}:
-        diagnostics["observed_outcome"] = current.get("outcome", ResolutionOutcome.MISS).value
-        diagnostics["observed_candidate_count"] = len(current.get("response_candidates", ()))
+        observed_outcome = current.get("outcome", ResolutionOutcome.MISS).value
+        observed_candidate_count = len(current.get("response_candidates", ()))
+        diagnostics["observed_outcome"] = observed_outcome
+        diagnostics["observed_candidate_count"] = observed_candidate_count
         if mode == RolloutMode.SHADOW:
-            diagnostics["shadow_outcome"] = diagnostics["observed_outcome"]
-            diagnostics["shadow_candidate_count"] = diagnostics["observed_candidate_count"]
+            diagnostics["shadow_outcome"] = observed_outcome
+            diagnostics["shadow_candidate_count"] = observed_candidate_count
         changes.update(
             {
                 "outcome": ResolutionOutcome.MISS,
@@ -102,15 +100,16 @@ def apply_rollout(result: dict, selection: dict) -> dict:
 
     updated = resolution_result_with_changes(current, changes)
     for _ in range(4):
-        size = len(resolution_result_to_json(updated).encode("utf-8"))
+        size = encoded_size(resolution_result_to_dict(updated))
+        budget = updated.get("budget", {})
         consumption = budget_consumption_with_changes(
-            updated.get("budget", {}),
+            budget,
             {
                 "output_bytes": size,
-                "working_memory_bytes": max(updated.get("budget", {}).get("working_memory_bytes", 0), size),
+                "working_memory_bytes": max(budget.get("working_memory_bytes", 0), size),
             },
         )
-        if consumption == updated.get("budget", {}):
+        if consumption == budget:
             return updated
         updated = resolution_result_with_changes(updated, {"budget": consumption})
     raise InvalidRequestError("rollout budget accounting did not converge")

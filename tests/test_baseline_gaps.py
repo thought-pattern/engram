@@ -22,6 +22,10 @@ def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
     when_proposal = core.propose("When was Ada Lovelace born?", "propose-when")
     where_proposal = core.propose("Where was Ada Lovelace born?", "propose-where")
 
-    assert when["statement_id"] != where["statement_id"]
-    assert when_proposal["candidates"][0]["response"] == "Ada Lovelace was born in 1815."
-    assert where_proposal["candidates"][0]["response"] == "Ada Lovelace was born in London."
+    when_statement_id = when.get("statement_id", "")
+    where_statement_id = where.get("statement_id", "")
+    assert when_statement_id
+    assert where_statement_id
+    assert when_statement_id != where_statement_id
+    assert when_proposal.get("candidates", [])[0].get("response", "") == "Ada Lovelace was born in 1815."
+    assert where_proposal.get("candidates", [])[0].get("response", "") == "Ada Lovelace was born in London."

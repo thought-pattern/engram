@@ -17,42 +17,47 @@ def test_template_context_get_star():
 def test_template_context_get_predicate():
     """Test predicate retrieval via direct access."""
     ctx = template_context(predicates={"name": "Alice", "mood": "happy"})
-    assert ctx["predicates"].get("name") == "Alice"
-    assert ctx["predicates"].get("mood") == "happy"
-    assert ctx["predicates"].get("missing", "") == ""
-    assert ctx["predicates"].get("missing", "default") == "default"
+    predicates = ctx.get("predicates", {})
+    assert predicates.get("name", "") == "Alice"
+    assert predicates.get("mood", "") == "happy"
+    assert predicates.get("missing", "") == ""
+    assert predicates.get("missing", "default") == "default"
 
 
 def test_template_context_set_predicate():
     """Test predicate setting via direct access."""
     ctx = template_context()
-    ctx["predicates"]["name"] = "Bob"
-    assert ctx["predicates"]["name"] == "Bob"
+    assert "predicates" in ctx
+    predicates = ctx.get("predicates", {})
+    predicates["name"] = "Bob"
+    assert ctx.get("predicates", {}).get("name", "") == "Bob"
 
 
 def test_template_context_topic_in_predicates():
     """Test topic from predicates."""
     ctx = template_context(predicates={"topic": "WEATHER"})
-    assert ctx["predicates"].get("topic", "") == "WEATHER"
+    assert ctx.get("predicates", {}).get("topic", "") == "WEATHER"
 
 
 def test_template_context_topic_empty():
     """Test topic when not set."""
     ctx = template_context()
-    assert ctx["predicates"].get("topic", "") == ""
+    assert "predicates" in ctx
+    assert ctx.get("predicates", {}).get("topic", "") == ""
 
 
 def test_template_context_that_from_history():
     """Test getting that from history."""
     ctx = template_context(that_history=[["HELLO", "HOW ARE YOU"], ["GOODBYE"]])
     # Most recent bot response is first sentence of first history entry
-    assert ctx["that_history"][0][0] == "HELLO"
+    assert ctx.get("that_history", [])[0][0] == "HELLO"
 
 
 def test_template_context_that_empty():
     """Test that when empty."""
     ctx = template_context()
-    assert len(ctx["that_history"]) == 0
+    assert "that_history" in ctx
+    assert len(ctx.get("that_history", [])) == 0
 
 
 def test_template_context_get_input():
@@ -74,10 +79,11 @@ def test_template_context_get_response():
 
 def test_template_context_get_bot():
     """Test bot property retrieval via direct access."""
-    ctx = template_context(bot={"name": "TestBot", "version": "1.0"})
-    assert ctx["bot"].get("name") == "TestBot"
-    assert ctx["bot"].get("missing", "") == ""
-    assert ctx["bot"].get("missing", "default") == "default"
+    ctx = template_context(bot={"name": "TestBot"})
+    bot = ctx.get("bot", {})
+    assert bot.get("name", "") == "TestBot"
+    assert bot.get("missing", "") == ""
+    assert bot.get("missing", "default") == "default"
 
 
 def test_template_context_get_map():
@@ -90,7 +96,7 @@ def test_template_context_get_map():
     assert get_map(ctx, "missing_map", "key") == ""
 
 
-"""Tests for basic template processing."""
+# Tests for basic template processing.
 
 
 def test_template_processor_basic_plain_string():
@@ -155,7 +161,7 @@ def test_template_processor_basic_map_lookup():
     assert result == "Capital: Paris"
 
 
-"""Tests for random template."""
+# Tests for random template.
 
 
 def test_template_processor_random_random_selection():
@@ -180,7 +186,7 @@ def test_template_processor_random_random_with_template():
     assert result in ["Hello, Alice!", "Hi, Alice!"]
 
 
-"""Tests for conditional templates."""
+# Tests for conditional templates.
 
 
 def test_template_processor_condition_condition_exists():
@@ -291,7 +297,7 @@ def test_template_processor_condition_condition_loop_never_changing_terminates()
     assert result.startswith("again")
 
 
-"""Tests for sequence templates."""
+# Tests for sequence templates.
 
 
 def test_template_processor_sequence_sequence_basic():
@@ -306,7 +312,7 @@ def test_template_processor_sequence_sequence_basic():
     }
     result = processor.process(template, ctx)
     assert result == "Let's talk about weather!"
-    assert ctx["predicates"]["topic"] == "weather"
+    assert ctx.get("predicates", {}).get("topic", "") == "weather"
 
 
 def test_template_processor_sequence_sequence_multiple_text():
@@ -318,7 +324,7 @@ def test_template_processor_sequence_sequence_multiple_text():
     assert result == "First. Second."
 
 
-"""Tests for think (silent processing)."""
+# Tests for think (silent processing).
 
 
 def test_template_processor_think_think_no_output():
@@ -328,7 +334,7 @@ def test_template_processor_think_think_no_output():
     template = {"think": [{"set": {"name": "secret", "value": "hidden"}}]}
     result = processor.process(template, ctx)
     assert result == ""
-    assert ctx["predicates"]["secret"] == "hidden"
+    assert ctx.get("predicates", {}).get("secret", "") == "hidden"
 
 
 def test_template_processor_think_think_in_sequence():
@@ -345,7 +351,7 @@ def test_template_processor_think_think_in_sequence():
     assert result == "Hello, Alice!"
 
 
-"""Tests for text transforms."""
+# Tests for text transforms.
 
 
 def test_template_processor_transforms_upper():
@@ -388,7 +394,7 @@ def test_template_processor_transforms_explode():
     assert result == "a b c"
 
 
-"""Tests for string utility transforms."""
+# Tests for string utility transforms.
 
 
 def test_string_utilities_first_word():
@@ -519,7 +525,7 @@ def test_string_utilities_nested_first_upper():
     assert result == "HELLO"
 
 
-"""Tests for redirect (SRAI)."""
+# Tests for redirect (SRAI).
 
 
 def test_template_processor_redirect_redirect_callback():
@@ -578,6 +584,7 @@ def test_template_processor_redirect_redirect_depth_limit():
     call_count = [0]
 
     def redirect_fn(pattern):
+        del pattern
         call_count[0] += 1
         # Infinite recursion attempt
         result = processor.process({"redirect": "LOOP"}, template_context(redirect_fn=redirect_fn))
@@ -589,7 +596,7 @@ def test_template_processor_redirect_redirect_depth_limit():
     assert call_count[0] <= 4  # Start + 3 redirects
 
 
-"""Tests for learn element."""
+# Tests for learn element.
 
 
 def test_template_processor_learn_learn_callback():
@@ -606,11 +613,11 @@ def test_template_processor_learn_learn_callback():
     processor.process(template, ctx)
 
     assert len(learned) == 1
-    assert learned[0]["pattern"] == "THE SKY"
-    assert learned[0]["template"] == {"text": "blue"}
+    assert learned[0].get("pattern", "") == "THE SKY"
+    assert learned[0].get("template", {}) == {"text": "blue"}
 
 
-"""Integration tests for templates."""
+# Integration tests for templates.
 
 
 def test_template_integration_spec_example_my_name_is():
@@ -625,7 +632,7 @@ def test_template_integration_spec_example_my_name_is():
     }
     result = processor.process(template, ctx)
     assert result == "Nice to meet you, Alice!"
-    assert ctx["predicates"]["username"] == "Alice"
+    assert ctx.get("predicates", {}).get("username", "") == "Alice"
 
 
 def test_template_integration_spec_example_what_is_my_name():
@@ -671,26 +678,18 @@ def test_template_integration_nested_template():
     }
     result = processor.process(template, ctx)
     assert result == "Hello, Alice! You seem happy!"
-    assert ctx["predicates"]["greeted"] == "true"
+    assert ctx.get("predicates", {}).get("greeted", "") == "true"
 
 
-"""Tests for system variables."""
+# Tests for system variables.
 
 
 def test_system_variables_program_variable():
     """Test {program} returns bot name."""
     processor = TemplateProcessor()
-    ctx = template_context(bot={"name": "TestBot", "version": "1.0"})
+    ctx = template_context(bot={"name": "TestBot"})
     result = processor.process("My name is {program}", ctx)
     assert result == "My name is TestBot"
-
-
-def test_system_variables_version_variable():
-    """Test {version} returns bot version."""
-    processor = TemplateProcessor()
-    ctx = template_context(bot={"name": "TestBot", "version": "2.5.1"})
-    result = processor.process("Version {version}", ctx)
-    assert result == "Version 2.5.1"
 
 
 def test_system_variables_program_default():
@@ -755,7 +754,7 @@ def test_system_variables_vocabulary_variable():
     assert result == "My vocabulary is 1000 words"
 
 
-"""Tests for the {clause:...} transform."""
+# Tests for the {clause:...} transform.
 
 
 def test_clause_transform_clause_trims_capture():
@@ -772,7 +771,7 @@ def test_clause_transform_clause_keeps_single_clause():
     assert result == "You're really happy about the results."
 
 
-"""Tests for the {qtype:...} intent transform."""
+# Tests for the {qtype:...} intent transform.
 
 
 def test_qtype_transform_question():
@@ -793,7 +792,7 @@ def test_qtype_transform_command():
     assert processor.process("{qtype:{request}}", ctx) == "command"
 
 
-"""Bare {input} is the current input; {input:N} reads history."""
+# Bare {input} is the current input; {input:N} reads history.
 
 
 def test_input_variable_bare_input_is_current_input():

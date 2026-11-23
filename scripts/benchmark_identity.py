@@ -4,16 +4,12 @@ from argparse import ArgumentParser as argparse_ArgumentParser
 from datetime import UTC, datetime
 from json import dumps as json_dumps
 from pathlib import Path
-from platform import platform as platform_platform, processor as platform_processor, python_version as platform_python_version
-from sys import argv as sys_argv, path as sys_path
+from platform import machine as platform_machine, processor as platform_processor
+from sys import argv as sys_argv
 from time import perf_counter_ns as time_perf_counter_ns
 from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
-REPOSITORY = Path(__file__).resolve().parents[1]
-if str(REPOSITORY) not in sys_path:
-    sys_path.insert(0, str(REPOSITORY))
-
-from engram.identity import build_scoped_retrieval_key, build_standalone_identity, normalize_retrieval_key, scope_key
+from engram.identity import extract_standalone_identity, normalize_retrieval_key, scope_key, scoped_retrieval_key_from_text
 from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/identity/benchmark.json")
@@ -65,11 +61,11 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
         return request
 
     normalization = internal_measure(lambda: normalize_retrieval_key(next_request()), iterations)
-    identity = internal_measure(lambda: build_standalone_identity(next_request(), scope), iterations)
-    scoped_key = internal_measure(lambda: build_scoped_retrieval_key(scope, next_request()), iterations)
+    identity = internal_measure(lambda: extract_standalone_identity(next_request(), scope), iterations)
+    scoped_key = internal_measure(lambda: scoped_retrieval_key_from_text(scope, next_request()), iterations)
 
     tracemalloc_start()
-    identities = [build_standalone_identity(REQUESTS[index % len(REQUESTS)], scope) for index in range(memory_objects)]
+    identities = [extract_standalone_identity(REQUESTS[index % len(REQUESTS)], scope) for index in range(memory_objects)]
     current, peak = tracemalloc_get_traced_memory()
     tracemalloc_stop()
     assert len(identities) == memory_objects
@@ -78,8 +74,7 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
         "captured_at": datetime.now(UTC).isoformat(),
         "source": benchmark_source_state(),
         "environment": {
-            "python": platform_python_version(),
-            "platform": platform_platform(),
+            "machine": platform_machine(),
             "processor": platform_processor(),
         },
         "method": {

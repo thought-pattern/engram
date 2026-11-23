@@ -1,32 +1,28 @@
 """Section 15 security and privacy boundary tests."""
 
-from logging import DEBUG, ERROR, WARNING
+from logging import DEBUG, ERROR
 
 from pytest import raises as pytest_raises
 
-from engram.constants import (
+from engram.constants_artifacts import (
     MAX_ARTIFACT_ID_BYTES,
-    MAX_CACHE_REQUEST_BYTES,
-    MAX_CONTEXT_FINGERPRINT_BYTES,
-    MAX_FEEDBACK_REASON_BYTES,
     MAX_METADATA_KEY_BYTES,
     MAX_METADATA_STRING_BYTES,
-    MAX_NAMESPACE_BYTES,
-    MAX_REQUEST_BYTES,
-    MAX_REQUEST_ID_BYTES,
     MAX_RESPONSE_BYTES,
-    MAX_SIGNATURE_INPUT_BYTES,
     MAX_SOURCE_LABEL_BYTES,
-    ResolutionOutcome,
-    ResolverState,
 )
+from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES
+from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES
+from engram.constants_mutations import MAX_REQUEST_ID_BYTES
+from engram.constants_resolution import ResolutionOutcome, ResolverState
+from engram.constants_service import MAX_CACHE_REQUEST_BYTES, MAX_REQUEST_BYTES
 from engram.core import Engram
 from engram.errors import InvalidRequestError
 from engram.graph import MemGraphConnection
 from engram.mcp_server import MCPConversationService
-from engram.service import EngramCore, service_request_signature
-
-from .bolt_stub import BoltStub
+from engram.service import EngramCore
+from engram.service_requests import service_request_signature
+from tests.bolt_stub import BoltStub
 
 
 def test_shared_service_rejects_oversized_request_and_identity_fields_before_state_change() -> None:
@@ -88,17 +84,17 @@ def test_conversation_and_mcp_share_the_request_bound() -> None:
     with pytest_raises(InvalidRequestError, match="text exceeds"):
         service.send("x" * (MAX_REQUEST_BYTES + 1))
 
-    assert service.inspect()["turn_count"] == 0
+    snapshot = service.inspect()
+    assert "turn_count" in snapshot
+    assert snapshot.get("turn_count", 0) == 0
     service.stop()
 
 
-def test_initial_context_and_service_signatures_are_bounded() -> None:
+def test_initial_context_is_bounded_and_service_signatures_need_valid_unicode() -> None:
     core = EngramCore()
 
     with pytest_raises(InvalidRequestError, match="initial_bot_text exceeds"):
         core.start_conversation(initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))
-    with pytest_raises(InvalidRequestError, match="service request exceeds"):
-        service_request_signature(value="x" * MAX_SIGNATURE_INPUT_BYTES)
     with pytest_raises(InvalidRequestError, match="must contain valid Unicode"):
         service_request_signature(metadata={"nested": "\ud800"})
 
@@ -126,7 +122,7 @@ def test_core_graph_failure_is_logged_in_full_and_returns_no_rows(caplog) -> Non
     assert secret in caplog.text
 
 
-def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_type(caplog) -> None:
+def test_graph_query_failure_logs_and_raises_only_its_class(caplog) -> None:
     secret = "private-graph-driver-content"
     stub = BoltStub()
     stub.mode = "fail"
@@ -149,7 +145,7 @@ def test_graph_query_failure_is_logged_in_full_but_the_wrapper_carries_only_its_
 
     assert secret in str(failure.value.__cause__)
     assert secret not in str(failure.value)
-    assert secret in caplog.text
+    assert secret not in caplog.text
     assert "DatabaseError" in caplog.text
 
 
@@ -157,6 +153,8 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
     secret = "private-database-outage-detail"
 
     class FailingGraph:
+        """A connected graph double whose every read fails with a secret-bearing error."""
+
         available = True
 
         def execute(self, internal_query, internal_parameters=()):
@@ -185,26 +183,33 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
 
     engine = Engram()
     engine.internal_graph_client = FailingGraph()
-    engine.config["graph"]["enabled"] = True
+    assert "graph" in engine.config
+    graph_config = engine.config.get("graph", {})
+    graph_config["enabled"] = True
     core = EngramCore(engine)
     engine = core.engram
 
-    with caplog.at_level(WARNING, logger="engram.core"):
+    with caplog.at_level(DEBUG, logger="engram.core"):
         assert engine.canonical_entity_matches("France") == []
         assert engine.canonical_predicate_matches("capital") == []
         assert engine.relation_one_hop_proposition_projections("entity:france", "predicate:capital") == []
         assert engine.current_proposition_projection("proposition:paris") == ()
-        assert engine.structured_proposition_projections("France") == []
+        assert engine.structured_proposition_projections("France", row_limit=10) == []
         resolved = core.resolve_request("What is the capital of France?", "database-failure")
         started = core.start_conversation(user_id="alice")
-        turn = core.chat(started["user_id"], "What is the capital of France?")
+        started_user_id = started.get("user_id", "")
+        assert started_user_id
+        turn = core.chat(started_user_id, "What is the capital of France?")
 
     visible = f"{resolved}{turn}"
     assert secret not in visible
     assert secret in caplog.text
     assert "Graph read failed" in caplog.text
     assert "RuntimeError" in caplog.text
-    assert resolved["outcome"] == ResolutionOutcome.MISS
-    assert all(item["state"] != ResolverState.FAILED for item in resolved["resolver_results"])
-    assert turn["response"] == ""
+    assert {"outcome", "resolver_results"} <= resolved.keys()
+    assert resolved.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.MISS
+    # A resolver result without a state reads as FAILED, so it still fails the check.
+    assert all(item.get("state", ResolverState.FAILED) != ResolverState.FAILED for item in resolved.get("resolver_results", ()))
+    assert "response" in turn
+    assert turn.get("response", "") == ""
     core.close()

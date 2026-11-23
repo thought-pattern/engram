@@ -1,13 +1,10 @@
 """Explicitly provision the approved Section 13 model before runtime startup."""
 
-from argparse import ArgumentParser as argparse_ArgumentParser, Namespace as argparse_Namespace
+from argparse import ArgumentParser as argparse_ArgumentParser
 from json import dumps as json_dumps, loads as json_loads
 from pathlib import Path
 from shutil import rmtree as shutil_rmtree
-from sys import path as sys_path
 from tempfile import TemporaryDirectory
-
-sys_path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from huggingface_hub import snapshot_download
 
@@ -17,12 +14,12 @@ from engram.constants import (
     APPROVED_SEMANTIC_DIMENSION,
     APPROVED_SEMANTIC_LICENSE_ID,
     APPROVED_SEMANTIC_MODEL_ID,
-    APPROVED_SEMANTIC_MODEL_VERSION,
+    APPROVED_SEMANTIC_MODEL_REVISION,
 )
 from engram.semantic import model_artifact_sha256
 
 DEFAULT_MODEL_ID = APPROVED_SEMANTIC_MODEL_ID
-DEFAULT_REVISION = APPROVED_SEMANTIC_MODEL_VERSION
+DEFAULT_REVISION = APPROVED_SEMANTIC_MODEL_REVISION
 DEFAULT_LICENSE = APPROVED_SEMANTIC_LICENSE_ID
 DEFAULT_DIMENSION = APPROVED_SEMANTIC_DIMENSION
 NATIVE_ALLOW_PATTERNS = [
@@ -36,7 +33,7 @@ NATIVE_ALLOW_PATTERNS = [
 ]
 
 
-def parse_args() -> argparse_Namespace:
+def parse_args():
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument(
         "--destination",
@@ -56,7 +53,7 @@ def main() -> int:
     manifest_path = destination.parent / f"{destination.name}.engram-model.json"
     expected_identity = {
         "model_id": DEFAULT_MODEL_ID,
-        "model_version": args.revision,
+        "model_revision": args.revision,
         "license_id": DEFAULT_LICENSE,
         "dimension": DEFAULT_DIMENSION,
         "backend": APPROVED_SEMANTIC_BACKEND,
@@ -68,12 +65,14 @@ def main() -> int:
         if not manifest_path.is_file() or not (destination / "LICENSE").is_file():
             raise SystemExit(f"existing model destination is incomplete: {destination}")
         existing_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
+        # An identity field that is absent conflicts just as a different value does.
         if not isinstance(existing_manifest, dict) or any(
-            existing_manifest.get(name) != value for name, value in expected_identity.items()
+            name not in existing_manifest or existing_manifest.get(name, value) != value
+            for name, value in expected_identity.items()
         ):
             raise SystemExit(f"existing model manifest conflicts with the requested revision: {manifest_path}")
         checksum = model_artifact_sha256(destination)
-        if existing_manifest.get("artifact_sha256") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
+        if existing_manifest.get("artifact_sha256", "") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
             raise SystemExit(f"existing model artifact checksum mismatch: {destination}")
         manifest = {
             **expected_identity,

@@ -4,36 +4,36 @@ from pytest import mark as pytest_mark, raises as pytest_raises
 
 from engram import nlp
 from engram.config import engram_config
+from engram.constants_artifacts import Tier
 from engram.core import Engram
-from engram.models import Tier
-from engram.nlp import extract_entities, extract_fact, extracted_fact, fact_query_patterns, input_kind, is_question
+from engram.nlp import extract_entities, extract_fact, fact_query_patterns, input_kind, is_question
 
 
 def test_fact_extractor_extract_simple_is():
     """Test extracting 'X is Y' facts."""
     fact = extract_fact("The sky is blue")
     assert fact
-    assert fact["subject"] == "sky"
-    assert fact["predicate"] == "is"
-    assert fact["obj"] == "blue"
-    assert fact["original"] == "The sky is blue."
+    assert fact.get("subject", "") == "sky"
+    assert fact.get("predicate", "") == "is"
+    assert fact.get("obj", "") == "blue"
+    assert fact.get("original", "") == "The sky is blue."
 
 
 def test_fact_extractor_extract_simple_are():
     """Test extracting 'X are Y' facts."""
     fact = extract_fact("Cats are mammals")
     assert fact
-    assert fact["subject"] == "Cats"
-    assert fact["predicate"] == "are"
-    assert fact["obj"] == "mammals"
+    assert fact.get("subject", "") == "Cats"
+    assert fact.get("predicate", "") == "are"
+    assert fact.get("obj", "") == "mammals"
 
 
 def test_fact_extractor_extract_complex_subject():
     """Test extracting facts with complex subjects."""
     fact = extract_fact("The capital of France is Paris")
     assert fact
-    assert fact["subject"] == "capital of France"
-    assert fact["obj"] == "Paris"
+    assert fact.get("subject", "") == "capital of France"
+    assert fact.get("obj", "") == "Paris"
 
 
 def test_fact_extractor_skip_questions():
@@ -66,7 +66,7 @@ def test_fact_extractor_skip_short_input():
 
 def test_fact_extractor_query_patterns_is():
     """Test query pattern generation for 'is' facts."""
-    fact = extracted_fact(subject="sky", predicate="is", obj="blue", original="The sky is blue.")
+    fact = {"subject": "sky", "predicate": "is", "obj": "blue", "original": "The sky is blue."}
     patterns = fact_query_patterns(fact)
     assert "SKY" in patterns
     assert "WHAT IS SKY" in patterns
@@ -81,7 +81,7 @@ def test_fact_extractor_query_patterns_is():
 
 def test_fact_extractor_query_patterns_are():
     """Test query pattern generation for 'are' facts."""
-    fact = extracted_fact(subject="cats", predicate="are", obj="mammals", original="Cats are mammals.")
+    fact = {"subject": "cats", "predicate": "are", "obj": "mammals", "original": "Cats are mammals."}
     patterns = fact_query_patterns(fact)
     assert "CATS" in patterns
     assert "WHAT ARE CATS" in patterns
@@ -89,7 +89,7 @@ def test_fact_extractor_query_patterns_are():
     assert "WHAT IS MAMMALS" in patterns
 
 
-"""Integration tests for fact learning in Engram."""
+# Integration tests for fact learning in Engram.
 
 
 def test_fact_learning_integration_learn_and_retrieve_fact():
@@ -103,14 +103,14 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
     result1 = engram.pattern_query("Dogs are loyal")
     # Should acknowledge learning (via catch-all with learning)
     assert result1
-    stmt, captured, response = result1
+    _, _, response = result1
 
     assert response.casefold() == "default"
 
     # Retrieve the fact
     result2 = engram.pattern_query("What are dogs")
     assert result2
-    stmt, captured, response = result2
+    _, _, response = result2
     assert response == "Dogs are loyal."
 
 
@@ -127,7 +127,7 @@ def test_fact_learning_integration_learn_and_retrieve_with_article():
     # Retrieve with article
     result = engram.pattern_query("What is the moon")
     assert result
-    stmt, captured, response = result
+    _, _, response = result
     assert response == "The moon is bright."
 
 
@@ -147,11 +147,11 @@ def test_fact_learning_integration_no_overwrite_existing():
     # Should still return custom response
     result = engram.pattern_query("cats")
     assert result
-    stmt, captured, response = result
+    _, _, response = result
     assert response == "Custom response"
 
 
-"""The pre-copula span must look like a plain noun phrase."""
+# The pre-copula span must look like a plain noun phrase.
 
 
 def test_fact_extraction_guardrails_reject_embedded_clause_copula():
@@ -172,20 +172,20 @@ def test_fact_extraction_guardrails_reject_long_subject():
 
 def test_fact_extraction_guardrails_accept_plain_noun_phrase_subjects():
     fact = extract_fact("The capital of France is Paris")
-    assert fact["subject"] == "capital of France"
+    assert fact.get("subject", "") == "capital of France"
     fact = extract_fact("The sky is blue")
-    assert fact["subject"] == "sky"
+    assert fact.get("subject", "") == "sky"
 
 
 def test_fact_extraction_guardrails_accept_single_noun_like_ing_subject():
     fact = extract_fact("Lightning is an electrical discharge")
 
-    assert fact["subject"] == "Lightning"
-    assert fact["predicate"] == "is"
-    assert fact["obj"] == "an electrical discharge"
+    assert fact.get("subject", "") == "Lightning"
+    assert fact.get("predicate", "") == "is"
+    assert fact.get("obj", "") == "an electrical discharge"
 
 
-"""Tests for the public question/intent detection."""
+# Tests for the public question/intent detection.
 
 
 def test_question_detection_trailing_question_mark():
@@ -208,7 +208,7 @@ def test_question_detection_statement_is_not_question():
     assert not is_question("The sky is blue")
 
 
-"""Tests for input intent classification."""
+# Tests for input intent classification.
 
 
 def test_input_kind_question():
@@ -226,7 +226,7 @@ def test_input_kind_statement():
     assert input_kind("I lost my hat yesterday") == "statement"
 
 
-"""Junk-fact families the 100-turn conversation soak surfaced."""
+# Junk-fact families the 100-turn conversation soak surfaced.
 
 
 def test_fact_extraction_soak_regressions_reject_pronoun_anywhere_in_subject():
@@ -251,11 +251,11 @@ def test_fact_extraction_soak_regressions_reject_possessive_object():
 
 
 def test_fact_extraction_soak_regressions_legitimate_facts_still_learn():
-    assert extract_fact("Honey is made by bees")["subject"] == "Honey"
-    assert extract_fact("Rex is a golden retriever")["subject"] == "Rex"
+    assert extract_fact("Honey is made by bees").get("subject", "") == "Honey"
+    assert extract_fact("Rex is a golden retriever").get("subject", "") == "Rex"
 
 
-"""A leading near-miss of a question word is a typo'd question."""
+# A leading near-miss of a question word is a typo'd question.
 
 
 def test_typo_question_detection_typo_question_words_detected():
@@ -278,7 +278,7 @@ def test_typo_question_detection_typo_questions_never_learned_as_facts():
 
 
 def test_typo_question_detection_real_word_subjects_still_learn():
-    assert extract_fact("The cow is a farm animal")["subject"] == "cow"
+    assert extract_fact("The cow is a farm animal").get("subject", "") == "cow"
 
 
 @pytest_mark.parametrize("extractor", (extract_fact, extract_entities))
@@ -286,7 +286,6 @@ def test_nlp_extraction_does_not_hide_dependency_failures(monkeypatch, extractor
     def fail_tokenization(internal_text):
         raise RuntimeError("injected tokenizer failure")
 
-    monkeypatch.setattr(nlp, "ensure_nltk_data", lambda: False)
     monkeypatch.setattr(nlp, "word_tokenize", fail_tokenization)
 
     with pytest_raises(RuntimeError, match="injected tokenizer failure"):

@@ -4,31 +4,35 @@ from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
 from engram.artifacts import (
-    LifecycleOperation,
-    LifecycleState,
-    artifact_provenance,
-    artifact_statistics,
-    cached_response_artifact,
     cached_response_artifact_from_dict,
     cached_response_artifact_to_dict,
     require_lifecycle_transition,
+    validate_artifact_provenance,
     validate_cached_response_artifact,
 )
-from engram.constants import LifecycleMutationReason, Tier
+from engram.constants_artifacts import (
+    INITIAL_ARTIFACT_STATISTICS,
+    LIFECYCLE_AUDIT_KEY,
+    MAX_ARTIFACT_ID_BYTES,
+    MAX_CALLER_ID_BYTES,
+    MAX_LIFECYCLE_AUDIT_DETAIL_BYTES,
+    AdmissionOutcome,
+    LifecycleMutationReason,
+    LifecycleOperation,
+    LifecycleState,
+    Tier,
+)
+from engram.constants_mutations import MutationOperation, MutationResultCode, ReceiptCompletionState, ReceiptLookupOutcome
 from engram.coordination import AtomicMutationCoordinator, validate_mutation_execution_result
 from engram.errors import ConflictError, InvalidRequestError
 from engram.identity import (
-    build_retrieval_representation,
-    build_standalone_identity,
-    normalize_retrieval_key,
+    extract_standalone_identity,
+    retrieval_form,
+    retrieval_representation,
     retrieval_representation_bindings,
     scope_key,
 )
 from engram.mutations import (
-    MutationOperation,
-    MutationResultCode,
-    ReceiptCompletionState,
-    ReceiptLookupOutcome,
     artifact_generation_change,
     canonical_payload_signature,
     mutation_receipt,
@@ -37,7 +41,7 @@ from engram.mutations import (
     receipt_lookup_receipt,
     validate_mutation_receipt,
 )
-from engram.repository import AdmissionOutcome, repository_state_with_artifact_updates, validate_tier_admission_policy
+from engram.repository import repository_state_with_artifact_updates, validate_tier_admission_policy
 from engram.support import validate_support_reference
 from engram.validation import require_text
 
@@ -75,7 +79,7 @@ def response_mutation_result_from_execution(execution: dict) -> dict:
     """Build a mutation-result dictionary from one coordinated execution."""
     validated = validate_mutation_execution_result(execution)
     result = response_mutation_result(
-        receipt=validated["receipt"],
+        receipt=validated.get("receipt", {}),
         replayed=False,
     )
     return result
@@ -84,15 +88,15 @@ def response_mutation_result_from_execution(execution: dict) -> dict:
 def response_mutation_result_to_dict(value: dict) -> dict:
     """Return the stable external dictionary for one validated mutation result."""
     validated = response_mutation_result(**value)
-    receipt = validated["receipt"]
+    receipt = validated.get("receipt", {})
     receipt_value = mutation_receipt_to_dict(receipt)
     result = {
-        "request_id": receipt["request_id"],
-        "operation": receipt["operation"].value,
-        "result_code": receipt["result_code"].value,
-        "result": receipt_value["result"],
-        "receipt_sequence": receipt["sequence"],
-        "replayed": validated["replayed"],
+        "request_id": receipt.get("request_id", ""),
+        "operation": receipt.get("operation", MutationOperation.COMMIT_RESPONSE).value,
+        "result_code": receipt.get("result_code", MutationResultCode.REJECTED_CAPACITY).value,
+        "result": receipt_value.get("result", {}),
+        "receipt_sequence": receipt.get("sequence", 0),
+        "replayed": validated.get("replayed", False),
     }
     return result
 
@@ -101,15 +105,15 @@ def validate_base_response_artifact(artifact: dict) -> dict:
     """Validate the stricter invariants for a new accepted response."""
     try:
         validated_artifact = validate_cached_response_artifact(artifact)
-    except InvalidRequestError as error:
-        raise InvalidRequestError("commit artifact must be a CachedResponseArtifact") from error
-    if validated_artifact["lifecycle"] != LifecycleState.ACTIVE:
+    except InvalidRequestError as err:
+        raise InvalidRequestError("commit artifact must be a CachedResponseArtifact") from err
+    if validated_artifact.get("lifecycle", LifecycleState.RETIRED) != LifecycleState.ACTIVE:
         raise InvalidRequestError("base commit requires an ACTIVE artifact")
-    if validated_artifact["generation"] != 1:
+    if validated_artifact.get("generation", 0) != 1:
         raise InvalidRequestError("base commit requires artifact generation 1")
-    if normalize_retrieval_key(validated_artifact["response"]) == "idk":
+    if retrieval_form(validated_artifact.get("response", "")) == "idk":
         raise InvalidRequestError("IDK is not a cacheable response")
-    if "lifecycle_audit" in validated_artifact["metadata"]:
+    if LIFECYCLE_AUDIT_KEY in validated_artifact.get("metadata", {}):
         raise InvalidRequestError("base commit metadata must not use the reserved lifecycle_audit field")
     return validated_artifact
 
@@ -121,18 +125,19 @@ def response_collision_owner_ids(
     """Return current owners that collide with an artifact's retrieval keys."""
     artifacts = coordinator.repository.trusted_artifacts()
     target_keys = tuple(
-        binding.get("key")
+        binding.get("key", {})
         for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
     )
-    # The key index narrows the check to artifacts that carry one of the keys.
+    # The key index narrows the check to artifacts that carry one of the keys,
+    # and it tracks the live state, so every candidate names a stored artifact.
     candidates = coordinator.repository.key_owner_ids(target_keys)
     owners = {
         statement_id
-        for statement_id, current in ((statement_id, artifacts[statement_id]) for statement_id in candidates)
+        for statement_id, current in ((statement_id, artifacts.get(statement_id, {})) for statement_id in candidates)
         if current.get("lifecycle", LifecycleState.ACTIVE) == LifecycleState.ACTIVE
         if any(
-            any(binding.get("key") == target_key for target_key in target_keys)
-            for binding in retrieval_representation_bindings(current["retrieval"], current["scope"])
+            any(binding.get("key", {}) == target_key for target_key in target_keys)
+            for binding in retrieval_representation_bindings(current.get("retrieval", {}), current.get("scope", {}))
         )
     }
     result = tuple(sorted(owners))
@@ -186,21 +191,42 @@ class AcceptedResponseService:
         payload_signature = canonical_payload_signature({"artifact": cached_response_artifact_to_dict(artifact)})
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.COMMIT_RESPONSE, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+            if outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is already in progress: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+            if outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+            if outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
             created_at = self.receipt_time()
             result = self.commit_new_locked(artifact, request_id, payload_signature, created_at)
             return result
+
+    def superseded_by_learned(self, current: dict, replacement_id: str, request_id: str, occurred_at: str) -> dict:
+        """`current` as SUPERSEDED by the newer learned response `replacement_id`, one generation on."""
+        updated = cached_response_artifact_to_dict(current)
+        updated["generation"] = current.get("generation", 0) + 1
+        updated["lifecycle"] = LifecycleState.SUPERSEDED.value
+        updated["superseded_by"] = replacement_id
+        updated_metadata = mapping_copy(updated.get("metadata", {}), "metadata")
+        updated_metadata[LIFECYCLE_AUDIT_KEY] = {
+            "operation": MutationOperation.SUPERSEDE_RESPONSE.value,
+            "reason": LifecycleMutationReason.STALE.value,
+            "caller_id": "LearnResponse",
+            "request_id": request_id,
+            "occurred_at": occurred_at,
+            "detail": "replaced by a newer learned response",
+            "replacement_statement_id": replacement_id,
+        }
+        updated["metadata"] = updated_metadata
+        superseded = cached_response_artifact_from_dict(updated)
+        return superseded
 
     def commit_new_locked(
         self,
@@ -208,42 +234,69 @@ class AcceptedResponseService:
         request_id: str,
         payload_signature: str,
         created_at: str,
+        *,
+        replaces_owners: bool = False,
     ) -> dict:
+        """Admit one new artifact; a learned response (`replaces_owners`) supersedes the answers holding its keys."""
         current = self.internal_coordinator.repository.trusted_state()
-        current_artifacts = current["artifacts"]
+        current_artifacts = current.get("artifacts", {})
         if artifact.get("statement_id", "") in current_artifacts:
             raise ConflictError(f"artifact statement_id already exists: {artifact.get('statement_id', '')}")
         collision_owner_ids = response_collision_owner_ids(artifact, self.internal_coordinator)
-        if collision_owner_ids:
+        if collision_owner_ids and not replaces_owners:
             named = ", ".join(collision_owner_ids)
             raise ConflictError(f"retrieval key collision with existing statement IDs: {named}")
 
         plan = self.internal_coordinator.repository.plan_admission(artifact, self.internal_admission_policy)
-        if plan["outcome"] == AdmissionOutcome.REJECTED_CAPACITY:
+        admission_outcome = plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY)
+        evicted_statement_ids = plan.get("evicted_statement_ids", ())
+        repository_candidate = plan.get("candidate", {})
+        superseded = ()
+        if admission_outcome == AdmissionOutcome.REJECTED_CAPACITY:
             result_code = MutationResultCode.REJECTED_CAPACITY
             affected_generations = ()
         else:
             result_code = (
                 MutationResultCode.CREATED_WITH_EVICTION
-                if plan["outcome"] == AdmissionOutcome.ADMITTED_WITH_EVICTION
+                if admission_outcome == AdmissionOutcome.ADMITTED_WITH_EVICTION
                 else MutationResultCode.CREATED
             )
+            # A held answer the admission evicts is already gone; every other one is superseded in this mutation.
+            superseded = tuple(
+                self.superseded_by_learned(
+                    current_artifacts.get(statement_id, {}), artifact.get("statement_id", ""), request_id, created_at
+                )
+                for statement_id in collision_owner_ids
+                if statement_id not in evicted_statement_ids
+            )
+            if superseded:
+                repository_candidate = repository_state_with_artifact_updates(repository_candidate, superseded)
+            # Evicted IDs come from the live state the plan was built from.
             removed = tuple(
                 artifact_generation_change(
                     statement_id,
-                    current_artifacts[statement_id]["generation"],
+                    current_artifacts.get(statement_id, {}).get("generation", 0),
                     0,
                 )
-                for statement_id in plan["evicted_statement_ids"]
+                for statement_id in evicted_statement_ids
+            )
+            replaced = tuple(
+                artifact_generation_change(item.get("statement_id", ""), item.get("generation", 0) - 1, item.get("generation", 0))
+                for item in superseded
             )
             affected_generations = normalize_artifact_generation_changes(
-                (*removed, artifact_generation_change(artifact.get("statement_id", ""), 0, artifact.get("generation", 0)))
+                (
+                    *removed,
+                    *replaced,
+                    artifact_generation_change(artifact.get("statement_id", ""), 0, artifact.get("generation", 0)),
+                )
             )
         result = {
             "statement_id": artifact.get("statement_id", ""),
             "generation": artifact.get("generation", 0),
-            "admission_outcome": plan["outcome"].value,
-            "evicted_statement_ids": list(plan["evicted_statement_ids"]),
+            "admission_outcome": admission_outcome.value,
+            "evicted_statement_ids": list(evicted_statement_ids),
+            "superseded_statement_ids": [item.get("statement_id", "") for item in superseded],
         }
         mutation_receipt_value = mutation_receipt(
             sequence=self.internal_coordinator.next_receipt_sequence,
@@ -257,7 +310,7 @@ class AcceptedResponseService:
             created_at=created_at,
         )
         candidate = self.internal_coordinator.build_candidate(
-            plan["candidate"],
+            repository_candidate,
             mutation_receipt_value,
         )
         execution = self.internal_coordinator.execute(candidate)
@@ -275,7 +328,7 @@ class AcceptedResponseService:
         source_label: str,
         metadata: dict,
     ) -> dict:
-        """Construct one DYNAMIC ACTIVE response artifact and commit it."""
+        """Construct one DYNAMIC ACTIVE response artifact and commit it; it replaces the answers holding its keys."""
 
         if not isinstance(metadata, dict):
             raise InvalidRequestError("learn response metadata must be an object")
@@ -293,17 +346,18 @@ class AcceptedResponseService:
         )
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.COMMIT_RESPONSE, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+            if outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is already in progress: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+            if outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+            if outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different learned response: {request_id}")
             accepted_at = self.receipt_time()
             scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
@@ -312,29 +366,32 @@ class AcceptedResponseService:
                 raise InvalidRequestError("learn response metadata support must be an array of objects")
             try:
                 support_references = tuple(validate_support_reference(record) for record in support_records)
-            except ValueError as error:
-                raise InvalidRequestError(str(error)) from error
-            artifact = cached_response_artifact(
-                statement_id=f"response_{uuid5(NAMESPACE_URL, f'engram:LearnResponse:{request_id}').hex}",
-                generation=1,
-                response=response,
-                query_identity=build_standalone_identity(request, scope),
-                retrieval=build_retrieval_representation(request),
-                tier=Tier.DYNAMIC,
-                lifecycle=LifecycleState.ACTIVE,
-                scope=scope,
-                support_references=support_references,
-                valid_from="",
-                valid_from_available=False,
-                valid_until="",
-                valid_until_available=False,
-                superseded_by="",
-                provenance=artifact_provenance(source_label, caller_id, accepted_at),
-                statistics=artifact_statistics(),
-                metadata=dict(metadata),
-            )
+            except ValueError as err:
+                raise InvalidRequestError(str(err)) from err
+            raw_artifact = {
+                "statement_id": f"response_{uuid5(NAMESPACE_URL, f'engram:LearnResponse:{request_id}').hex}",
+                "generation": 1,
+                "response": response,
+                "query_identity": extract_standalone_identity(request, scope),
+                "retrieval": retrieval_representation(request),
+                "tier": Tier.DYNAMIC,
+                "lifecycle": LifecycleState.ACTIVE,
+                "scope": scope,
+                "support_references": support_references,
+                "valid_from": "",
+                "valid_from_available": False,
+                "valid_until": "",
+                "valid_until_available": False,
+                "superseded_by": "",
+                "provenance": validate_artifact_provenance(
+                    {"source_label": source_label, "caller_id": caller_id, "accepted_at": accepted_at}
+                ),
+                "statistics": INITIAL_ARTIFACT_STATISTICS,
+                "metadata": dict(metadata),
+            }
+            artifact = validate_cached_response_artifact(raw_artifact)
             artifact = validate_base_response_artifact(artifact)
-            result = self.commit_new_locked(artifact, request_id, payload_signature, accepted_at)
+            result = self.commit_new_locked(artifact, request_id, payload_signature, accepted_at, replaces_owners=True)
             return result
 
     def record_response_queries(
@@ -354,26 +411,29 @@ class AcceptedResponseService:
         payload_signature = canonical_payload_signature({"statement_ids": list(normalized_ids)})
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.RECORD_RESPONSE_QUERY, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] != ReceiptLookupOutcome.NEW:
+            if outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"response query accounting request cannot be applied: {request_id}")
             updated_artifacts = []
             effects = []
             for statement_id in normalized_ids:
                 current = self.internal_coordinator.repository.get_artifact(statement_id)
+                current_generation = current.get("generation", 0)
+                current_statistics = current.get("statistics", {})
                 updated = cached_response_artifact_to_dict(current)
-                updated["generation"] = current["generation"] + 1
-                statistics = mapping_copy(updated["statistics"], "statistics")
-                statistics["query_count"] = current["statistics"]["query_count"] + 1
+                updated["generation"] = current_generation + 1
+                statistics = mapping_copy(updated.get("statistics", {}), "statistics")
+                statistics["query_count"] = current_statistics.get("query_count", 0) + 1
                 updated["statistics"] = statistics
                 artifact = cached_response_artifact_from_dict(updated)
                 updated_artifacts.append(artifact)
-                effects.append(artifact_generation_change(statement_id, current["generation"], artifact["generation"]))
+                effects.append(artifact_generation_change(statement_id, current_generation, artifact.get("generation", 0)))
             repository_candidate = self.internal_coordinator.repository.candidate_with_artifacts(tuple(updated_artifacts))
             recorded_at = self.receipt_time()
             receipt = mutation_receipt(
@@ -395,28 +455,31 @@ class AcceptedResponseService:
     def record_response_hit(self, statement_id: str, request_id: str) -> dict:
         """Increment one authoritative accepted-hit statistic and last-hit time."""
 
-        normalized_id = require_text(statement_id, "response hit statement_id", 256, allow_empty=False)
+        normalized_id = require_text(statement_id, "response hit statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
         payload_signature = canonical_payload_signature({"statement_id": normalized_id})
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.RECORD_RESPONSE_HIT, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] != ReceiptLookupOutcome.NEW:
+            if outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"response hit accounting request cannot be applied: {request_id}")
             current = self.internal_coordinator.repository.get_artifact(normalized_id)
+            current_generation = current.get("generation", 0)
             recorded_at = self.receipt_time()
             updated = cached_response_artifact_to_dict(current)
-            updated["generation"] = current["generation"] + 1
-            statistics = mapping_copy(updated["statistics"], "statistics")
-            statistics["hit_count"] = current["statistics"]["hit_count"] + 1
+            updated["generation"] = current_generation + 1
+            statistics = mapping_copy(updated.get("statistics", {}), "statistics")
+            statistics["hit_count"] = current.get("statistics", {}).get("hit_count", 0) + 1
             statistics["last_hit"] = recorded_at
             statistics["last_hit_available"] = True
             updated["statistics"] = statistics
             artifact = cached_response_artifact_from_dict(updated)
+            change = artifact_generation_change(normalized_id, current_generation, artifact.get("generation", 0))
             repository_candidate = self.internal_coordinator.repository.candidate_with_artifacts((artifact,))
             receipt = mutation_receipt(
                 sequence=self.internal_coordinator.next_receipt_sequence,
@@ -424,7 +487,7 @@ class AcceptedResponseService:
                 operation=MutationOperation.RECORD_RESPONSE_HIT,
                 payload_signature=payload_signature,
                 result_code=MutationResultCode.HIT_RECORDED,
-                affected_generations=(artifact_generation_change(normalized_id, current["generation"], artifact["generation"]),),
+                affected_generations=(change,),
                 result={"statement_id": normalized_id, "recorded_at": recorded_at},
                 completion_state=ReceiptCompletionState.COMPLETED,
                 created_at=recorded_at,
@@ -451,7 +514,7 @@ class AcceptedResponseService:
         normalized_accepted = require_text(
             accepted_statement_id,
             "resolution accepted_statement_id",
-            256,
+            MAX_ARTIFACT_ID_BYTES,
             allow_empty=True,
         )
         if normalized_accepted and normalized_accepted not in normalized_ids:
@@ -461,31 +524,34 @@ class AcceptedResponseService:
         )
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.FINALIZE_RESOLUTION_ACCOUNTING, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] != ReceiptLookupOutcome.NEW:
+            if outcome != ReceiptLookupOutcome.NEW:
                 raise ConflictError(f"resolution accounting request cannot be applied: {request_id}")
             recorded_at = self.receipt_time()
             updated_artifacts = []
             effects = []
             for statement_id in normalized_ids:
                 current = self.internal_coordinator.repository.get_artifact(statement_id)
+                current_generation = current.get("generation", 0)
+                current_statistics = current.get("statistics", {})
                 updated = cached_response_artifact_to_dict(current)
-                updated["generation"] = current["generation"] + 1
-                statistics = mapping_copy(updated["statistics"], "statistics")
-                statistics["query_count"] = current["statistics"]["query_count"] + 1
+                updated["generation"] = current_generation + 1
+                statistics = mapping_copy(updated.get("statistics", {}), "statistics")
+                statistics["query_count"] = current_statistics.get("query_count", 0) + 1
                 if statement_id == normalized_accepted:
-                    statistics["hit_count"] = current["statistics"]["hit_count"] + 1
+                    statistics["hit_count"] = current_statistics.get("hit_count", 0) + 1
                     statistics["last_hit"] = recorded_at
                     statistics["last_hit_available"] = True
                 updated["statistics"] = statistics
                 artifact = cached_response_artifact_from_dict(updated)
                 updated_artifacts.append(artifact)
-                effects.append(artifact_generation_change(statement_id, current["generation"], artifact["generation"]))
+                effects.append(artifact_generation_change(statement_id, current_generation, artifact.get("generation", 0)))
             repository_candidate = self.internal_coordinator.repository.candidate_with_artifacts(tuple(updated_artifacts))
             receipt = mutation_receipt(
                 sequence=self.internal_coordinator.next_receipt_sequence,
@@ -521,13 +587,13 @@ class AcceptedResponseService:
         target: LifecycleState,
         result_code: MutationResultCode,
     ) -> dict:
-        normalized_statement_id = require_text(statement_id, "lifecycle statement_id", 256, allow_empty=False)
+        normalized_statement_id = require_text(statement_id, "lifecycle statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
         if isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
             raise InvalidRequestError("expected_generation must be a positive integer")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("lifecycle reason must be a LifecycleMutationReason")
-        normalized_caller_id = require_text(caller_id, "lifecycle caller_id", 256, allow_empty=False)
-        normalized_detail = require_text(audit_detail, "lifecycle audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "lifecycle caller_id", MAX_CALLER_ID_BYTES, allow_empty=False)
+        normalized_detail = require_text(audit_detail, "lifecycle audit_detail", MAX_LIFECYCLE_AUDIT_DETAIL_BYTES, allow_empty=True)
         payload_signature = canonical_payload_signature(
             {
                 "statement_id": normalized_statement_id,
@@ -539,32 +605,34 @@ class AcceptedResponseService:
         )
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, mutation_operation, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+            if outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is already in progress: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+            if outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+            if outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
 
             current = self.internal_coordinator.repository.get_artifact(normalized_statement_id)
-            if current["generation"] != expected_generation:
+            current_generation = current.get("generation", 0)
+            if current_generation != expected_generation:
                 raise ConflictError(
                     f"artifact generation conflict for {normalized_statement_id}: "
-                    f"expected {expected_generation}, current {current['generation']}"
+                    f"expected {expected_generation}, current {current_generation}"
                 )
-            require_lifecycle_transition(current["lifecycle"], target, lifecycle_operation)
+            require_lifecycle_transition(current.get("lifecycle", LifecycleState.RETIRED), target, lifecycle_operation)
             occurred_at = self.receipt_time()
             updated = cached_response_artifact_to_dict(current)
-            updated["generation"] = current["generation"] + 1
+            updated["generation"] = current_generation + 1
             updated["lifecycle"] = target.value
-            updated_metadata = mapping_copy(updated["metadata"], "metadata")
-            updated_metadata["lifecycle_audit"] = {
+            updated_metadata = mapping_copy(updated.get("metadata", {}), "metadata")
+            updated_metadata[LIFECYCLE_AUDIT_KEY] = {
                 "operation": mutation_operation.value,
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,
@@ -574,12 +642,14 @@ class AcceptedResponseService:
             }
             updated["metadata"] = updated_metadata
             transitioned = cached_response_artifact_from_dict(updated)
+            transitioned_id = transitioned.get("statement_id", "")
+            transitioned_generation = transitioned.get("generation", 0)
             repository_candidate = self.internal_coordinator.repository.candidate_with_artifact(transitioned)
             result = {
-                "statement_id": transitioned["statement_id"],
-                "before_generation": current["generation"],
-                "generation": transitioned["generation"],
-                "lifecycle": transitioned["lifecycle"].value,
+                "statement_id": transitioned_id,
+                "before_generation": current_generation,
+                "generation": transitioned_generation,
+                "lifecycle": transitioned.get("lifecycle", target).value,
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,
                 "audit_detail": normalized_detail,
@@ -593,9 +663,9 @@ class AcceptedResponseService:
                 result_code=result_code,
                 affected_generations=(
                     artifact_generation_change(
-                        transitioned["statement_id"],
-                        current["generation"],
-                        transitioned["generation"],
+                        transitioned_id,
+                        current_generation,
+                        transitioned_generation,
                     ),
                 ),
                 result=result,
@@ -675,7 +745,7 @@ class AcceptedResponseService:
         normalized_statement_id = require_text(
             expected_statement_id,
             "supersession expected_statement_id",
-            256,
+            MAX_ARTIFACT_ID_BYTES,
             allow_empty=False,
         )
         if isinstance(expected_generation, bool) or not isinstance(expected_generation, int) or expected_generation < 1:
@@ -685,8 +755,13 @@ class AcceptedResponseService:
             raise InvalidRequestError("supersession replacement must have a new statement_id")
         if not isinstance(reason, LifecycleMutationReason):
             raise InvalidRequestError("supersession reason must be a LifecycleMutationReason")
-        normalized_caller_id = require_text(caller_id, "supersession caller_id", 256, allow_empty=False)
-        normalized_detail = require_text(audit_detail, "supersession audit_detail", 1_024, allow_empty=True)
+        normalized_caller_id = require_text(caller_id, "supersession caller_id", MAX_CALLER_ID_BYTES, allow_empty=False)
+        normalized_detail = require_text(
+            audit_detail,
+            "supersession audit_detail",
+            MAX_LIFECYCLE_AUDIT_DETAIL_BYTES,
+            allow_empty=True,
+        )
         payload_signature = canonical_payload_signature(
             {
                 "expected_statement_id": normalized_statement_id,
@@ -699,28 +774,34 @@ class AcceptedResponseService:
         )
         with self.internal_coordinator.mutation():
             lookup = self.internal_lookup(request_id, MutationOperation.SUPERSEDE_RESPONSE, payload_signature)
-            if lookup["outcome"] == ReceiptLookupOutcome.REPLAY:
+            outcome = lookup.get("outcome", ReceiptLookupOutcome.NEW)
+            if outcome == ReceiptLookupOutcome.REPLAY:
                 result = response_mutation_result(
                     receipt=receipt_lookup_receipt(lookup),
                     replayed=True,
                 )
                 return result
-            if lookup["outcome"] == ReceiptLookupOutcome.IN_PROGRESS:
+            if outcome == ReceiptLookupOutcome.IN_PROGRESS:
                 raise ConflictError(f"mutation request is already in progress: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.EXPIRED:
+            if outcome == ReceiptLookupOutcome.EXPIRED:
                 raise ConflictError(f"mutation request result expired and cannot be reapplied safely: {request_id}")
-            if lookup["outcome"] == ReceiptLookupOutcome.CONFLICT:
+            if outcome == ReceiptLookupOutcome.CONFLICT:
                 raise ConflictError(f"request_id is already associated with a different mutation: {request_id}")
 
             before = self.internal_coordinator.repository.trusted_state()
             current = self.internal_coordinator.repository.get_artifact(normalized_statement_id)
-            if current["generation"] != expected_generation:
+            current_generation = current.get("generation", 0)
+            if current_generation != expected_generation:
                 raise ConflictError(
                     f"artifact generation conflict for {normalized_statement_id}: "
-                    f"expected {expected_generation}, current {current['generation']}"
+                    f"expected {expected_generation}, current {current_generation}"
                 )
-            require_lifecycle_transition(current["lifecycle"], LifecycleState.SUPERSEDED, LifecycleOperation.SUPERSEDE)
-            before_artifacts = before["artifacts"]
+            require_lifecycle_transition(
+                current.get("lifecycle", LifecycleState.RETIRED),
+                LifecycleState.SUPERSEDED,
+                LifecycleOperation.SUPERSEDE,
+            )
+            before_artifacts = before.get("artifacts", {})
             if replacement.get("statement_id", "") in before_artifacts:
                 raise ConflictError(f"artifact statement_id already exists: {replacement.get('statement_id', '')}")
             conflicting_owners = set(response_collision_owner_ids(replacement, self.internal_coordinator))
@@ -730,8 +811,10 @@ class AcceptedResponseService:
                 raise ConflictError(f"replacement retrieval key collision with existing statement IDs: {named}")
 
             plan = self.internal_coordinator.repository.plan_admission(replacement, self.internal_admission_policy)
-            lineage_evicted = normalized_statement_id in plan["evicted_statement_ids"]
-            if plan["outcome"] == AdmissionOutcome.REJECTED_CAPACITY or lineage_evicted:
+            admission_outcome = plan.get("outcome", AdmissionOutcome.REJECTED_CAPACITY)
+            evicted_statement_ids = plan.get("evicted_statement_ids", ())
+            lineage_evicted = normalized_statement_id in evicted_statement_ids
+            if admission_outcome == AdmissionOutcome.REJECTED_CAPACITY or lineage_evicted:
                 result = {
                     "expected_statement_id": normalized_statement_id,
                     "expected_generation": expected_generation,
@@ -757,11 +840,11 @@ class AcceptedResponseService:
 
             occurred_at = self.receipt_time()
             updated_current = cached_response_artifact_to_dict(current)
-            updated_current["generation"] = current["generation"] + 1
+            updated_current["generation"] = current_generation + 1
             updated_current["lifecycle"] = LifecycleState.SUPERSEDED.value
             updated_current["superseded_by"] = replacement.get("statement_id", "")
-            updated_metadata = mapping_copy(updated_current["metadata"], "metadata")
-            updated_metadata["lifecycle_audit"] = {
+            updated_metadata = mapping_copy(updated_current.get("metadata", {}), "metadata")
+            updated_metadata[LIFECYCLE_AUDIT_KEY] = {
                 "operation": MutationOperation.SUPERSEDE_RESPONSE.value,
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,
@@ -772,29 +855,32 @@ class AcceptedResponseService:
             }
             updated_current["metadata"] = updated_metadata
             superseded = cached_response_artifact_from_dict(updated_current)
-            repository_candidate = repository_state_with_artifact_updates(plan["candidate"], (superseded,))
+            superseded_id = superseded.get("statement_id", "")
+            superseded_generation = superseded.get("generation", 0)
+            repository_candidate = repository_state_with_artifact_updates(plan.get("candidate", {}), (superseded,))
+            # Evicted IDs come from the live state the plan was built from.
             removed = tuple(
-                artifact_generation_change(statement_id, before_artifacts[statement_id]["generation"], 0)
-                for statement_id in plan["evicted_statement_ids"]
+                artifact_generation_change(statement_id, before_artifacts.get(statement_id, {}).get("generation", 0), 0)
+                for statement_id in evicted_statement_ids
             )
             affected_generations = normalize_artifact_generation_changes(
                 (
                     *removed,
                     artifact_generation_change(
-                        superseded["statement_id"],
-                        current["generation"],
-                        superseded["generation"],
+                        superseded_id,
+                        current_generation,
+                        superseded_generation,
                     ),
                     artifact_generation_change(replacement.get("statement_id", ""), 0, replacement.get("generation", 0)),
                 )
             )
             result = {
-                "superseded_statement_id": superseded["statement_id"],
-                "superseded_generation": superseded["generation"],
+                "superseded_statement_id": superseded_id,
+                "superseded_generation": superseded_generation,
                 "replacement_statement_id": replacement.get("statement_id", ""),
                 "replacement_generation": replacement.get("generation", 0),
-                "admission_outcome": plan["outcome"].value,
-                "evicted_statement_ids": list(plan["evicted_statement_ids"]),
+                "admission_outcome": admission_outcome.value,
+                "evicted_statement_ids": list(evicted_statement_ids),
                 "reason": reason.value,
                 "caller_id": normalized_caller_id,
                 "audit_detail": normalized_detail,

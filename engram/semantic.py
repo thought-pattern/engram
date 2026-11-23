@@ -1,6 +1,7 @@
 """Request-local semantic retrieval over accepted-response artifacts."""
 
-from collections.abc import Container, Iterable
+from collections.abc import Iterable
+from functools import partial as functools_partial
 from hashlib import sha256 as hashlib_sha256
 from itertools import batched as itertools_batched
 from logging import getLogger as logging_getLogger
@@ -10,17 +11,9 @@ from threading import Lock as threading_Lock
 
 from sentence_transformers import SentenceTransformer
 
-from engram.artifacts import LifecycleState, validate_cached_response_artifact
+from engram.artifacts import validate_cached_response_artifact
 from engram.config import semantic_config
-from engram.constants import (
-    APPROVED_SEMANTIC_ARTIFACT_SHA256,
-    APPROVED_SEMANTIC_BACKEND,
-    APPROVED_SEMANTIC_DIMENSION,
-    APPROVED_SEMANTIC_LICENSE_ID,
-    APPROVED_SEMANTIC_MODEL_ID,
-    APPROVED_SEMANTIC_MODEL_VERSION,
-    SEMANTIC_ARTIFACT_HASH_VERSION,
-)
+from engram.constants_artifacts import LifecycleState
 from engram.errors import InvalidRequestError
 from engram.identity import validate_scope_key
 from engram.resources import estimate_working_bytes
@@ -50,7 +43,7 @@ def model_artifact_sha256(path: Path) -> str:
     if not files:
         raise InvalidRequestError("semantic model artifact contains no files")
     digest = hashlib_sha256()
-    digest.update(f"engram-model-artifact-v{SEMANTIC_ARTIFACT_HASH_VERSION}\0".encode())
+    digest.update(b"engram-model-artifact\0")
     for file_path in files:
         if file_path.is_symlink():
             raise InvalidRequestError("semantic model artifact must not contain symbolic links")
@@ -60,22 +53,9 @@ def model_artifact_sha256(path: Path) -> str:
         digest.update(str(file_path.stat().st_size).encode())
         digest.update(b"\0")
         with file_path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            for chunk in iter(functools_partial(stream.read, 1024 * 1024), b""):
                 digest.update(chunk)
     result = digest.hexdigest()
-    return result
-
-
-def internal_artifact_identity(settings: dict, actual_sha256: str) -> dict:
-    result = {
-        "model_id": settings.get("model_id", ""),
-        "model_version": settings.get("model_version", ""),
-        "license_id": settings.get("license_id", ""),
-        "artifact_sha256": actual_sha256,
-        "backend": settings.get("backend", ""),
-        "dimension": settings.get("dimension", 0),
-        "normalization_version": settings.get("normalization_version", 0),
-    }
     return result
 
 
@@ -103,8 +83,8 @@ def normalize_embedding(value: object, dimension: int) -> tuple[float, ...]:
             raise InvalidRequestError("semantic model returned a non-finite embedding")
         try:
             number = float(item)
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError("semantic model returned a non-finite embedding") from error
+        except (TypeError, ValueError) as err:
+            raise InvalidRequestError("semantic model returned a non-finite embedding") from err
         if not math_isfinite(number):
             raise InvalidRequestError("semantic model returned a non-finite embedding")
         numbers.append(number)
@@ -203,11 +183,10 @@ def embedding_record(spec: dict, embedding: tuple[float, ...], identity: dict) -
         "ordinal": ordinal,
         "text": text,
         "model_id": identity.get("model_id", ""),
-        "model_version": identity.get("model_version", ""),
+        "model_revision": identity.get("model_revision", ""),
         "artifact_sha256": identity.get("artifact_sha256", ""),
         "backend": identity.get("backend", ""),
         "dimension": identity.get("dimension", 0),
-        "normalization_version": identity.get("normalization_version", 0),
         "embedding": embedding,
     }
     return result
@@ -223,63 +202,61 @@ class StandaloneSemanticRetriever:
     ) -> None:
         try:
             self.internal_settings = semantic_config(**dict(settings))
-        except (TypeError, ValueError) as error:
-            raise InvalidRequestError(str(error)) from error
+        except (TypeError, ValueError) as err:
+            raise InvalidRequestError(str(err)) from err
         injected_model = model != ()
+        settings = self.internal_settings
         self.internal_model: object = ()
-        self.internal_healthy = not self.internal_settings["enabled"]
+        self.internal_healthy = not settings.get("enabled", False)
         self.internal_last_error = ""
         self.internal_identity: dict = {}
-        if self.internal_settings["enabled"]:
+        if settings.get("enabled", False):
             try:
-                if not injected_model:
-                    approved_identity = {
-                        "model_id": APPROVED_SEMANTIC_MODEL_ID,
-                        "model_version": APPROVED_SEMANTIC_MODEL_VERSION,
-                        "license_id": APPROVED_SEMANTIC_LICENSE_ID,
-                        "artifact_sha256": APPROVED_SEMANTIC_ARTIFACT_SHA256,
-                        "backend": APPROVED_SEMANTIC_BACKEND,
-                        "dimension": APPROVED_SEMANTIC_DIMENSION,
-                    }
-                    if any(self.internal_settings[name] != expected for name, expected in approved_identity.items()):
-                        raise InvalidRequestError("semantic model identity is not approved")
-                model_path = Path(self.internal_settings["model_path"])
+                model_path = Path(settings.get("model_path", ""))
                 if not model_path.is_dir():
                     raise InvalidRequestError("semantic model artifact must be a directory")
-                if not (model_path / "LICENSE").is_file():
-                    raise InvalidRequestError("semantic model artifact is missing its license file")
                 actual_sha256 = model_artifact_sha256(model_path)
-                if actual_sha256 != self.internal_settings["artifact_sha256"]:
+                if actual_sha256 != settings.get("artifact_sha256", ""):
                     raise InvalidRequestError("semantic model artifact checksum mismatch")
                 selected_model = model
                 if not injected_model:
-                    if self.internal_settings.get("backend", "") != "native":
-                        raise RuntimeError(f"semantic backend is unavailable: {self.internal_settings.get('backend', "")}")
+                    if settings.get("backend", "") != "native":
+                        raise RuntimeError(f"semantic backend is unavailable: {settings.get('backend', '')}")
                     selected_model = SentenceTransformer(
-                        self.internal_settings.get("model_path", ""),
+                        settings.get("model_path", ""),
                         device="cpu",
                         local_files_only=True,
                         trust_remote_code=False,
                     )
-                if model_dimension(selected_model) != self.internal_settings["dimension"]:
+                if model_dimension(selected_model) != settings.get("dimension", 0):
                     raise InvalidRequestError("semantic model dimension mismatch")
                 self.internal_model = selected_model
-                self.internal_identity = internal_artifact_identity(self.internal_settings, actual_sha256)
+                self.internal_identity = {
+                    "model_id": settings.get("model_id", ""),
+                    "model_revision": settings.get("model_revision", ""),
+                    "license_id": settings.get("license_id", ""),
+                    "artifact_sha256": actual_sha256,
+                    "backend": settings.get("backend", ""),
+                    "dimension": settings.get("dimension", 0),
+                }
                 self.internal_healthy = True
-            except Exception as error:
-                logger.warning("Semantic retrieval model is unavailable", exc_info=error)
+            except Exception as err:
+                logger.warning("Semantic retrieval model is unavailable", exc_info=err)
                 self.internal_healthy = False
-                self.internal_last_error = type(error).__name__
-        # statement_id -> (artifact, {(origin, ordinal): record}). A record is a
-        # pure function of its artifact and this retriever's model, and a
-        # validated artifact never changes in place, so an entry checked by
-        # identity is always current. Similarity is still computed per request.
+                self.internal_last_error = type(err).__name__
+        # statement_id -> (artifact, {(origin, ordinal): record}, {text: embedding}).
+        # A record is a pure function of its artifact and this retriever's fixed
+        # model, and a validated artifact never changes in place, so an entry
+        # checked by identity is always current. An embedding depends only on its
+        # representation text and that model, so a new generation of the same
+        # statement keeps the embeddings of its unchanged texts and rebuilds only
+        # the record envelopes. Similarity is still computed per request.
         self.internal_record_lock = threading_Lock()
-        self.internal_records: dict[str, tuple[dict, dict[tuple[str, int], dict]]] = {}
+        self.internal_records: dict[str, tuple[dict, dict[tuple[str, int], dict], dict[str, tuple[float, ...]]]] = {}
 
     @property
     def enabled(self) -> bool:
-        result = self.internal_settings["enabled"]
+        result = self.internal_settings.get("enabled", False)
         return result
 
     @property
@@ -310,34 +287,59 @@ class StandaloneSemanticRetriever:
         )
         return result
 
+    def artifact_entry(self, artifact: dict, statement_id: str) -> tuple:
+        """Return the cache entry for this artifact object; call with the record lock held.
+
+        A different object for the same statement, such as a statistics-only generation,
+        replaces the entry and carries forward the embedding of every representation text
+        it still has. Records are rebuilt because they carry generation, scope, and lifecycle.
+        """
+        entry = self.internal_records.get(statement_id, ())
+        if entry and entry[0] is artifact:
+            return entry
+        texts = {spec.get("text", "") for spec in representation_specs(artifact, self.internal_settings)}
+        embeddings = {text: embedding for text, embedding in entry[2].items() if text in texts} if entry else {}
+        result = (artifact, {}, embeddings)
+        self.internal_records[statement_id] = result
+        return result
+
     def cached_records(self, pairs: tuple[tuple[dict, dict], ...]) -> tuple[dict, ...]:
-        """Return records for (artifact, spec) pairs, encoding only those not already cached."""
+        """Return records for (artifact, spec) pairs, encoding only representation text not yet embedded."""
         records: list[dict] = []
+        reusable: list[tuple[int, tuple[float, ...]]] = []
         missing: list[int] = []
         with self.internal_record_lock:
             for index, (artifact, spec) in enumerate(pairs):
-                entry = self.internal_records.get(spec.get("statement_id", ""))
-                record = entry[1].get((spec.get("origin", ""), spec.get("ordinal", 0))) if entry and entry[0] is artifact else None
-                records.append(record if record is not None else {})
-                if record is None:
+                entry = self.artifact_entry(artifact, spec.get("statement_id", ""))
+                record = entry[1].get((spec.get("origin", ""), spec.get("ordinal", 0)), {})
+                records.append(record)
+                if record:
+                    continue
+                embedding = entry[2].get(spec.get("text", ""), ())
+                if embedding:
+                    reusable.append((index, embedding))
+                else:
                     missing.append(index)
+        built = [(index, embedding_record(pairs[index][1], embedding, self.internal_identity)) for index, embedding in reusable]
         if missing:
             computed = self.records(tuple(pairs[index][1] for index in missing))
+            built.extend(zip(missing, computed, strict=True))
+        if built:
             with self.internal_record_lock:
-                for index, record in zip(missing, computed, strict=True):
+                for index, record in built:
                     artifact, spec = pairs[index]
-                    statement_id = spec.get("statement_id", "")
-                    entry = self.internal_records.get(statement_id)
-                    if entry is None or entry[0] is not artifact:
-                        entry = (artifact, {})
-                        self.internal_records[statement_id] = entry
+                    entry = self.artifact_entry(artifact, spec.get("statement_id", ""))
                     entry[1][(spec.get("origin", ""), spec.get("ordinal", 0))] = record
+                    entry[2][record.get("text", "")] = record.get("embedding", ())
                     records[index] = record
         result = tuple(records)
         return result
 
-    def retain(self, statement_ids: Container[str]) -> None:
-        """Drop cached records for artifacts that are no longer stored."""
+    def retain(self, statement_ids: dict) -> None:
+        """Drop cached records for artifacts that are no longer stored.
+
+        ``statement_ids`` is the repository's live artifact map; only its keys are consulted.
+        """
         with self.internal_record_lock:
             for statement_id in [value for value in self.internal_records if value not in statement_ids]:
                 del self.internal_records[statement_id]
@@ -421,11 +423,10 @@ class StandaloneSemanticRetriever:
 
         corpus_record_count = 0
         largest_record_working_bytes = 0
-        # The budget pass keeps its pairs, so the scan below reuses them instead
-        # of deriving (and validating) every specification a second time.
-        pairs: list[tuple[dict, dict]] = []
-        for artifact, spec in scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts):
-            pairs.append((artifact, spec))
+        # The budget pass counts and sizes every representation without retaining it.
+        # The scan derives them again one batch at a time, so request memory is the
+        # query, one batch, and the retained shortlist however large the scope is.
+        for _, spec in scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts):
             corpus_record_count += 1
             if corpus_record_count > settings.get("max_records", 0):
                 result = {
@@ -481,7 +482,8 @@ class StandaloneSemanticRetriever:
         retained_by_statement: dict[str, dict] = {}
         scanned_records = 0
         peak_working_memory = query_memory
-        for pair_batch in itertools_batched(pairs, batch_capacity):
+        scan_pairs = scoped_representation_specs(artifacts, normalized_scope, settings, trusted_artifacts)
+        for pair_batch in itertools_batched(scan_pairs, batch_capacity):
             batch_working_bytes = sum(semantic_record_working_bytes(spec, dimension) for _, spec in pair_batch)
             records = self.cached_records(pair_batch)
             peak_working_memory = max(

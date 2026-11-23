@@ -221,3 +221,17 @@ data/artifacts/
 
 # Local evaluation corpora, harnesses, and generated benchmark results.
 eval/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.apdisk

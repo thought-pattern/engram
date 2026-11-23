@@ -2,34 +2,35 @@
 
 from datetime import UTC, datetime, timedelta
 
-from pytest import MonkeyPatch as pytest_MonkeyPatch, raises as pytest_raises
+from pytest import raises as pytest_raises
 
-from engram import eviction, metrics, pipeline, sessions
+from engram import metrics, pipeline, sessions
 from engram.config import engram_config
-from engram.constants import SessionOverflow, Tier
+from engram.constants import SessionOverflow
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.models import record_statement_hit, record_statement_query, session_update_context
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
-def test_component_preflight_requires_offline_nltk_resources(monkeypatch: pytest_MonkeyPatch) -> None:
-    monkeypatch.setattr("engram.core.ensure_nltk_data", lambda download=False: [("corpora/missing", "missing")])
+def test_component_preflight_requires_offline_nltk_resources(monkeypatch) -> None:
+    monkeypatch.setattr("engram.nltk_data.ensure_nltk_data", lambda download=False: [("corpora/missing", "missing")])
 
     with pytest_raises(ValueError, match="required NLTK resources are unavailable: missing"):
         Engram()
 
 
 def test_component_preflight_reports_nltk_readiness() -> None:
-    assert Engram().component_status["nltk"] == {"enabled": True, "ready": True}
+    assert Engram().component_status.get("nltk", {}) == {"enabled": True, "ready": True}
 
 
 def test_component_preflight_reports_disabled_sparse_readiness_independently() -> None:
     engine = Engram()
 
-    assert engine.component_status["sparse"] == {"enabled": False, "ready": False}
+    assert engine.component_status.get("sparse", {}) == {"enabled": False, "ready": False}
 
 
-"""Tests for statement storage."""
+# Tests for statement storage.
 
 
 def test_engram_store_store_basic() -> None:
@@ -38,6 +39,26 @@ def test_engram_store_store_basic() -> None:
 
     assert stmt_id.startswith("stmt_")
     assert metrics.get_statement_count(engram) == 1
+
+
+def test_engram_store_and_sessions_take_identity_and_time_from_the_injected_sources() -> None:
+    moment = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)
+    identifiers = iter(("first", "second"))
+    engram = Engram(clock=lambda: moment, identifier_source=lambda: next(identifiers))
+
+    stmt_id = engram.store("Hello world")
+    session_id = sessions.start_session(engram)
+
+    assert stmt_id == "stmt_first"
+    assert engram.get_statement(stmt_id).get("created_at", datetime.min) == moment
+    assert session_id == "sess_second"
+    with engram.session_lock:
+        assert sessions.get_session(engram, session_id).get("created_at", datetime.min) == moment
+
+
+def test_engram_rejects_an_identifier_source_that_is_not_callable() -> None:
+    with pytest_raises(ValueError, match="identifier_source"):
+        Engram(identifier_source="fixed")
 
 
 def test_engram_store_store_static() -> None:
@@ -93,7 +114,7 @@ def test_engram_store_duplicate_statement_id_is_rejected_without_mutation() -> N
     assert not engram.pattern_query("second")
 
 
-"""Tests for query operations."""
+# Tests for query operations.
 
 
 def test_engram_query_query_basic() -> None:
@@ -102,8 +123,9 @@ def test_engram_query_query_basic() -> None:
 
     result = engram.query("What is the capital of France?")
 
-    assert len(result["matches"]) == 1
-    assert "Paris" in result["matches"][0][0]["text"]
+    matches = result.get("matches", [])
+    assert len(matches) == 1
+    assert "Paris" in matches[0][0].get("text", "")
 
 
 def test_engram_query_query_multiple_matches() -> None:
@@ -114,7 +136,7 @@ def test_engram_query_query_multiple_matches() -> None:
 
     result = engram.query("France Paris")
 
-    assert len(result["matches"]) >= 2
+    assert len(result.get("matches", [])) >= 2
 
 
 def test_engram_query_query_limit() -> None:
@@ -124,7 +146,7 @@ def test_engram_query_query_limit() -> None:
 
     result = engram.query("France", limit=3)
 
-    assert len(result["matches"]) == 3
+    assert len(result.get("matches", [])) == 3
 
 
 def test_engram_query_query_no_matches() -> None:
@@ -133,7 +155,8 @@ def test_engram_query_query_no_matches() -> None:
 
     result = engram.query("quantum tensor")
 
-    assert len(result["matches"]) == 0
+    assert "matches" in result
+    assert len(result.get("matches", [])) == 0
 
 
 def test_engram_query_query_synonym_match_scores_discounted() -> None:
@@ -143,8 +166,9 @@ def test_engram_query_query_synonym_match_scores_discounted() -> None:
 
     with_synonym = engram.query("car")
 
-    assert len(with_synonym["matches"]) == 1
-    _, score = with_synonym["matches"][0]
+    synonym_matches = with_synonym.get("matches", [])
+    assert len(synonym_matches) == 1
+    _, score = synonym_matches[0]
     assert 0.0 < score < 0.5  # discounted below a same-shape exact match
 
 
@@ -154,8 +178,10 @@ def test_engram_query_query_stopwords_only() -> None:
 
     result = engram.query("the is are")
 
-    assert len(result["keywords"]) == 0
-    assert len(result["matches"]) == 0
+    assert "keywords" in result
+    assert "matches" in result
+    assert len(result.get("keywords", [])) == 0
+    assert len(result.get("matches", [])) == 0
 
 
 def test_engram_query_query_increments_query_count() -> None:
@@ -181,10 +207,10 @@ def test_engram_query_query_with_session_context() -> None:
     result = engram.query("What is its population?", context_id=session_id)
 
     # Context expansion adds "Paris" and "France" keywords
-    assert len(result["keywords"]) > 1
+    assert len(result.get("keywords", [])) > 1
 
 
-"""Tests for hit recording."""
+# Tests for hit recording.
 
 
 def test_engram_record_hit_record_hit() -> None:
@@ -215,8 +241,9 @@ def test_engram_record_hit_query_records_statement_candidacy() -> None:
     engram.query("capital of France")
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["query_count"] == 1
-    assert stmt["hit_count"] == 0
+    assert stmt.get("query_count", 0) == 1
+    assert "hit_count" in stmt
+    assert stmt.get("hit_count", 0) == 0
 
 
 def test_engram_record_hit_record_hit_with_statement_id() -> None:
@@ -225,11 +252,12 @@ def test_engram_record_hit_record_hit_with_statement_id() -> None:
     stmt_id = engram.store("Paris is the capital of France")
 
     result = engram.query("capital of France")
-    engram.record_hit(result["keywords"], statement_id=stmt_id)
+    assert "keywords" in result
+    engram.record_hit(result.get("keywords", []), statement_id=stmt_id)
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["hit_count"] == 1
-    assert stmt["last_hit"]
+    assert stmt.get("hit_count", 0) == 1
+    assert stmt.get("last_hit_available", False) is True
 
 
 def test_engram_record_hit_record_hit_unknown_statement_id() -> None:
@@ -251,55 +279,22 @@ def test_engram_record_hit_pattern_query_records_statement_usage() -> None:
     engram.pattern_query("hello")
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["query_count"] == 1
-    assert stmt["hit_count"] == 1
-    assert stmt["last_hit"]
+    assert stmt.get("query_count", 0) == 1
+    assert stmt.get("hit_count", 0) == 1
+    assert stmt.get("last_hit_available", False) is True
 
 
-"""Tests for eviction."""
-
-
-def test_engram_eviction_evict_manual() -> None:
+def test_engram_evicting_without_the_store_locks_is_refused() -> None:
     engram = Engram()
     engram.store("First", tier=Tier.DYNAMIC)
-    engram.store("Second", tier=Tier.DYNAMIC)
 
-    result = eviction.evict(engram)
+    with pytest_raises(RuntimeError, match="mutation_lock and statement_lock"):
+        engram.evict_least_recent_dynamic()
 
-    assert result is True
     assert metrics.get_dynamic_count(engram) == 1
 
 
-def test_engram_eviction_evict_empty() -> None:
-    engram = Engram()
-    result = eviction.evict(engram)
-    assert result is False
-
-
-def test_engram_eviction_evict_only_static() -> None:
-    engram = Engram()
-    engram.store("Static", tier=Tier.STATIC)
-
-    result = eviction.evict(engram)
-
-    assert result is False
-    assert metrics.get_static_count(engram) == 1
-
-
-def test_engram_eviction_clear_dynamic() -> None:
-    engram = Engram()
-    engram.store("Static", tier=Tier.STATIC)
-    engram.store("Dynamic 1", tier=Tier.DYNAMIC)
-    engram.store("Dynamic 2", tier=Tier.DYNAMIC)
-
-    count = eviction.clear_dynamic(engram)
-
-    assert count == 2
-    assert metrics.get_static_count(engram) == 1
-    assert metrics.get_dynamic_count(engram) == 0
-
-
-"""Tests for deterministic LRU eviction."""
+# Tests for deterministic LRU eviction.
 
 
 def test_eviction_lru_evicts_oldest_when_no_entry_was_reused() -> None:
@@ -332,9 +327,9 @@ def test_eviction_lru_preserves_recently_used_entries() -> None:
     stmt2 = engram.get_statement(id2)
     stmt3 = engram.get_statement(id3)
     if stmt2:
-        record_statement_hit(stmt2)
+        record_statement_hit(stmt2, datetime.now(UTC))
     if stmt3:
-        record_statement_hit(stmt3)
+        record_statement_hit(stmt3, datetime.now(UTC))
 
     # Store fourth, should evict first (never hit, so oldest)
     engram.store("Fourth", tier=Tier.DYNAMIC)
@@ -356,10 +351,10 @@ def test_eviction_lru_uses_recency_not_total_hit_count() -> None:
     stmt2 = engram.get_statement(id2)
     stmt3 = engram.get_statement(id3)
     if stmt2:
-        record_statement_hit(stmt2)
-        record_statement_hit(stmt2)
+        record_statement_hit(stmt2, datetime.now(UTC))
+        record_statement_hit(stmt2, datetime.now(UTC))
     if stmt3:
-        record_statement_hit(stmt3)
+        record_statement_hit(stmt3, datetime.now(UTC))
 
     # First was never used, so it is the LRU victim.
     engram.store("Fourth", tier=Tier.DYNAMIC)
@@ -386,19 +381,19 @@ def test_eviction_lru_ignores_hit_rate_when_ordering_candidates() -> None:
         # 10 queries, 1 hit = 0.1 hit rate
         for _ in range(10):
             record_statement_query(stmt1)
-        record_statement_hit(stmt1)
+        record_statement_hit(stmt1, datetime.now(UTC))
     if stmt2:
         # 10 queries, 5 hits = 0.5 hit rate
         for _ in range(10):
             record_statement_query(stmt2)
         for _ in range(5):
-            record_statement_hit(stmt2)
+            record_statement_hit(stmt2, datetime.now(UTC))
     if stmt3:
         # 10 queries, 8 hits = 0.8 hit rate
         for _ in range(10):
             record_statement_query(stmt3)
         for _ in range(8):
-            record_statement_hit(stmt3)
+            record_statement_hit(stmt3, datetime.now(UTC))
 
     # First has the oldest last-hit timestamp, so LRU evicts it.
     engram.store("Fourth", tier=Tier.DYNAMIC)
@@ -425,19 +420,19 @@ def test_eviction_lru_has_no_hit_rate_protection() -> None:
         for _ in range(10):
             record_statement_query(stmt1)
         for _ in range(2):
-            record_statement_hit(stmt1)  # 0.2 hit rate
+            record_statement_hit(stmt1, datetime.now(UTC))  # 0.2 hit rate
 
     if stmt2:
         for _ in range(10):
             record_statement_query(stmt2)
         for _ in range(5):
-            record_statement_hit(stmt2)  # 0.5 hit rate
+            record_statement_hit(stmt2, datetime.now(UTC))  # 0.5 hit rate
 
     if stmt3:
         for _ in range(10):
             record_statement_query(stmt3)
         for _ in range(5):
-            record_statement_hit(stmt3)  # 0.5 hit rate
+            record_statement_hit(stmt3, datetime.now(UTC))  # 0.5 hit rate
 
     # Hit rate does not create durable protection; first is still least recent.
     engram.store("Fourth", tier=Tier.DYNAMIC)
@@ -447,7 +442,7 @@ def test_eviction_lru_has_no_hit_rate_protection() -> None:
     assert engram.get_statement(id3)
 
 
-"""Tests for session management."""
+# Tests for session management.
 
 
 def test_engram_sessions_create_session() -> None:
@@ -469,33 +464,45 @@ def test_engram_sessions_create_session_with_metadata() -> None:
     engram = Engram()
     sessions.start_session(engram, session_id="test", metadata={"user_id": "123"})
 
-    session = sessions.get_session(engram, "test")
-    assert session["metadata"]["user_id"] == "123"
+    with engram.session_lock:
+        session = sessions.get_session(engram, "test")
+        assert session.get("metadata", {}).get("user_id", "") == "123"
 
 
 def test_engram_sessions_get_session() -> None:
     engram = Engram()
     sessions.start_session(engram, session_id="test")
 
-    session = sessions.get_session(engram, "test")
+    with engram.session_lock:
+        session = sessions.get_session(engram, "test")
 
-    assert session
-    assert session["session_id"] == "test"
+        assert session
+        assert session.get("session_id", "") == "test"
+
+
+def test_engram_sessions_get_session_requires_the_session_lock() -> None:
+    engram = Engram()
+    sessions.start_session(engram, session_id="test")
+
+    with pytest_raises(RuntimeError, match="session_lock"):
+        sessions.get_session(engram, "test")
 
 
 def test_engram_sessions_get_session_create_if_missing() -> None:
     engram = Engram()
 
-    session = sessions.get_session(engram, "new_session", create_if_missing=True)
+    with engram.session_lock:
+        session = sessions.get_session(engram, "new_session", create_if_missing=True)
 
-    assert session
-    assert session["session_id"] == "new_session"
+        assert session
+        assert session.get("session_id", "") == "new_session"
 
 
 def test_engram_sessions_get_session_not_found() -> None:
     engram = Engram()
 
-    session = sessions.get_session(engram, "nonexistent", create_if_missing=False)
+    with engram.session_lock:
+        session = sessions.get_session(engram, "nonexistent", create_if_missing=False)
 
     assert not session
 
@@ -506,8 +513,9 @@ def test_engram_sessions_update_session_context() -> None:
 
     sessions.update_session_context(engram, "test", "Previous response")
 
-    session = sessions.get_session(engram, "test")
-    assert session["previous_response"] == "Previous response"
+    with engram.session_lock:
+        session = sessions.get_session(engram, "test")
+        assert session.get("previous_response", "") == "Previous response"
 
 
 def test_engram_sessions_update_session_context_not_found() -> None:
@@ -540,11 +548,12 @@ def test_engram_sessions_expire_sessions() -> None:
     sessions.start_session(engram, session_id="old")
     sessions.start_session(engram, session_id="new")
 
-    # Manually set old session's last_active to past
-    old_session = sessions.get_session(engram, "old")
-    old_session["last_active"] = datetime.now(UTC) - timedelta(hours=2)
+    now = datetime.now(UTC)
+    with engram.session_lock:
+        old_session = sessions.get_session(engram, "old")
+        old_session["last_active"] = now - timedelta(hours=2)
 
-    count = sessions.expire_sessions(engram, inactive_threshold=timedelta(hours=1))
+    count = sessions.expire_sessions(engram, now, inactive_threshold=timedelta(hours=1))
 
     assert count == 1
     assert metrics.get_session_count(engram) == 1
@@ -566,9 +575,9 @@ def test_engram_sessions_list_sessions_filtered() -> None:
     sessions.start_session(engram, session_id="old")
     sessions.start_session(engram, session_id="new")
 
-    # Set old session to past
-    old_session = sessions.get_session(engram, "old")
-    old_session["last_active"] = datetime.now(UTC) - timedelta(hours=2)
+    with engram.session_lock:
+        old_session = sessions.get_session(engram, "old")
+        old_session["last_active"] = datetime.now(UTC) - timedelta(hours=2)
 
     session_list = sessions.list_sessions(engram, active_since=datetime.now(UTC) - timedelta(hours=1))
 
@@ -584,7 +593,8 @@ def test_engram_sessions_session_limit_lru() -> None:
     sessions.start_session(engram, session_id="third")
 
     assert metrics.get_session_count(engram) == 2
-    assert not sessions.get_session(engram, "first", create_if_missing=False)
+    with engram.session_lock:
+        assert not sessions.get_session(engram, "first", create_if_missing=False)
 
 
 def test_engram_sessions_session_limit_reject() -> None:
@@ -598,7 +608,7 @@ def test_engram_sessions_session_limit_reject() -> None:
         sessions.start_session(engram, session_id="third")
 
 
-"""Tests for process-memory lifetime."""
+# Tests for process-memory lifetime.
 
 
 def test_new_process_memory_starts_empty() -> None:
@@ -618,11 +628,11 @@ def test_process_memory_keeps_runtime_configuration_without_serializing_it() -> 
     config = engram_config(capacity=123, session_overflow=SessionOverflow.REJECT)
     engram = Engram(config=config)
 
-    assert engram.config.get("capacity") == 123
-    assert engram.config.get("session_overflow") == SessionOverflow.REJECT
+    assert engram.config.get("capacity", 0) == 123
+    assert engram.config.get("session_overflow", SessionOverflow.LRU) == SessionOverflow.REJECT
 
 
-"""Tests for initialization patterns."""
+# Tests for initialization patterns.
 
 
 def test_engram_initialization_load_corpus() -> None:
@@ -678,7 +688,7 @@ def test_static_data_validation_precedes_mutation() -> None:
     assert engram.statements == []
 
 
-"""Tests for metrics."""
+# Tests for metrics.
 
 
 def test_engram_metrics_get_metrics() -> None:
@@ -690,11 +700,11 @@ def test_engram_metrics_get_metrics() -> None:
 
     metric_data = metrics.get_metrics(engram)
 
-    assert metric_data["statement_count"] == 2
-    assert metric_data["static_count"] == 1
-    assert metric_data["dynamic_count"] == 1
-    assert metric_data["session_count"] == 1
-    assert metric_data["query_count"] == 1
+    assert metric_data.get("statement_count", 0) == 2
+    assert metric_data.get("static_count", 0) == 1
+    assert metric_data.get("dynamic_count", 0) == 1
+    assert metric_data.get("session_count", 0) == 1
+    assert metric_data.get("query_count", 0) == 1
 
 
 def test_engram_metrics_overall_hit_rate() -> None:
@@ -708,94 +718,7 @@ def test_engram_metrics_overall_hit_rate() -> None:
     assert metrics.get_overall_hit_rate(engram) == 0.5
 
 
-def test_engram_metrics_get_low_hit_keywords() -> None:
-    engram = Engram()
-    engram.store("Paris France")
-
-    # Simulate many queries with few hits
-    for _ in range(20):
-        engram.query("Paris")
-    engram.record_hit(["paris"])
-
-    results = metrics.get_low_hit_keywords(engram, min_queries=10, max_hit_rate=0.2)
-
-    assert len(results) >= 1
-
-
-def test_engram_metrics_get_zero_hit_keywords() -> None:
-    engram = Engram()
-    engram.store("Paris France")
-
-    for _ in range(15):
-        engram.query("Paris")
-    # No hits recorded
-
-    results = metrics.get_zero_hit_keywords(engram, min_queries=10)
-
-    assert len(results) >= 1
-
-
-def test_engram_metrics_get_coverage_gaps() -> None:
-    engram = Engram()
-    engram.store("Paris France")
-
-    # Generate queries with some hits
-    for _ in range(20):
-        engram.query("Paris")
-    # Record only 2 hits (10% hit rate)
-    engram.record_hit(["paris"])
-    engram.record_hit(["paris"])
-
-    results = metrics.get_coverage_gaps(engram, min_queries=10, max_hit_rate=0.2)
-
-    assert len(results) >= 1
-    assert results[0]["keyword"] == "paris"
-    assert results[0]["queries"] == 20
-    assert results[0]["hits"] == 2
-    assert results[0]["hit_rate"] == 0.1
-
-
-def test_engram_metrics_get_coverage_report() -> None:
-    engram = Engram()
-    engram.store("Hello world")
-    engram.store("Goodbye world")
-
-    # Generate some query activity
-    for _ in range(10):
-        engram.query("hello")
-        engram.record_hit(["hello"])
-    for _ in range(10):
-        engram.query("goodbye")
-        # No hits for goodbye
-
-    report = metrics.get_coverage_report(engram)
-
-    assert "total_keywords" in report
-    assert "keywords_with_hits" in report
-    assert "keywords_zero_hits" in report
-    assert "overall_hit_rate" in report
-    assert "coverage_gaps" in report
-    assert "top_performing" in report
-    assert "recommendations" in report
-
-
-def test_engram_metrics_get_coverage_report_recommendations() -> None:
-    engram = Engram()
-    # Store statement with keyword that will have queries but no hits
-    engram.store("The missing link information")
-
-    # Generate queries for the keyword (keyword must exist in stored content)
-    for _ in range(15):
-        engram.query("missing link")
-    # No hits recorded - simulates gap in knowledge base
-
-    report = metrics.get_coverage_report(engram)
-
-    # Should recommend adding categories for zero-hit keywords
-    assert len(report["recommendations"]) >= 1
-
-
-"""Tests for context-aware pattern matching with that/topic."""
+# Tests for context-aware pattern matching with that/topic.
 
 
 def test_engram_context_matching_pattern_with_topic() -> None:
@@ -813,13 +736,15 @@ def test_engram_context_matching_pattern_with_topic() -> None:
     assert result[2] == "General info"
 
     # Set topic in session
-    session = sessions.get_session(engram, session_id)
-    session["predicates"]["topic"] = "WEATHER"
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        predicates = session.get("predicates", {})
+        predicates["topic"] = "WEATHER"
 
     # Now weather-specific pattern wins
     result = engram.pattern_query("what is it", context_id=session_id)
     assert result
-    assert result[0]["text"] == "Weather info"
+    assert result[0].get("text", "") == "Weather info"
 
 
 def test_engram_context_matching_pattern_with_that() -> None:
@@ -837,8 +762,9 @@ def test_engram_context_matching_pattern_with_that() -> None:
     assert result[2] == "General yes"
 
     # Simulate previous response
-    session = sessions.get_session(engram, session_id)
-    session_update_context(session, "Do you like pizza?")
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "Do you like pizza?", moment=engram.clock())
 
     # Now that-specific pattern wins
     result = engram.pattern_query("yes", context_id=session_id)
@@ -857,9 +783,11 @@ def test_engram_context_matching_pattern_with_topic_and_that() -> None:
     engram.store("General", pattern="HELLO")
 
     # Test with full context
-    session = sessions.get_session(engram, session_id)
-    session["predicates"]["topic"] = "GREETINGS"
-    session_update_context(session, "Hi there!")
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        predicates = session.get("predicates", {})
+        predicates["topic"] = "GREETINGS"
+        session_update_context(session, "Hi there!", moment=engram.clock())
 
     result = engram.pattern_query("hello", context_id=session_id)
     assert result
@@ -880,8 +808,9 @@ def test_engram_context_matching_thatstar_in_template() -> None:
     )
 
     # Set up that context
-    session = sessions.get_session(engram, session_id)
-    session_update_context(session, "Do you like pizza?")
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "Do you like pizza?", moment=engram.clock())
 
     result = engram.pattern_query("yes", context_id=session_id)
     assert result
@@ -892,8 +821,9 @@ def test_engram_context_matching_that_expands_contractions() -> None:
     engram = Engram()
     session_id = sessions.start_session(engram)
     engram.store("Yes I am.", pattern="YES", that="I AM *")
-    session = sessions.get_session(engram, session_id)
-    session_update_context(session, "I'm ENGRAM.")
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "I'm ENGRAM.", moment=engram.clock())
 
     result = engram.pattern_query("yes", context_id=session_id)
 
@@ -906,8 +836,9 @@ def test_engram_context_matching_redirect_keeps_that() -> None:
     session_id = sessions.start_session(engram)
     engram.store("Pizza follow-up", pattern="YES", that="DO YOU LIKE PIZZA")
     engram.store("", pattern="SURE", template={"redirect": "YES"})
-    session = sessions.get_session(engram, session_id)
-    session_update_context(session, "Do you like pizza?")
+    with engram.session_lock:
+        session = sessions.get_session(engram, session_id)
+        session_update_context(session, "Do you like pizza?", moment=engram.clock())
 
     result = engram.pattern_query("sure", context_id=session_id)
 
@@ -931,11 +862,12 @@ def test_engram_redirect_reaches_a_learned_fact_alias() -> None:
     pipeline.chat(engram, "Sushi is good.", user_id="Robin")
     engram.store("", pattern="WHAT TASTES GOOD", template={"redirect": "what is good"})
 
-    assert engram.pattern_query("What is good?")[2] == "Sushi is good."
-    result = engram.pattern_query("What tastes good?")
+    assert engram.pattern_query("What is good?", user_id="Robin")[2] == "Sushi is good."
+    result = engram.pattern_query("What tastes good?", user_id="Robin")
 
     assert result
     assert result[2] == "Sushi is good."
+    assert engram.pattern_query("What tastes good?", user_id="Alex")[2] == "Go on."
 
 
 def test_engram_context_matching_set_topic_applies_to_the_next_sentence() -> None:
@@ -969,42 +901,24 @@ def test_engram_context_matching_context_remains_available_in_process() -> None:
     assert found
 
 
-"""Tests for word sets and bot properties."""
+# Tests for word sets and bot properties.
 
 
-def test_engram_sets_and_bot_properties_add_and_get_set() -> None:
-    """Test adding and retrieving word sets."""
+def test_engram_sets_and_bot_properties_replace_and_read_sets() -> None:
+    """The matcher's word sets change only through replace_sets and read back as copies."""
     engram = Engram()
-    engram.sets["colors"] = ["red", "blue", "green"]
+    engram.pattern_matcher.replace_sets({"colors": ["red", "blue", "green"], "sizes": ["big"]})
 
-    assert engram.sets.get("colors") == ["red", "blue", "green"]
-    assert engram.sets.get("unknown", []) == []
-
-
-def test_engram_sets_and_bot_properties_remove_set() -> None:
-    """Test removing word sets."""
-    engram = Engram()
-    engram.sets["colors"] = ["red", "blue"]
-
-    del engram.sets["colors"]
-    assert engram.sets.get("colors", []) == []
-
-
-def test_engram_sets_and_bot_properties_list_sets() -> None:
-    """Test listing all set names."""
-    engram = Engram()
-    engram.sets["colors"] = ["red"]
-    engram.sets["sizes"] = ["big"]
-
-    sets = list(engram.sets.keys())
-    assert "colors" in sets
-    assert "sizes" in sets
+    word_sets = engram.pattern_matcher.word_sets()
+    assert word_sets == {"colors": ["red", "blue", "green"], "sizes": ["big"]}
+    word_sets.get("colors", []).append("purple")
+    assert engram.pattern_matcher.word_sets().get("colors", []) == ["red", "blue", "green"]
 
 
 def test_engram_sets_and_bot_properties_set_pattern_matching() -> None:
     """Test {set:name} pattern matching through Engram."""
     engram = Engram()
-    engram.sets["color"] = ["red", "blue", "green"]
+    engram.pattern_matcher.replace_sets({"color": ["red", "blue", "green"]})
     engram.store("{star1} is a nice color!", pattern="I LIKE {set:color}")
 
     result = engram.pattern_query("i like blue")
@@ -1022,24 +936,24 @@ def test_engram_sets_and_bot_properties_bot_property_get_set() -> None:
     engram = Engram()
 
     # Default properties
-    assert engram.bot_properties.get("name") == "ENGRAM"
+    assert engram.pattern_matcher.bot_properties().get("name", "") == "ENGRAM"
 
     # Custom property
-    engram.bot_properties["master"] = "Alice"
-    assert engram.bot_properties.get("master") == "Alice"
-    assert engram.bot_properties.get("unknown", "") == ""
+    engram.pattern_matcher.replace_bot_properties({**engram.pattern_matcher.bot_properties(), "master": "Alice"})
+    assert engram.pattern_matcher.bot_properties().get("master", "") == "Alice"
+    assert engram.pattern_matcher.bot_properties().get("unknown", "") == ""
 
 
 def test_engram_sets_and_bot_properties_get_bot_properties() -> None:
-    """Test getting all bot properties."""
+    """Bot properties read back as an isolated copy."""
     engram = Engram()
-    engram.bot_properties["custom"] = "value"
+    engram.pattern_matcher.replace_bot_properties({**engram.pattern_matcher.bot_properties(), "custom": "value"})
 
-    props = engram.bot_properties.copy()
-    assert "name" in props
-    assert "version" in props
-    assert "custom" in props
-    assert props["custom"] == "value"
+    props = engram.pattern_matcher.bot_properties()
+    assert {"name", "custom"} <= props.keys()
+    assert props.get("custom", "") == "value"
+    props["custom"] = "changed"
+    assert engram.pattern_matcher.bot_properties().get("custom", "") == "value"
 
 
 def test_engram_sets_and_bot_properties_bot_pattern_matching() -> None:
@@ -1061,7 +975,7 @@ def test_engram_sets_and_bot_properties_sets_pattern_added_after_set() -> None:
     engram = Engram()
 
     # Add set first
-    engram.sets["greeting"] = ["hello", "hi", "hey"]
+    engram.pattern_matcher.replace_sets({"greeting": ["hello", "hi", "hey"]})
 
     # Then add pattern using set
     engram.store("Greeting received!", pattern="{set:greeting} THERE")
@@ -1074,7 +988,7 @@ def test_engram_sets_and_bot_properties_sets_pattern_added_after_set() -> None:
     assert result
 
 
-"""Tests for multi-sentence input processing."""
+# Tests for multi-sentence input processing.
 
 
 def test_multi_sentence_input_selects_the_final_response() -> None:
@@ -1094,7 +1008,7 @@ def test_multi_sentence_input_returns_selected_statement() -> None:
 
     result = engram.pattern_query("First. Second.")
     assert result
-    assert result[0]["id"] == stmt2_id
+    assert result[0].get("id", "") == stmt2_id
 
 
 def test_multi_sentence_input_that_context_flows_between_sentences() -> None:
@@ -1115,8 +1029,8 @@ def test_multi_sentence_input_that_context_flows_between_sentences() -> None:
     assert "pizza" in result[2].lower()
 
 
-def test_multi_sentence_input_no_match_returns_none() -> None:
-    """If no sentences match, should return None."""
+def test_multi_sentence_input_no_match_returns_empty_result() -> None:
+    """If no sentences match, the result is the empty tuple."""
     engram = Engram()
     engram.store("Hello!", pattern="HELLO")
 
@@ -1125,7 +1039,7 @@ def test_multi_sentence_input_no_match_returns_none() -> None:
 
 
 def test_multi_sentence_input_empty_input() -> None:
-    """Empty input should return None."""
+    """Empty input yields the empty tuple."""
     engram = Engram()
     engram.store("Hello!", pattern="HELLO")
 
@@ -1136,7 +1050,7 @@ def test_multi_sentence_input_empty_input() -> None:
     assert not result
 
 
-"""Priority prefers a statement among equals (keyword and pattern paths)."""
+# Priority prefers a statement among equals (keyword and pattern paths).
 
 
 def test_statement_priority_pattern_query_prefers_priority() -> None:
@@ -1156,8 +1070,9 @@ def test_statement_priority_query_priority_outranks_recency() -> None:
 
     result = engram.query("shared topic")
 
-    assert result["matches"][0][0]["text"] == "shared topic boosted"
-    assert result["matches"][0][1] > 1.0  # priority added on top of the calibrated score
+    matches = result.get("matches", [])
+    assert matches[0][0].get("text", "") == "shared topic boosted"
+    assert matches[0][1] > 1.0  # priority added on top of the calibrated score
 
 
 def test_statement_priority_priority_requires_a_match() -> None:
@@ -1166,13 +1081,14 @@ def test_statement_priority_priority_requires_a_match() -> None:
 
     result = engram.query("quantum tensor")
 
-    assert result["matches"] == []
+    assert "matches" in result
+    assert result.get("matches", []) == []
 
 
-"""Tests for aging hit statistics."""
+# Tests for aging hit statistics.
 
 
-def decay_statistics_engram_with_stats() -> tuple:
+def test_decay_statistics_decay_halves_counts() -> None:
     engram = Engram()
     stmt_id = engram.store("Paris is the capital of France")
     query_result = {}
@@ -1180,44 +1096,57 @@ def decay_statistics_engram_with_stats() -> tuple:
         query_result = engram.query("capital of France")
     engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
     engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
-    result = engram, stmt_id
-    return result
-
-
-def test_decay_statistics_decay_halves_counts() -> None:
-    engram, stmt_id = decay_statistics_engram_with_stats()
 
     changed = metrics.decay_statistics(engram, factor=0.5)
 
     assert changed > 0
     stmt = engram.get_statement(stmt_id)
-    assert stmt["query_count"] == 2
-    assert stmt["hit_count"] == 1
-    assert engram.keywords["capital"]["query_count"] == 2
-    assert engram.keywords["capital"]["hit_count"] == 1
+    assert stmt.get("query_count", 0) == 2
+    assert stmt.get("hit_count", 0) == 1
+    capital = engram.keywords.get("capital", {})
+    assert capital.get("query_count", 0) == 2
+    assert capital.get("hit_count", 0) == 1
 
 
 def test_decay_statistics_repeated_decay_returns_entry_to_no_history() -> None:
-    engram, stmt_id = decay_statistics_engram_with_stats()
+    engram = Engram()
+    stmt_id = engram.store("Paris is the capital of France")
+    query_result = {}
+    for _ in range(4):
+        query_result = engram.query("capital of France")
+    engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
+    engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
 
     for _ in range(4):
         metrics.decay_statistics(engram, factor=0.5)
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["query_count"] == 0
-    assert stmt["hit_count"] == 0
-    candidates = eviction.get_eviction_candidates(engram)
-    assert any(s["id"] == stmt_id for _, s in candidates)
+    assert "query_count" in stmt
+    assert "hit_count" in stmt
+    assert stmt.get("query_count", 0) == 0
+    assert stmt.get("hit_count", 0) == 0
+    assert stmt_id in engram.dynamic_statement_ids
 
 
 def test_decay_statistics_decay_zero_resets_everything() -> None:
-    engram, stmt_id = decay_statistics_engram_with_stats()
+    engram = Engram()
+    stmt_id = engram.store("Paris is the capital of France")
+    query_result = {}
+    for _ in range(4):
+        query_result = engram.query("capital of France")
+    engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
+    engram.record_hit(query_result.get("keywords", []), statement_id=stmt_id)
 
     metrics.decay_statistics(engram, factor=0.0)
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["query_count"] == 0
-    assert all(e["query_count"] == 0 and e["hit_count"] == 0 for e in engram.keywords.values())
+    assert "query_count" in stmt
+    assert stmt.get("query_count", 0) == 0
+    for entry in engram.keywords.values():
+        assert "query_count" in entry
+        assert "hit_count" in entry
+        assert entry.get("query_count", 0) == 0
+        assert entry.get("hit_count", 0) == 0
 
 
 def test_decay_statistics_decay_validates_factor() -> None:
@@ -1226,9 +1155,13 @@ def test_decay_statistics_decay_validates_factor() -> None:
         metrics.decay_statistics(engram, factor=1.0)
     with pytest_raises(ValueError):
         metrics.decay_statistics(engram, factor=-0.1)
+    with pytest_raises(ValueError):
+        metrics.decay_statistics(engram, factor=False)
+    with pytest_raises(ValueError):
+        metrics.decay_statistics(engram, factor=float("nan"))
 
 
-"""Integration tests for spelling correction and response polish."""
+# Integration tests for spelling correction and response polish.
 
 
 def test_input_output_cleanup_pattern_query_leaves_typos_unmatched() -> None:
@@ -1244,8 +1177,8 @@ def test_input_output_cleanup_query_corrects_typo() -> None:
 
     result = engram.query("capitla of france")
 
-    assert result["matches"]
-    assert "capital" in result["keywords"]
+    assert result.get("matches", [])
+    assert "capital" in result.get("keywords", [])
 
 
 def test_input_output_cleanup_spell_correction_disabled() -> None:
@@ -1315,46 +1248,40 @@ def test_input_output_cleanup_sentiment_clause_flow_end_to_end() -> None:
     assert result[2] == "I'm sorry to hear you're tired. Want to talk about it?"
 
 
-"""The catch-all template can branch on input intent via {qtype:...}."""
+# The catch-all template can branch on input intent via {qtype:...}.
 
 
-def question_aware_catchall_engram_with_intent_catchall() -> Engram:
-    engram = Engram()
-    engram.store(
-        "Go on.",
-        pattern="*",
-        tier=Tier.STATIC,
-        template={
-            "sequence": [
-                {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
-                {
-                    "condition": {
-                        "name": "_kind",
-                        "branches": [
-                            {"value": "question", "then": {"text": "I don't know that one yet."}},
-                            {"then": {"text": "Tell me more about that."}},
-                        ],
-                    }
-                },
-            ]
+INTENT_CATCHALL_TEMPLATE = {
+    "sequence": [
+        {"set": {"name": "_kind", "value": "{qtype:{request}}"}},
+        {
+            "condition": {
+                "name": "_kind",
+                "branches": [
+                    {"value": "question", "then": {"text": "I don't know that one yet."}},
+                    {"then": {"text": "Tell me more about that."}},
+                ],
+            }
         },
-    )
-    return engram
+    ]
+}
 
 
 def test_question_aware_catchall_question_gets_question_fallback() -> None:
-    engram = question_aware_catchall_engram_with_intent_catchall()
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC, template=INTENT_CATCHALL_TEMPLATE)
     result = engram.pattern_query("Where is the nearest coffee shop?")
     assert result[2] == "I don't know that one yet."
 
 
 def test_question_aware_catchall_statement_gets_statement_fallback() -> None:
-    engram = question_aware_catchall_engram_with_intent_catchall()
+    engram = Engram()
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC, template=INTENT_CATCHALL_TEMPLATE)
     result = engram.pattern_query("The coffee here tastes burnt")
     assert result[2] == "Tell me more about that."
 
 
-"""Underscore-prefixed predicates are template-local, never session state."""
+# Underscore-prefixed predicates are template-local, never session state.
 
 
 def test_scratch_predicates_scratch_predicate_does_not_persist() -> None:
@@ -1374,20 +1301,23 @@ def test_scratch_predicates_scratch_predicate_does_not_persist() -> None:
 
     engram.pattern_query("I am delighted", context_id=session_id)
 
-    predicates = engram.sessions["scratch"]["predicates"]
+    predicates = engram.sessions.get("scratch", {}).get("predicates", {})
     assert "_mood" not in predicates
-    assert predicates["last_feeling"] == "delighted"
+    assert predicates.get("last_feeling", "") == "delighted"
 
 
 def test_scratch_predicates_leaked_scratch_purged_from_existing_sessions() -> None:
     engram = Engram()
     engram.store("Okay.", pattern="HELLO")
     session_id = sessions.start_session(engram, session_id="existing")
-    engram.sessions["existing"]["predicates"]["_mood"] = "stale"
+    existing_predicates = engram.sessions.get("existing", {}).get("predicates", {})
+    existing_predicates["_mood"] = "stale"
 
     engram.pattern_query("hello", context_id=session_id)
 
-    assert "_mood" not in engram.sessions["existing"]["predicates"]
+    existing_session = engram.sessions.get("existing", {})
+    assert "predicates" in existing_session
+    assert "_mood" not in existing_session.get("predicates", {})
 
 
 def test_query_session_symmetry_query_creates_missing_session() -> None:
@@ -1400,7 +1330,7 @@ def test_query_session_symmetry_query_creates_missing_session() -> None:
     assert "fresh_session" in engram.sessions
 
 
-"""Engine-level regressions from the 100-turn conversation soak."""
+# Engine-level regressions from the 100-turn conversation soak.
 
 
 def test_soak_regressions_typo_question_not_learned_as_fact() -> None:
@@ -1411,7 +1341,7 @@ def test_soak_regressions_typo_question_not_learned_as_fact() -> None:
 
     engram.pattern_query("waht is rust")
 
-    patterns = [s["pattern"] for s in engram.statements]
+    patterns = [s.get("pattern", "") for s in engram.statements]
     assert "WAHT" not in patterns
 
 
@@ -1435,11 +1365,11 @@ def test_soak_regressions_learned_facts_keep_the_category() -> None:
         result = engram.pattern_query(f"Gadget{i} is a useful tool")
         assert result[2] == "Go on."
 
-    learned = [item for item in engram.statements if item["tier"] == Tier.DYNAMIC]
+    learned = [item for item in engram.statements if item.get("tier", Tier.STATIC) == Tier.DYNAMIC]
     assert len(learned) == 12
 
 
-def test_soak_regressions_user_assertions_enter_shared_knowledge() -> None:
+def test_user_assertions_answer_only_their_speaker() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
@@ -1447,17 +1377,15 @@ def test_soak_regressions_user_assertions_enter_shared_knowledge() -> None:
         "The support code is 9999.",
         user_id="user-a",
     )
-    result = engram.pattern_query(
-        "What is the support code?",
-        user_id="user-b",
-    )
 
-    assert result[2] == "The support code is 9999."
-    learned_id = engram.pattern_to_statement["SUPPORT CODE"]
-    assert engram.get_statement(learned_id)["introduced_by_user_id"] == "user-a"
+    assert engram.pattern_query("What is the support code?", user_id="user-b")[2] == "Go on."
+    assert engram.pattern_query("What is the support code?")[2] == "Go on."
+    assert engram.pattern_query("What is the support code?", user_id="user-a")[2] == "The support code is 9999."
+    learned_ids = engram.pattern_statements.get("SUPPORT CODE", [])
+    assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["user-a"]
 
 
-"""Research facts enter shared knowledge without entering a user context."""
+# Research facts enter shared knowledge without entering a user context.
 
 
 def test_external_fact_ingestion_add_fact_is_unattributed_and_globally_retrievable() -> None:
@@ -1469,12 +1397,13 @@ def test_external_fact_ingestion_add_fact_is_unattributed_and_globally_retrievab
     )
 
     stmt = engram.get_statement(stmt_id)
-    assert stmt["introduced_by_user_id"] == ""
-    assert stmt["source_label"] == "research-tool"
+    assert "introduced_by_user_id" in stmt
+    assert stmt.get("introduced_by_user_id", "") == ""
+    assert stmt.get("source_label", "") == "research-tool"
     assert engram.sessions == {}
     assert engram.pattern_query("What is Tokyo?", user_id="carol")[2] == ("Tokyo is the capital of Japan.")
     assert metrics.get_dynamic_count(engram) == 1
-    assert "WHAT IS TOKYO" in stmt["pattern_aliases"]
+    assert "WHAT IS TOKYO" in stmt.get("pattern_aliases", [])
 
 
 def test_external_fact_ingestion_fact_aliases_remain_until_retirement() -> None:
@@ -1482,11 +1411,11 @@ def test_external_fact_ingestion_fact_aliases_remain_until_retirement() -> None:
     stmt_id = engram.add_fact("Tokyo is the capital of Japan")
 
     assert engram.pattern_query("What is Tokyo?")[2] == "Tokyo is the capital of Japan."
-    assert engram.pattern_to_statement["WHAT IS TOKYO"] == stmt_id
+    assert engram.pattern_statements.get("WHAT IS TOKYO", []) == [stmt_id]
 
     engram.retire_statement(stmt_id)
     assert engram.pattern_query("What is Tokyo?") == ()
-    assert "WHAT IS TOKYO" not in engram.pattern_to_statement
+    assert "WHAT IS TOKYO" not in engram.pattern_statements
 
 
 def test_external_fact_ingestion_add_fact_retains_unstructured_text() -> None:
@@ -1494,8 +1423,10 @@ def test_external_fact_ingestion_add_fact_retains_unstructured_text() -> None:
 
     stmt_id = engram.add_fact("Sushi: good, portable, and widely available.")
 
-    assert engram.get_statement(stmt_id)["text"] == ("Sushi: good, portable, and widely available.")
-    assert engram.get_statement(stmt_id)["pattern"] == ""
+    stored = engram.get_statement(stmt_id)
+    assert stored.get("text", "") == ("Sushi: good, portable, and widely available.")
+    assert "pattern" in stored
+    assert stored.get("pattern", "") == ""
 
 
 def test_external_fact_ingestion_add_fact_is_idempotent_for_existing_fact() -> None:
@@ -1505,7 +1436,7 @@ def test_external_fact_ingestion_add_fact_is_idempotent_for_existing_fact() -> N
     second = engram.add_fact("Tokyo is the capital of Japan")
 
     assert second == first
-    assert sum(stmt["pattern"] == "TOKYO" for stmt in engram.statements) == 1
+    assert sum(stmt.get("pattern", "") == "TOKYO" for stmt in engram.statements) == 1
 
 
 def test_external_fact_ingestion_add_fact_validates_input() -> None:
@@ -1517,38 +1448,35 @@ def test_external_fact_ingestion_add_fact_validates_input() -> None:
         engram.add_fact("A fact", source_label=())
 
 
-"""A known fact stays stored. The matched category is what is spoken."""
-
-
-def known_fact_responses_taught_engram() -> Engram:
-    engram = Engram(config=engram_config(learn_user_facts=True))
-    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
-    engram.pattern_query("The sky is blue.")
-    return engram
+# A known fact stays stored. The matched category is what is spoken.
 
 
 def test_known_fact_contradiction_keeps_the_category_and_replaces_the_stored_fact() -> None:
 
-    engram = known_fact_responses_taught_engram()
+    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    engram.pattern_query("The sky is blue.")
     result = engram.pattern_query("The sky is green.")
 
     assert result[2] == "Go on."
     assert engram.pattern_query("What is the sky?")[2] == "The sky is green."
-    stored = [item for item in engram.statements if item["pattern"] == "SKY"]
+    stored = [item for item in engram.statements if item.get("pattern", "") == "SKY"]
     assert len(stored) == 1
 
 
 def test_known_fact_restatement_keeps_the_category() -> None:
 
-    engram = known_fact_responses_taught_engram()
+    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram.store("Go on.", pattern="*", tier=Tier.STATIC)
+    engram.pattern_query("The sky is blue.")
     result = engram.pattern_query("The sky is blue.")
 
     assert result[2] == "Go on."
-    stored = [item for item in engram.statements if item["pattern"] == "SKY"]
+    stored = [item for item in engram.statements if item.get("pattern", "") == "SKY"]
     assert len(stored) == 1
 
 
-"""Learned facts are keyword-indexed under their full content."""
+# Learned facts are keyword-indexed under their full content.
 
 
 def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() -> None:
@@ -1559,8 +1487,8 @@ def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() ->
 
     result = pipeline.respond(engram, "Is the sky blue?")
 
-    assert result["source"] == "pattern"
-    assert result["response"] == "Go on."
+    assert result.get("source", "") == "pattern"
+    assert result.get("response", "") == "Go on."
     assert engram.pattern_query("What is the sky?")[2] == "The sky is blue."
 
 

@@ -10,15 +10,13 @@ from unittest.mock import Mock, patch
 from pytest import approx as pytest_approx, raises as pytest_raises
 
 from engram.config import engram_config, graph_config
-from engram.constants import Tier
+from engram.constants_artifacts import Tier
 from engram.core import Engram
 from engram.graph import MemGraphConnection, graph_is_empty, graph_single, is_write_cypher
 from engram.service import EngramCore
 from engram.template import TemplateProcessor, template_context
-from engram.utilities import UTILITY_TZDATA_VERSION
-
-from .bolt_stub import BoltStub
-from .support_fixtures import PROPOSITION_REFERENCE_A
+from tests.bolt_stub import BoltStub
+from tests.support_fixtures import PROPOSITION_REFERENCE_A
 
 
 def same(a, b) -> bool:
@@ -48,11 +46,11 @@ class MockGraphClient:
         params = params or {}
         query_upper = query.upper()
 
-        subject = params.get("subject")
-        predicate = params.get("predicate")
-        obj = params.get("object")
-        name = params.get("name")
-        keyword = params.get("keyword")
+        subject = params.get("subject", "")
+        predicate = params.get("predicate", "")
+        obj = params.get("object", "")
+        name = params.get("name", "")
+        keyword = params.get("keyword", "")
 
         if "CREATE" in query_upper or "MERGE" in query_upper:
             # Triple write (canonical Proposition or a generic relationship create).
@@ -68,32 +66,35 @@ class MockGraphClient:
             # Triple query, object unknown: subject + predicate -> object.
             if subject and predicate and not obj:
                 for proposition in self.propositions:
-                    if same(proposition["subject"], subject) and same(proposition["predicate"], predicate):
-                        result = [{"result": proposition["object"]}]
+                    if same(proposition.get("subject", ""), subject) and same(proposition.get("predicate", ""), predicate):
+                        result = [{"result": proposition.get("object", "")}]
                         return result
                 result = []
                 return result
             # Triple query / graph_query, subject unknown: predicate + object -> subject.
             if obj and predicate and not subject:
                 result = [
-                    {"result": proposition["subject"]}
+                    {"result": proposition.get("subject", "")}
                     for proposition in self.propositions
-                    if same(proposition["predicate"], predicate) and same(proposition["object"], obj)
+                    if same(proposition.get("predicate", ""), predicate) and same(proposition.get("object", ""), obj)
                 ]
                 return result
             # Facts by entity name (list-format graph_query and entity recall).
             if name:
                 rows = []
                 for proposition in self.propositions:
-                    if same(proposition["subject"], name):
-                        rows.append({"relation": proposition["predicate"], "target": proposition["object"], **proposition})
-                    elif same(proposition["object"], name):
-                        rows.append({"relation": proposition["predicate"], "target": proposition["subject"], **proposition})
+                    relation = proposition.get("predicate", "")
+                    if same(proposition.get("subject", ""), name):
+                        rows.append({"relation": relation, "target": proposition.get("object", ""), **proposition})
+                    elif same(proposition.get("object", ""), name):
+                        rows.append({"relation": relation, "target": proposition.get("subject", ""), **proposition})
                 return rows
             # Keyword fallback: entity whose label contains the keyword.
             if keyword:
                 result = [
-                    dict(proposition) for proposition in self.propositions if keyword.lower() in proposition["subject"].lower()
+                    dict(proposition)
+                    for proposition in self.propositions
+                    if keyword.lower() in proposition.get("subject", "").lower()
                 ]
                 return result
             result = []
@@ -104,7 +105,7 @@ class MockGraphClient:
                 self.propositions = [
                     proposition
                     for proposition in self.propositions
-                    if not (same(proposition["subject"], name) or same(proposition["object"], name))
+                    if not (same(proposition.get("subject", ""), name) or same(proposition.get("object", ""), name))
                 ]
                 self.entities.discard(name)
             result = []
@@ -115,6 +116,7 @@ class MockGraphClient:
 
     def vector_search_propositions(self, embedding, **kwargs) -> list:
         """Return configured ANN rows for vector-recall tests."""
+        del embedding, kwargs
         result = list(self.vector_rows)
         return result
 
@@ -123,26 +125,19 @@ class MockGraphClient:
         pass
 
 
-def fake_embedding_model() -> Mock:
-    """Build a tracked embedding test double with the configured dimension."""
-    model = Mock()
-
-    def encode(texts: list[str], **kwargs) -> list[Mock]:
-        del kwargs
-        vectors = []
-        for _ in texts:
-            vector = Mock()
-            vector.tolist.return_value = [0.0] * 384
-            vectors.append(vector)
-        result = vectors
-        return result
-
-    model.encode.side_effect = encode
-    result = model
+def encode_fake_embeddings(texts: list[str], **kwargs) -> list:
+    """Stand in for SentenceTransformer.encode: one tracked 384-dimension zero vector per text."""
+    del kwargs
+    vectors = []
+    for _ in texts:
+        vector = Mock()
+        vector.tolist.return_value = [0.0] * 384
+        vectors.append(vector)
+    result = vectors
     return result
 
 
-"""Tests for the list-row helpers."""
+# Tests for the list-row helpers.
 
 
 def test_graph_helpers_non_empty():
@@ -157,17 +152,7 @@ def test_graph_helpers_empty():
     assert graph_single(records) == {}
 
 
-"""Tests for graph operations in templates."""
-
-
-def template_graph_operations_make_graph_fn(client: MockGraphClient):
-    """Create a graph function that wraps the client."""
-
-    def graph_fn(query: str, params: dict):
-        result = client.execute(query, params)
-        return result
-
-    return graph_fn
+# Tests for graph operations in templates.
 
 
 def test_template_graph_operations_graph_query_success():
@@ -178,7 +163,7 @@ def test_template_graph_operations_graph_query_success():
     )
 
     processor = TemplateProcessor()
-    ctx = template_context(stars=["capital", "France"], graph_fn=template_graph_operations_make_graph_fn(client))
+    ctx = template_context(stars=["capital", "France"], graph_fn=client.execute)
 
     template = {
         "graph_query": {
@@ -197,7 +182,7 @@ def test_template_graph_operations_graph_query_success():
 def test_template_graph_operations_graph_query_not_found():
     client = MockGraphClient()
     processor = TemplateProcessor()
-    ctx = template_context(stars=["capital", "Unknown"], graph_fn=template_graph_operations_make_graph_fn(client))
+    ctx = template_context(stars=["capital", "Unknown"], graph_fn=client.execute)
 
     template = {
         "graph_query": {
@@ -217,12 +202,7 @@ def test_template_graph_operations_graph_query_no_client():
     processor = TemplateProcessor()
     ctx = template_context(stars=["test"])
 
-    template = {
-        "graph_query": {
-            "query": "MATCH (n) RETURN n",
-            "on_failure": {"text": "Graph not available."},
-        }
-    }
+    template = {"graph_query": {"query": "MATCH (n) RETURN n", "on_failure": {"text": "Graph not available."}}}
 
     result = processor.process(template, ctx)
     assert result == "Graph not available."
@@ -274,12 +254,7 @@ def test_template_graph_operations_graph_query_rejects_mutation_before_callback(
 
     processor = TemplateProcessor()
     ctx = template_context(graph_fn=graph_fn)
-    template = {
-        "graph_query": {
-            "query": "MATCH (n) DETACH DELETE n",
-            "on_failure": {"text": "Read-only."},
-        }
-    }
+    template = {"graph_query": {"query": "MATCH (n) DETACH DELETE n", "on_failure": {"text": "Read-only."}}}
 
     assert processor.process(template, ctx) == "Read-only."
     assert calls == []
@@ -293,7 +268,7 @@ def test_template_graph_operations_triple_query_object():
     )
 
     processor = TemplateProcessor()
-    ctx = template_context(stars=["Paris"], graph_fn=template_graph_operations_make_graph_fn(client))
+    ctx = template_context(stars=["Paris"], graph_fn=client.execute)
 
     template = {"triple_query": {"subject": "{star1}", "predicate": "CAPITAL_OF", "object": "?"}}
 
@@ -309,7 +284,7 @@ def test_template_graph_operations_triple_query_subject():
     )
 
     processor = TemplateProcessor()
-    ctx = template_context(graph_fn=template_graph_operations_make_graph_fn(client))
+    ctx = template_context(graph_fn=client.execute)
 
     template = {"triple_query": {"subject": "?", "predicate": "CAPITAL_OF", "object": "France"}}
 
@@ -342,7 +317,7 @@ def test_template_graph_operations_graph_query_list_format():
     )
 
     processor = TemplateProcessor()
-    ctx = template_context(stars=["Alice"], graph_fn=template_graph_operations_make_graph_fn(client))
+    ctx = template_context(stars=["Alice"], graph_fn=client.execute)
 
     template = {
         "graph_query": {
@@ -364,15 +339,7 @@ def test_template_graph_operations_graph_query_list_format():
     assert "KNOWS" in result or "LIKES" in result
 
 
-"""ENGRAM exposes graph recall only through every runtime path."""
-
-
-def read_only_graph_wiring_engram_with_graph(client):
-    """An ENGRAM with the graph enabled and a mock client injected."""
-    with patch("engram.core.connect_graph", return_value=client) as connect_graph:
-        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
-    connect_graph.assert_called_once()
-    return engram
+# ENGRAM exposes graph recall only through every runtime path.
 
 
 def test_read_only_graph_wiring_is_write_cypher_detects_mutations():
@@ -398,11 +365,10 @@ def test_read_only_graph_wiring_is_write_cypher_refuses_procedures_and_imports()
 def test_read_only_graph_wiring_graph_read_fn_passes_reads():
     client = MockGraphClient()
     client.propositions.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
-    engram = read_only_graph_wiring_engram_with_graph(client)
-    rows = engram.graph_read_fn(
-        "MATCH (c:Proposition) RETURN c.object AS result",
-        {"subject": "Athens", "predicate": "located in"},
-    )
+    with patch("engram.core.connect_graph", return_value=client) as connect_graph:
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+    connect_graph.assert_called_once()
+    rows = engram.graph_read_fn("MATCH (c:Proposition) RETURN c.object AS result", {"subject": "Athens", "predicate": "located in"})
     assert rows == [{"result": "Greece"}]
 
 
@@ -412,9 +378,11 @@ def test_read_only_graph_wiring_unavailable_enabled_graph_is_optional():
     with patch("engram.core.connect_graph", return_value=client):
         engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
 
-    assert engram.component_status["graph"] == {"enabled": True, "ready": False}
+    assert engram.component_status.get("graph", {}) == {"enabled": True, "ready": False}
     assert engram.graph_query("RETURN 1") == []
-    assert engram.query("ordinary local request")["matches"] == []
+    local_result = engram.query("ordinary local request")
+    assert "matches" in local_result
+    assert local_result.get("matches", []) == []
 
 
 def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_component_readiness():
@@ -424,23 +392,17 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
 
     core = EngramCore(engram)
 
-    assert core.status()["components"] == {
+    assert core.status().get("components", {}) == {
         "nltk": {"enabled": True, "ready": True},
         "graph": {"enabled": True, "ready": True},
         "vector": {"enabled": False, "ready": False},
         "sparse": {"enabled": False, "ready": False},
         "spacy": {"enabled": True, "ready": True},
-        "semantic": {
-            "enabled": False,
-            "ready": False,
-            "error": "",
-            "artifact_identity": {},
-        },
+        "semantic": {"enabled": False, "ready": False, "error": "", "artifact_identity": {}},
         "reranker": {
             "enabled": False,
             "ready": False,
             "implementation": "transparent_logistic",
-            "model_version": "transparent-logistic",
             "requests": 0,
             "completed": 0,
             "fallbacks": 0,
@@ -454,11 +416,7 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
                 "arithmetic": {"enabled": False, "ready": False},
                 "boolean": {"enabled": False, "ready": False},
                 "set": {"enabled": False, "ready": False},
-                "date_time": {
-                    "enabled": False,
-                    "ready": False,
-                    "timezone_database_version": UTILITY_TZDATA_VERSION,
-                },
+                "date_time": {"enabled": False, "ready": False},
                 "unit_conversion": {"enabled": False, "ready": False},
                 "version": {"enabled": False, "ready": False},
                 "identifier": {"enabled": False, "ready": False},
@@ -469,7 +427,9 @@ def test_read_only_graph_wiring_transport_neutral_status_reports_enabled_compone
 
 def test_read_only_graph_wiring_graph_read_fn_refuses_writes():
     client = MockGraphClient()
-    engram = read_only_graph_wiring_engram_with_graph(client)
+    with patch("engram.core.connect_graph", return_value=client) as connect_graph:
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+    connect_graph.assert_called_once()
     before = len(client.propositions)
     with pytest_raises(ValueError, match="read-only"):
         engram.graph_read_fn(
@@ -487,19 +447,6 @@ def test_read_only_graph_wiring_connection_has_no_writer_and_rejects_before_conn
     assert client.driver == ()
 
 
-def test_read_only_graph_wiring_connection_rejects_user_identity_scope():
-    with pytest_raises(ValueError, match="invalid shape"):
-        MemGraphConnection(
-            visibility_scope={
-                "kind": "global",
-                "company_id": {},
-                "customer_id": {},
-                "engagement_id": {},
-                "user_id": "user:elias",
-            }
-        )
-
-
 def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call_stays_refused():
     stub = BoltStub()
     stub.rows = []
@@ -507,19 +454,19 @@ def test_read_only_graph_wiring_internal_vector_search_is_fixed_and_generic_call
     try:
         assert client.connect()
         rows = client.vector_search_propositions(
-            [0.0, 1.0],
-            index_name="proposition_embeddings",
-            limit=25,
-            min_similarity=0.5,
+            [0.0, 1.0], index_name="proposition_embeddings", limit=25, min_similarity=0.5, evaluation_time="2026-08-12T16:00:00Z"
         )
 
         assert rows == []
-        query, params = stub.queries[-1]
+        # The fact read, then the index reach read that finds no further row at the floor.
+        query, params = stub.queries[0]
         assert "CALL vector_search.search" in query
-        assert params["limit"] == 25
+        assert params.get("limit", 0) == 25
+        assert params.get("window", 0) == 25
+        sent = len(stub.queries)
         with pytest_raises(ValueError, match="read-only"):
             client.execute("CALL vector_search.search('x', 1, [1.0]) YIELD node RETURN node")
-        assert len(stub.queries) == 1
+        assert len(stub.queries) == sent == 2
     finally:
         client.disconnect()
         stub.close()
@@ -536,15 +483,12 @@ def test_read_only_graph_wiring_vector_graph_fallback_phrases_semantic_propositi
             "similarity": 0.81,
         }
     ]
-    config = engram_config(
-        graph=graph_config(
-            enabled=True,
-            vector_enabled=True,
-        )
-    )
+    config = engram_config(graph=graph_config(enabled=True, vector_enabled=True))
+    embedding_model = Mock()
+    embedding_model.encode.side_effect = encode_fake_embeddings
     with (
         patch("engram.core.connect_graph", return_value=client),
-        patch("engram.core.SentenceTransformer", return_value=fake_embedding_model()) as load_model,
+        patch("engram.graph_recall.SentenceTransformer", return_value=embedding_model) as load_model,
     ):
         engram = Engram(config=config)
     load_model.assert_called_once()
@@ -567,16 +511,12 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
             "similarity": 0.84,
         }
     ]
-    config = engram_config(
-        graph=graph_config(
-            enabled=True,
-            vector_enabled=True,
-            vector_weight=0.75,
-        )
-    )
+    config = engram_config(graph=graph_config(enabled=True, vector_enabled=True, vector_weight=0.75))
+    embedding_model = Mock()
+    embedding_model.encode.side_effect = encode_fake_embeddings
     with (
         patch("engram.core.connect_graph", return_value=client),
-        patch("engram.core.SentenceTransformer", return_value=fake_embedding_model()) as load_model,
+        patch("engram.graph_recall.SentenceTransformer", return_value=embedding_model) as load_model,
     ):
         engram = Engram(config=config)
     load_model.assert_called_once()
@@ -587,29 +527,28 @@ def test_read_only_graph_wiring_vector_support_retrieves_scoped_response_on_keyw
         "Rome declined through overlapping political and military pressures.",
         request_id="learn-1",
         namespace="support",
-        context_fingerprint="local-v1",
+        context_fingerprint="local",
         metadata={"support": [PROPOSITION_REFERENCE_A]},
     )
 
-    proposal = core.propose(
-        "zygomatic quasar lattice",
-        request_id="proposal-1",
-        namespace="support",
-        context_fingerprint="local-v1",
-    )
+    proposal = core.propose("zygomatic quasar lattice", request_id="proposal-1", namespace="support", context_fingerprint="local")
 
-    assert len(proposal["candidates"]) == 1
-    candidate = proposal["candidates"][0]
-    assert candidate["retrieval"]["selected"] == "vector"
-    assert candidate["retrieval"]["keyword_score"] == 0.0
-    assert candidate["retrieval"]["vector_score"] == pytest_approx(0.63)
+    candidates = proposal.get("candidates", [])
+    assert len(candidates) == 1
+    retrieval = candidates[0].get("retrieval", {})
+    assert retrieval.get("selected", "") == "vector"
+    assert "keyword_score" in retrieval
+    assert retrieval.get("keyword_score", 0.0) == 0.0
+    assert retrieval.get("vector_score", 0.0) == pytest_approx(0.63)
 
 
 def test_read_only_graph_wiring_triple_query_wired_through_response_path():
     """A stored `<triple_query>` statement resolves through pattern_query."""
     client = MockGraphClient()
     client.propositions.append({"subject": "Athens", "predicate": "located in", "object": "Greece"})
-    engram = read_only_graph_wiring_engram_with_graph(client)
+    with patch("engram.core.connect_graph", return_value=client) as connect_graph:
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+    connect_graph.assert_called_once()
     engram.store(
         text="",
         pattern="WHERE IS ATHENS",
@@ -622,7 +561,9 @@ def test_read_only_graph_wiring_triple_query_wired_through_response_path():
 
 def test_read_only_graph_wiring_removed_authoring_template_is_inert_through_response_path():
     client = MockGraphClient()
-    engram = read_only_graph_wiring_engram_with_graph(client)
+    with patch("engram.core.connect_graph", return_value=client) as connect_graph:
+        engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
+    connect_graph.assert_called_once()
     engram.store(
         text="",
         pattern="ADD PARIS",

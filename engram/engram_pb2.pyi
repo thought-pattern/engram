@@ -168,14 +168,6 @@ class RetireResponseRequest(Message):
         request_id: str = ...,
     ) -> None: ...
 
-class RetireResponsesRequest(Message):
-    entries: RepeatedCompositeFieldContainer[RetireResponseRequest]
-
-    def __init__(
-        self,
-        entries: object = ...,
-    ) -> None: ...
-
 class ResponsesBySupportRequest(Message):
     record_ids: RepeatedScalarFieldContainer[str]
 

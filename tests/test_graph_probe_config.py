@@ -35,7 +35,6 @@ def test_graph_probe_config_adapts_tapestry_memgraph_without_unrelated_values(tm
     assert result == str(destination)
     assert yaml_safe_load(destination.read_text(encoding="utf-8")) == {
         "graph": {
-            "deployment_mode": "tapestry_managed",
             "enabled": True,
             "host": "graph.internal",
             "password": "credential",

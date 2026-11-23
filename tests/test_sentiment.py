@@ -1,6 +1,6 @@
 """Tests for VADER sentiment analysis and its template integration."""
 
-from engram.constants import NEGATIVE, NEUTRAL, POSITIVE
+from engram.constants_language import NEGATIVE, NEUTRAL, POSITIVE
 from engram.core import Engram
 from engram.sentiment import sentiment_label, sentiment_scores
 from engram.template import TemplateProcessor, template_context
@@ -33,27 +33,33 @@ def test_sentiment_label_empty_is_neutral():
     assert sentiment_label("   ") == NEUTRAL
 
 
-"""Tests for sentiment_scores."""
+# Tests for sentiment_scores.
 
 
 def test_sentiment_scores_returns_compound():
     """Scores include a compound key in [-1, 1]."""
     scores = sentiment_scores("I love this")
     assert "compound" in scores
-    assert -1.0 <= scores["compound"] <= 1.0
+    assert -1.0 <= scores.get("compound", 0.0) <= 1.0
 
 
 def test_sentiment_scores_positive_compound_higher_than_negative():
     """Positive text scores higher than negative text."""
-    assert sentiment_scores("great")["compound"] > sentiment_scores("terrible")["compound"]
+    positive = sentiment_scores("great")
+    negative = sentiment_scores("terrible")
+    assert "compound" in positive
+    assert "compound" in negative
+    assert positive.get("compound", 0.0) > negative.get("compound", 0.0)
 
 
 def test_sentiment_scores_empty_neutral_scores():
     """Empty text yields neutral scores."""
-    assert sentiment_scores("")["compound"] == 0.0
+    scores = sentiment_scores("")
+    assert "compound" in scores
+    assert scores.get("compound", 0.0) == 0.0
 
 
-"""Tests for the {sentiment:...} template transform."""
+# Tests for the {sentiment:...} template transform.
 
 
 def test_sentiment_template_transform_transform_positive():
@@ -75,7 +81,7 @@ def test_sentiment_template_transform_transform_resolves_star_first():
     assert TemplateProcessor().process("{sentiment:{star1}}", ctx) == POSITIVE
 
 
-"""Integration tests for sentiment-routed responses in Engram."""
+# Integration tests for sentiment-routed responses in Engram.
 
 
 def test_sentiment_integration_negative_emotion_gets_sympathy():

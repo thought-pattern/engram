@@ -209,12 +209,19 @@ def regenerate() -> None:
     normalize_protobuf_source()
     normalize_protobuf_interface()
     normalize_grpc_source()
+    # The repository Black run excludes these generated files (pyproject extend-exclude), so the
+    # generator formats exactly its own output, with the formatter-of-record settings stated
+    # explicitly rather than inherited from configuration discovery.
     subprocess_run(
         (
             sys_executable,
             "-m",
             "black",
             "--quiet",
+            "-l",
+            "132",
+            "-t",
+            "py311",
             str(PROTOBUF_SOURCE),
             str(PROTOBUF_INTERFACE),
             str(GRPC_SOURCE),
@@ -228,8 +235,8 @@ def main() -> int:
     """Regenerate protocol sources and report handled failures."""
     try:
         regenerate()
-    except (CalledProcessError, OSError, SyntaxError, UnicodeError, ValueError) as error:
-        print(f"protocol regeneration failed: {error}", file=stderr)
+    except (CalledProcessError, OSError, SyntaxError, UnicodeError, ValueError) as err:
+        print(f"protocol regeneration failed: {err}", file=stderr)
         return 1
     print("Engram protocol sources regenerated and normalized.")
     return 0

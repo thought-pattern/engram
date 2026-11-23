@@ -1,5 +1,9 @@
 """Tests for AIML-style pattern matching."""
 
+from random import Random
+
+from pytest import raises as pytest_raises
+
 from engram.pattern import PatternMatcher, normalize_pattern
 
 
@@ -11,7 +15,7 @@ def trie_match(pattern: str, text: str) -> tuple:
     return result
 
 
-"""Tests for normalize_pattern function."""
+# Tests for normalize_pattern function.
 
 
 def test_normalize_pattern_lowercase():
@@ -62,7 +66,7 @@ def test_matching_hyphenated_input_matches_spaced_pattern():
     assert result
 
 
-"""Exact words and wildcards."""
+# Exact words and wildcards.
 
 
 def test_pattern_exact_word():
@@ -76,7 +80,7 @@ def test_pattern_wildcard_star():
     assert not trie_match("HELLO *", "hello")  # * needs at least one word
 
 
-"""Matches and captures."""
+# Matches and captures.
 
 
 def test_matching_exact_match():
@@ -130,7 +134,7 @@ def test_matching_wildcard_in_middle():
     assert list(result[1]) == ["beautiful"]
 
 
-"""Tests for # and ^ wildcards (zero or more words)."""
+# Tests for # and ^ wildcards (zero or more words).
 
 
 def test_zero_or_more_wildcards_hash_matches_zero_words():
@@ -304,7 +308,7 @@ def test_zero_or_more_wildcards_underscore_requires_one_word():
     assert not result  # _ needs at least one word
 
 
-"""Tests for PatternMatcher with # and ^ wildcards."""
+# Tests for PatternMatcher with # and ^ wildcards.
 
 
 def test_pattern_matcher_zero_wildcards_hash_pattern_match():
@@ -371,7 +375,7 @@ def test_pattern_matcher_zero_wildcards_hash_has_priority_over_star():
     assert result[0] == "Zero match"
 
 
-"""Tests for PatternMatcher class."""
+# Tests for PatternMatcher class.
 
 
 def test_pattern_matcher_add_and_match():
@@ -511,7 +515,7 @@ def test_pattern_matcher_get_patterns():
     assert ("WORLD", "response2") in patterns
 
 
-"""Tests for pattern matching with user input containing punctuation."""
+# Tests for pattern matching with user input containing punctuation.
 
 
 def test_pattern_matcher_with_punctuation_input_with_exclamation():
@@ -535,7 +539,7 @@ def test_pattern_matcher_with_punctuation_input_with_multiple_punctuation():
     assert result == ("I am a bot", [], [], [], "WHAT IS YOUR NAME", "", "")
 
 
-"""Tests for context-aware pattern matching (that/topic)."""
+# Tests for context-aware pattern matching (that/topic).
 
 
 def test_pattern_matcher_context_matching_topic_filter_matches():
@@ -687,7 +691,7 @@ def test_pattern_matcher_context_matching_get_patterns_with_context():
     assert ("WORLD", "response2", "", "") in patterns
 
 
-"""Tests for {set:name} pattern matching."""
+# Tests for {set:name} pattern matching.
 
 
 def test_set_pattern_matching_set_match_basic():
@@ -792,7 +796,7 @@ def test_set_pattern_matching_multiple_sets_in_pattern():
     assert result[1] == ["big", "red"]
 
 
-"""Tests for {bot:name} pattern matching."""
+# Tests for {bot:name} pattern matching.
 
 
 def test_bot_pattern_matching_bot_match_basic():
@@ -808,7 +812,7 @@ def test_bot_pattern_matching_bot_match_basic():
 
 def test_bot_pattern_matching_bot_match_captures_value():
     """Test that bot match captures the matched value."""
-    bot = {"name": "Alice", "version": "1.0"}
+    bot = {"name": "Alice"}
     pm = PatternMatcher(bot_properties=bot)
     pm.add_pattern("YOU ARE {bot:name}", "Correct!")
 
@@ -852,7 +856,27 @@ def test_bot_pattern_matching_bot_with_sets_combined():
     assert result[1] == ["testbot", "blue"]
 
 
-"""Tests for normalize_pattern with set/bot references."""
+def test_matcher_copies_its_tables_at_ingress():
+    """Changing the caller's dicts after construction leaves matching unchanged."""
+    sets = {"color": ["red"]}
+    bot = {"name": "TestBot"}
+    pm = PatternMatcher(sets=sets, bot_properties=bot)
+    pm.add_pattern("{bot:name} LIKES {set:color}", "Combined match")
+    sets.get("color", []).append("blue")
+    bot["name"] = "Other"
+
+    assert pm.match("testbot likes red")
+    assert not pm.match("testbot likes blue")
+    assert not pm.match("other likes red")
+
+
+def test_matcher_rejects_malformed_tables():
+    for sets, bot in (([("color", ["red"])], {}), ({"color": "red"}, {}), ({}, ["name"]), ({}, {"name": 1})):
+        with pytest_raises(ValueError):
+            PatternMatcher(sets=sets, bot_properties=bot)
+
+
+# Tests for normalize_pattern with set/bot references.
 
 
 def test_normalize_pattern_with_refs_preserve_set_reference():
@@ -879,7 +903,7 @@ def test_normalize_pattern_with_refs_refs_with_wildcards():
     assert result == "* is {set:color} and *"
 
 
-"""Tests for $ priority operator."""
+# Tests for $ priority operator.
 
 
 def test_priority_operator_normalize_preserves_dollar():
@@ -936,7 +960,7 @@ def test_priority_operator_multiple_dollar_words():
     assert not trie_match("$HELLO $WORLD", "hello there")
 
 
-"""Tests for stemming support in pattern matching."""
+# Tests for stemming support in pattern matching.
 
 
 def test_stemming_support_stemming_disabled_by_default():
@@ -1008,7 +1032,7 @@ def test_stemming_support_stemming_cats_mammals():
     assert result[0] == "Cats are mammals."
 
 
-"""Tests for WordNet lemmatization support in pattern matching."""
+# Tests for WordNet lemmatization support in pattern matching.
 
 
 def test_lemmatization_support_lemmatization_disabled_by_default():
@@ -1068,7 +1092,7 @@ def test_lemmatization_support_lemmatization_with_wildcard():
     assert result
 
 
-"""Short tokens are not stemmed: 'his' must not become the greeting 'hi'."""
+# Short tokens are not stemmed: 'his' must not become the greeting 'hi'.
 
 
 def test_stemming_false_positives_possessive_does_not_match_greeting():
@@ -1089,26 +1113,26 @@ def test_stemming_false_positives_stemming_fallback_still_works_for_real_inflect
     assert pm.match("cats are great")
 
 
-def graph_size(node, seen=None) -> int:
-    """Count nodes reachable from a graphmaster root, including that and topic subtrees."""
-    seen = set() if seen is None else seen
+def graph_size(node, seen: set) -> int:
+    """Count nodes reachable from a graphmaster root, including that and topic subtrees.
+
+    ``seen`` holds the ids already counted in this traversal; callers pass a fresh set.
+    """
     if id(node) in seen:
         return 0
     seen.add(id(node))
     children = [*node.dollar.values(), *node.atoms.values(), *node.bots.values(), *node.sets.values()]
-    children += [child for child in (node.underscore, node.caret, node.hash, node.star, node.that_root, node.topic_root) if child]
+    children += [*node.wildcards.values(), *node.segments.values()]
     result = 1 + sum(graph_size(child, seen) for child in children)
     return result
 
 
 def matcher_graph_size(pm: PatternMatcher) -> int:
-    result = graph_size(pm.default_trie)
+    result = graph_size(pm.default_trie, set())
     return result
 
 
 def test_removal_in_place_matches_a_full_rebuild():
-    from random import Random
-
     random = Random(20260927)
     words = ["HELLO", "WORLD", "HOW", "ARE", "YOU", "*", "_", "#", "^", "$THERE"]
     thats = ["", "", "DO YOU AGREE", "WHAT DO YOU LIKE *"]
@@ -1131,10 +1155,15 @@ def test_removal_in_place_matches_a_full_rebuild():
             pm.remove_pattern(pattern, that=that, topic=topic)
         if step % 20:
             continue
-        for pm, flags in ((stemming, {"use_stemming": True, "use_lemmatization": True}), (plain, {})):
-            rebuilt = PatternMatcher(**flags)
-            for entry in pm.internal_patterns:
-                rebuilt.add_pattern(entry["pattern"], entry["response"], that=entry["that"], topic=entry["topic"])
+        for pm in (stemming, plain):
+            rebuilt = PatternMatcher(use_stemming=pm.internal_use_stemming, use_lemmatization=pm.internal_use_lemmatization)
+            for category in pm.internal_patterns:
+                rebuilt.add_pattern(
+                    category.get("pattern", ""),
+                    category.get("response", ""),
+                    that=category.get("that", ""),
+                    topic=category.get("topic", ""),
+                )
             for probe in probes:
                 for that_text, topic_text in contexts:
                     assert pm.match(probe, that=that_text, topic=topic_text) == rebuilt.match(

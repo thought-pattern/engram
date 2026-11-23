@@ -5,14 +5,15 @@ It parses declarative sentences and extracts subject-predicate-object
 relationships for dynamic learning.
 """
 
-from functools import lru_cache
+from logging import getLogger
 
 from nltk import ne_chunk
 from nltk.metrics.distance import edit_distance
 from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 
-from engram.constants import (
+from engram.constants_language import (
+    ARTICLES,
     COMMAND_WORDS,
     COPULAS,
     KIND_COMMAND,
@@ -21,29 +22,13 @@ from engram.constants import (
     MAX_FACT_SUBJECT_TOKENS,
     POSSESSIVE_PRONOUNS,
     PRONOUNS,
+    PROPER_NOUN_POS_TAGS,
     QUESTION_WORDS,
 )
-from engram.nltk_data import ensure_resource
+from engram.nltk_data import NLTK_RESOURCES
 from engram.text import is_known_word, verb_only_word
 
-
-@lru_cache(maxsize=1)
-def ensure_nltk_data() -> None:
-    """Ensure required NLTK data is present, fetching into the local data dir."""
-    required = [
-        ("tokenizers/punkt", "punkt"),
-        ("tokenizers/punkt_tab", "punkt_tab"),
-        ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
-        ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
-        ("chunkers/maxent_ne_chunker", "maxent_ne_chunker"),
-        ("chunkers/maxent_ne_chunker_tab", "maxent_ne_chunker_tab"),
-        ("corpora/words", "words"),
-    ]
-    for path, package in required:
-        ensure_resource(path, package)
-
-
-_PROPER_NOUN_TAGS = {"NNP", "NNPS"}
+LOGGER = getLogger(__name__)
 
 
 def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) -> bool:
@@ -54,7 +39,7 @@ def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) ->
     the NNP/NNPS gate used for a span that opens the sentence. A capital later
     in the sentence skips that gate, so a mid-sentence name still counts.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
     wanted = surface.split()
     if not wanted or any(verb_only_word(word) for word in wanted):
         result = False
@@ -66,26 +51,12 @@ def span_is_proper_noun(text: str, surface: str, *, require_tag: bool = True) ->
     width = len(wanted)
     for start in range(0, len(tagged) - width + 1):
         window = tagged[start : start + width]
-        if [word for word, _pos in window] != wanted:
+        if [word for word, _ in window] != wanted:
             continue
-        result = all(pos in _PROPER_NOUN_TAGS for _word, pos in window)
+        result = all(pos in PROPER_NOUN_POS_TAGS for _, pos in window)
         return result
     result = False
     return result
-
-
-def extracted_fact(subject: str, predicate: str, obj: str, original: str) -> dict:
-    """Build a fact dict extracted from natural language.
-
-    Keys: subject, predicate (copula verb), obj (complement), original sentence.
-    """
-    fact = {
-        "subject": subject,
-        "predicate": predicate,
-        "obj": obj,
-        "original": original,
-    }
-    return fact
 
 
 def fact_subject_upper(fact: dict) -> str:
@@ -189,7 +160,7 @@ def clean_subject(tokens: list[str]) -> str:
         result = ""
         return result
 
-    while tokens and tokens[0].lower() in ("a", "an", "the"):
+    while tokens and tokens[0].lower() in ARTICLES:
         tokens = tokens[1:]
 
     cleaned = " ".join(tokens)
@@ -260,7 +231,9 @@ def extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origin
             return result
 
     normalized_original = original.rstrip(".") + "."
-    fact = extracted_fact(subject=subject, predicate=copula, obj=obj, original=normalized_original)
+    # An extracted fact carries the subject, the copula verb as predicate, the
+    # complement as obj, and the original sentence.
+    fact = {"subject": subject, "predicate": copula, "obj": obj, "original": normalized_original}
     return fact
 
 
@@ -271,9 +244,13 @@ def extract_fact(text: str) -> dict:
         text: Input text to analyze.
 
     Returns:
-        ExtractedFact if a fact was extracted, otherwise an empty dict.
+        The fact dict (subject, predicate, obj, original) if a fact was
+        extracted, otherwise an empty dict.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
 
     text = text.strip()
     if not text:
@@ -299,13 +276,26 @@ def extract_fact(text: str) -> dict:
     return fact
 
 
-def extracted_entity(text: str, label: str, start: int, end: int) -> dict:
-    """Build a named-entity dict.
+def token_offsets(text: str, tokens: list[str]) -> list[tuple[int, int]]:
+    """Return each tokenizer token's exact [start, end) range in text, in order.
 
-    Keys: text, label (PERSON/ORGANIZATION/GPE/...), start and end positions.
+    Tokens are verbatim slices separated only by whitespace, except that the
+    Treebank tokenizer rewrites a straight double quote as `` or ''. An empty
+    list means the tokens could not be aligned to the text.
     """
-    entity = {"text": text, "label": label, "start": start, "end": end}
-    return entity
+    offsets = []
+    position = 0
+    for token in tokens:
+        while position < len(text) and text[position].isspace():
+            position += 1
+        surfaces = (token, '"') if token in ("``", "''") else (token,)
+        surface = next((candidate for candidate in surfaces if text.startswith(candidate, position)), "")
+        if not surface:
+            offsets = []
+            return offsets
+        offsets.append((position, position + len(surface)))
+        position += len(surface)
+    return offsets
 
 
 def extract_entities(text: str) -> list[dict]:
@@ -322,43 +312,44 @@ def extract_entities(text: str) -> list[dict]:
         text: Input text to analyze.
 
     Returns:
-        List of ExtractedEntity objects.
+        List of entity dicts: text (the entity's tokens joined by single
+        spaces), label (PERSON/ORGANIZATION/GPE/...), and the exact
+        [start, end) character range those tokens occupy in text.
+
+    Raises:
+        RuntimeError: required NLTK data is not available.
     """
-    ensure_nltk_data()
+    NLTK_RESOURCES.require()
 
     if not text or not text.strip():
         result = []
         return result
 
     tokens = word_tokenize(text)
+    offsets = token_offsets(text, tokens)
+    if len(offsets) != len(tokens):
+        # Coordinates come only from aligned tokens; none are invented.
+        LOGGER.warning("named-entity tokens do not align with their source text; no entities extracted")
+        result = []
+        return result
     tagged = pos_tag(tokens)
     tree = ne_chunk(tagged)
 
     entities = []
-    current_pos = 0
+    index = 0
 
     for subtree in tree:
         if hasattr(subtree, "label"):
-            entity_text = " ".join(word for word, tag in subtree)
-            label = subtree.label()
-
-            start = text.find(entity_text, current_pos)
-            if start == -1:
-                start = text.lower().find(entity_text.lower(), current_pos)
-            if start != -1:
-                end = start + len(entity_text)
-                current_pos = end
-            else:
-                start = current_pos
-                end = current_pos + len(entity_text)
-
-            entities.append(
-                extracted_entity(
-                    text=entity_text,
-                    label=label,
-                    start=start,
-                    end=end,
-                )
-            )
+            words = [word for word, tag in subtree.leaves()]
+            entity = {
+                "text": " ".join(words),
+                "label": subtree.label(),
+                "start": offsets[index][0],
+                "end": offsets[index + len(words) - 1][1],
+            }
+            entities.append(entity)
+            index += len(words)
+        else:
+            index += 1
 
     return entities
