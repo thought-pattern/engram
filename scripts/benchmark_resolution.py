@@ -6,7 +6,6 @@ from json import dumps as json_dumps
 from pathlib import Path
 from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, sparse_config
@@ -21,7 +20,7 @@ from engram.resolution_frame import QueryFrameBuilder
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import ResolverRegistry, resolver_budget
 from engram.resolvers import ExactResolver, SparseResolver
-from scripts.benchmark_metadata import benchmark_source_state
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/artifacts/section4-benchmark.json")
 START_NS = 1_000_000_000
@@ -197,11 +196,10 @@ def run_benchmark(samples: int, corpus_size: int) -> dict:
         "result_codec": measure(lambda: resolver_result_from_dict(resolver_result_to_dict(exact_result)), samples),
     }
 
-    tracemalloc_start()
-    for _ in range(min(samples, 100)):
-        sparse_resolution()
-    _, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as memory_scope:
+        for _ in range(min(samples, 100)):
+            sparse_resolution()
+        _, peak_bytes = memory_scope.read()
 
     limits = {"peak_traced_bytes": 16_777_216}
     gates = {

@@ -25,8 +25,8 @@ from math import isfinite as math_isfinite
 from engram import sessions as sessions_mod
 from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_USER_ID
 from engram.constants_artifacts import MAX_RESPONSE_BYTES
-from engram.constants_language import KIND_COMMAND, KIND_QUESTION, QUESTION_WORDS
-from engram.nlp import input_kind
+from engram.constants_language import QUESTION_WORDS
+from engram.pattern import PatternMatcher
 from engram.validation import Characters, require_text
 
 
@@ -86,6 +86,34 @@ def update_session(engram, session_id: str, response: str) -> bool:
         sessions_mod.get_session(engram, session_id, create_if_missing=True)
         sessions_mod.update_session_context(engram, session_id, response)
     return True
+
+
+def statement_scope_satisfied(engram, stmt: dict, current_that: str, current_topic: str) -> bool:
+    """Return whether a conversational statement's ``topic`` and ``that`` scope matches the session."""
+    stmt_topic = stmt.get("topic", "")
+    stmt_that = stmt.get("that", "")
+    if not stmt_topic.strip() and not stmt_that.strip():
+        return True
+    if stmt_topic.strip() and not current_topic.strip():
+        return False
+    if stmt_that.strip() and not current_that.strip():
+        return False
+    matcher = PatternMatcher(
+        sets=engram.pattern_matcher.word_sets(),
+        bot_properties=engram.pattern_matcher.bot_properties(),
+        use_stemming=engram.config.get("use_stemming", False),
+        use_lemmatization=engram.config.get("use_lemmatization", False),
+        use_spacy_lemmatization=engram.config.get("use_spacy_lemmatization", False),
+    )
+    matcher.add_pattern("*", "ok", that=stmt_that, topic=stmt_topic)
+    matched = bool(
+        matcher.match(
+            "x",
+            that=engram.expand_for_match(current_that),
+            topic=engram.expand_for_match(current_topic),
+        )
+    )
+    return matched
 
 
 def respond(
@@ -153,46 +181,33 @@ def respond(
 
     # Tier 1: a matched category, including a pure wildcard, or graph recall.
     # The configured fallback text is not a category answer.
+    speaker = sessions_mod.normalize_user_id(user_id)
+    with engram.statement_lock:
+        turn_start_sequence = engram.next_statement_sequence
+    current_that = ""
+    current_topic = ""
+    if context_id:
+        with engram.session_lock:
+            existing_session = sessions_mod.get_session(engram, context_id, create_if_missing=False)
+            if existing_session:
+                current_that = existing_session.get("previous_response", "")
+                current_topic = existing_session.get("predicates", {}).get("topic", "")
+
+    graph_config = engram.config.get("graph", {})
+    graph_enabled = isinstance(graph_config, dict) and bool(graph_config.get("enabled", False))
     pattern_result = engram.pattern_query(
         text,
         context_id=context_id,
         user_id=user_id,
-        include_graph=False,
+        include_graph=graph_enabled,
+        include_fallback=False,
+        evaluation_time=evaluation_time,
     )
     stmt = {}
     captured = []
     response = ""
     if pattern_result:
         stmt, captured, response = pattern_result
-
-    # Known conversational answers retain their identity and speaker context.
-    # Graph recall may replace an explicitly unknown reply, once per complete turn.
-    graph_config = engram.config.get("graph", {})
-    graph_enabled = isinstance(graph_config, dict) and bool(graph_config.get("enabled", False))
-    graph_eligible = input_kind(text) in {KIND_COMMAND, KIND_QUESTION} and (not pattern_result or stmt.get("unknown", False))
-    graph_response = engram.graph_lookup(text, evaluation_time=evaluation_time) if graph_enabled and graph_eligible else ""
-    if graph_response:
-        if response:
-            retract_response(engram, context_id, response)
-        update_session(engram, context_id, graph_response)
-        graph_result = {
-            "response": graph_response,
-            "source": "graph",
-            "score": 1.0,
-            "matches": [],
-            "keywords": [],
-            "pattern": "",
-            "captured": [],
-            "user_id": context_id,
-            "dialogue_act": "",
-            "active_topic": "",
-            "entities": [],
-            "fact_admissions": [],
-        }
-        result = attach_dialogue_state(engram, graph_result, context_id)
-        return result
-
-    if pattern_result:
         matched_pattern = stmt.get("pattern", "")
         is_fallback = not stmt and response == engram.config.get("fallback_response", "")
         if response and not is_fallback:
@@ -218,9 +233,21 @@ def respond(
     # Tier 2: confident conversational statement via keyword retrieval. Question words
     # carry intent, not content -- a keyword set with no content words ("why
     # why why") is no evidence, however perfectly it overlaps something. Only
-    # shared statements and the speaker's own facts are candidates.
+    # shared statements and the speaker's own facts stored before this turn and
+    # matching the active topic/that scope are candidates.
+    def eligible_conversational_statement(candidate_stmt: dict) -> bool:
+        stmt_id = candidate_stmt.get("id", "")
+        if engram.statement_sequence.get(stmt_id, 0) >= turn_start_sequence:
+            return False
+        scope_ok = statement_scope_satisfied(engram, candidate_stmt, current_that, current_topic)
+        return scope_ok
+
     retrieval = engram.query(
-        text, context_id=context_id, limit=max(context_limit, 1), owner=sessions_mod.normalize_user_id(user_id)
+        text,
+        context_id=context_id,
+        limit=max(context_limit, 1),
+        statement_filter=eligible_conversational_statement,
+        owner=speaker,
     )
     matches = retrieval.get("matches", [])
     keywords = retrieval.get("keywords", [])
@@ -228,26 +255,48 @@ def respond(
     if matches and content_keywords:
         top_stmt, top_score = matches[0]
         if top_score >= high_confidence:
-            top_text = top_stmt.get("text", "")
-            engram.record_hit(keywords, statement_id=top_stmt.get("id", ""))
-            update_session(engram, context_id, top_text)
-            tier2 = {
-                "response": top_text,
-                "unknown": top_stmt.get("template", {}).get("unknown", False),
-                "source": "statement",
-                "score": top_score,
-                "matches": list(matches),
-                "keywords": list(keywords),
-                "pattern": "",
-                "captured": [],
-                "user_id": context_id,
-                "dialogue_act": "",
-                "active_topic": "",
-                "entities": [],
-                "fact_admissions": [],
-            }
-            result = attach_dialogue_state(engram, tier2, context_id)
-            return result
+            top_template = top_stmt.get("template", {})
+            tier2_unknown = False
+            if top_template:
+                tier2_session = {}
+                if context_id:
+                    with engram.session_lock:
+                        tier2_session = sessions_mod.get_session(engram, context_id, create_if_missing=True)
+                tier2_state = {"unknown": False}
+                top_text = engram.process_statement_template(
+                    top_stmt,
+                    [],
+                    text,
+                    tier2_session,
+                    that=current_that,
+                    topic=current_topic,
+                    evaluation_time=evaluation_time,
+                    speaker=speaker,
+                    response_state=tier2_state,
+                )
+                tier2_unknown = tier2_state.get("unknown", False)
+            else:
+                top_text = top_stmt.get("text", "")
+            if top_text.strip() and not tier2_unknown:
+                engram.record_hit(keywords, statement_id=top_stmt.get("id", ""))
+                update_session(engram, context_id, top_text)
+                tier2 = {
+                    "response": top_text,
+                    "unknown": False,
+                    "source": "statement",
+                    "score": top_score,
+                    "matches": list(matches),
+                    "keywords": list(keywords),
+                    "pattern": "",
+                    "captured": [],
+                    "user_id": context_id,
+                    "dialogue_act": "",
+                    "active_topic": "",
+                    "entities": [],
+                    "fact_admissions": [],
+                }
+                result = attach_dialogue_state(engram, tier2, context_id)
+                return result
 
     # Tier 3: the caller's LLM, with retrieved context.
     if llm_fn:
@@ -301,6 +350,7 @@ def chat(
     llm_fn=(),
     high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
     context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
+    evaluation_time: str = "",
 ) -> dict:
     """Run the chatbot for one caller-owned user context."""
     normalized_user_id = sessions_mod.normalize_user_id(user_id)
@@ -312,5 +362,6 @@ def chat(
         high_confidence=high_confidence,
         context_limit=context_limit,
         user_id=normalized_user_id,
+        evaluation_time=evaluation_time,
     )
     return result

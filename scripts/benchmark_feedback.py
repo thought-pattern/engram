@@ -7,7 +7,6 @@ from pathlib import Path
 from platform import machine as platform_machine
 from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind
 from engram.constants_resolution import ResolutionOutcome
@@ -24,7 +23,7 @@ from engram.identity import extract_standalone_identity, scope_key
 from engram.negative_resolution import NegativeResolutionStore, negative_resolution_key
 from engram.resolution_sizing import encoded_size
 from engram.service import EngramCore
-from scripts.benchmark_metadata import benchmark_source_state, recorded_at
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/feedback/benchmark.json")
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -200,30 +199,28 @@ def run_benchmark(samples: int, memory_records: int, scale_records: int) -> dict
         internal_require_miss(outcome, True)
         negative_hits.append(elapsed)
 
-    tracemalloc_start()
-    feedback_store = FeedbackStore()
-    ingest_benchmark_verdicts(feedback_store, memory_records, "memory")
-    _, feedback_peak = tracemalloc_get_traced_memory()
-    del feedback_store
-    tracemalloc_stop()
+    with TracedMemoryScope() as feedback_scope:
+        feedback_store = FeedbackStore()
+        ingest_benchmark_verdicts(feedback_store, memory_records, "memory")
+        _, feedback_peak = feedback_scope.read()
+        del feedback_store
 
-    tracemalloc_start()
-    negatives = NegativeResolutionStore(max_records=memory_records, ttl_seconds=300)
-    for index in range(memory_records):
-        negative_scope = scope_key(namespace="section6-benchmark")
-        negatives.admit(
-            negative_resolution_key(
-                query_identity=extract_standalone_identity(f"negative benchmark request {index}", negative_scope),
-                scope=negative_scope,
-                constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
-                resolver_plan_fingerprint=canonical_fingerprint("exact-only"),
-                capability_readiness_fingerprint=canonical_fingerprint("ready"),
-                policy_fingerprint=POLICY_FINGERPRINT,
-            ),
-            NOW_TEXT,
-        )
-    _, negative_peak = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as negative_scope:
+        negatives = NegativeResolutionStore(max_records=memory_records, ttl_seconds=300)
+        for index in range(memory_records):
+            negative_scope_key = scope_key(namespace="section6-benchmark")
+            negatives.admit(
+                negative_resolution_key(
+                    query_identity=extract_standalone_identity(f"negative benchmark request {index}", negative_scope_key),
+                    scope=negative_scope_key,
+                    constraint_fingerprint=constraint_fingerprint("UNKNOWN", {}, ""),
+                    resolver_plan_fingerprint=canonical_fingerprint("exact-only"),
+                    capability_readiness_fingerprint=canonical_fingerprint("ready"),
+                    policy_fingerprint=POLICY_FINGERPRINT,
+                ),
+                NOW_TEXT,
+            )
+        _, negative_peak = negative_scope.read()
 
     ordinary_latency = internal_latency(ordinary_misses)
     negative_latency = internal_latency(negative_hits)

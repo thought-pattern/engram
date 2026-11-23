@@ -44,7 +44,8 @@ def substitute_word(match: Match, subs: dict[str, str]) -> str:
     if not core:
         return word
 
-    lower_core = core.lower()
+    normalized_core = core.replace("\u2019", "'").replace("\u2018", "'").replace("\u02bc", "'").replace("\u2032", "'")
+    lower_core = normalized_core.lower()
     if lower_core not in subs:
         return word
 

@@ -18,6 +18,13 @@ from scripts.benchmark_metadata import benchmark_source_state
 
 DEFAULT_CORPUS = Path("eval/section14-utilities.json")
 DEFAULT_OUTPUT_DIRECTORY = Path("eval/results/utilities")
+UTILITY_GATE_FIELDS = {
+    "accuracy_min",
+    "determinism_min",
+    "fuzz_failure_rate_max",
+    "p95_latency_ms_max",
+    "resource_rejection_rate_min",
+}
 THREAT_INPUTS = {
     "arithmetic": "calculate __import__('os').system('echo bad')",
     "boolean": "boolean __import__",
@@ -185,13 +192,30 @@ def forbidden_execution_calls() -> list[dict]:
     return forbidden
 
 
+def require_utility_gates(gates: object) -> dict:
+    if not isinstance(gates, dict):
+        raise ValueError("utility corpus must declare its gate thresholds")
+    missing = sorted(UTILITY_GATE_FIELDS - set(gates))
+    if missing:
+        raise ValueError(f"utility corpus is missing gate thresholds: {', '.join(missing)}")
+    for name in UTILITY_GATE_FIELDS:
+        threshold = gates.get(name, "")
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            raise ValueError(f"utility gate threshold {name} must be numeric")
+    return gates
+
+
 def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cases: int, source_state: dict) -> dict:
+    validated_gates = require_utility_gates(gates)
     partitions = {}
     all_latencies = []
     all_deterministic = []
     for partition in ("conformance", "held_out"):
+        raw_cases = specification.get(partition, [])
+        if not isinstance(raw_cases, list) or not raw_cases:
+            raise ValueError(f"utility corpus {plugin_name} {partition} split must be a non-empty list")
         records = []
-        for case in specification.get(partition, []):
+        for case in raw_cases:
             _, record = check_case(plugin_name, case)
             records.append(record)
             all_latencies.append(record.get("latency_ms", 0.0))
@@ -224,12 +248,12 @@ def evaluate_plugin(plugin_name: str, specification: dict, gates: dict, fuzz_cas
         "p95_latency_ms": max(percentile(all_latencies, 0.95), fuzz.get("p95_latency_ms", 0.0)),
     }
     checks = {
-        "conformance_accuracy": values.get("conformance_accuracy", 0.0) >= gates.get("accuracy_min", 0.0),
-        "held_out_accuracy": values.get("held_out_accuracy", 0.0) >= gates.get("accuracy_min", 0.0),
-        "determinism": values.get("determinism_rate", 0.0) >= gates.get("determinism_min", 0.0),
-        "resource_rejection": values.get("resource_rejection_rate", 0.0) >= gates.get("resource_rejection_rate_min", 0.0),
-        "fuzz_safety": values.get("fuzz_failure_rate", 0.0) <= gates.get("fuzz_failure_rate_max", 0.0) and fuzz_passed,
-        "latency": values.get("p95_latency_ms", 0.0) <= gates.get("p95_latency_ms_max", 0.0),
+        "conformance_accuracy": values.get("conformance_accuracy", 0.0) >= validated_gates.get("accuracy_min", 1.0),
+        "held_out_accuracy": values.get("held_out_accuracy", 0.0) >= validated_gates.get("accuracy_min", 1.0),
+        "determinism": values.get("determinism_rate", 0.0) >= validated_gates.get("determinism_min", 1.0),
+        "resource_rejection": values.get("resource_rejection_rate", 0.0) >= validated_gates.get("resource_rejection_rate_min", 1.0),
+        "fuzz_safety": values.get("fuzz_failure_rate", 0.0) <= validated_gates.get("fuzz_failure_rate_max", 0.0) and fuzz_passed,
+        "latency": values.get("p95_latency_ms", 0.0) <= validated_gates.get("p95_latency_ms_max", 0.0),
         "property_checks": all(properties.values()),
         "threat_payload_safe_disposition": threat_passed,
     }
@@ -277,9 +301,9 @@ def main() -> int:
     plugins = corpus.get("plugins", {})
     if tuple(plugins) != UTILITY_PLUGIN_NAMES:
         raise ValueError("utility corpus plugin order does not match the executable allowlist")
-    gates = corpus.get("gates", {})
-    if "gates" not in corpus or not isinstance(gates, dict):
+    if "gates" not in corpus:
         raise ValueError("utility corpus must declare its gate thresholds")
+    gates = require_utility_gates(corpus.get("gates", {}))
     source_state = benchmark_source_state()
     results = {
         name: evaluate_plugin(name, plugins.get(name, {}), gates, args.fuzz_cases, source_state) for name in UTILITY_PLUGIN_NAMES

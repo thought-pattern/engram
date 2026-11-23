@@ -9,7 +9,6 @@ from re import (
     compile as re_compile,
     escape as re_escape,
     finditer as re_finditer,
-    search as re_search,
     sub as re_sub,
 )
 from time import perf_counter_ns as time_perf_counter_ns
@@ -47,6 +46,8 @@ from engram.validation import require_any_text
 
 logger = logging_getLogger(__name__)
 TOKEN_RE = re_compile(r"[^\W_]+(?:['’][^\W_]+)?", UNICODE)
+QUOTED_SPAN_RE = re_compile(r"`[^`\n]+`|\"[^\"\n]+\"|“[^”\n]+”|(?<!\w)['‘][^'’\n]+['’](?!\w)")
+APOSTROPHE_TRANSLATION = str.maketrans({"‘": "'", "’": "'", "\u201b": "'", "\u02bc": "'", "\uff07": "'"})
 
 
 def internal_mapping(value: object, name: str, fields: set[str]) -> dict[str, object]:
@@ -68,7 +69,7 @@ def internal_integer(value: object, name: str, minimum: int, maximum: int) -> in
 
 
 def normalized_text(value: str) -> str:
-    normalized = unicodedata_normalize("NFKC", value).replace("’", "'")
+    normalized = unicodedata_normalize("NFKC", value).translate(APOSTROPHE_TRANSLATION)
     result = " ".join(normalized.split())
     return result
 
@@ -187,9 +188,15 @@ def match_span(text: str, rule: dict) -> tuple[int, int]:
         expression = rf"(?<!\w){pattern}$"
     else:
         expression = rf"(?<!\w){pattern}(?!\w)"
-    matched = re_search(expression, text, flags=IGNORECASE)
-    result = matched.span() if matched else (-1, -1)
-    return result
+    quoted_spans = tuple(match.span() for match in QUOTED_SPAN_RE.finditer(text))
+    for matched in re_finditer(expression, text, flags=IGNORECASE):
+        start, end = matched.span()
+        if any(start < q_end and end > q_start for q_start, q_end in quoted_spans):
+            continue
+        span = (start, end)
+        return span
+    missed = (-1, -1)
+    return missed
 
 
 def candidate_output(text: str, rule: dict, subject: str) -> str:
@@ -414,7 +421,7 @@ def lint_rewrite_corpus(rules: tuple[dict, ...]) -> tuple[dict, ...]:
         constraint = rule.get("input_constraints", {})
         match_mode = constraint.get("match_mode", RewriteMatchMode.EXACT)
         pattern = constraint.get("pattern", "")
-        same_pattern = patterns.setdefault((match_mode, pattern.casefold()), [])
+        same_pattern = patterns.setdefault((match_mode, normalized_text(pattern).casefold()), [])
         for prior in same_pattern:
             if not rewrite_populations_overlap(prior, rule):
                 continue

@@ -4,13 +4,20 @@ from datetime import UTC, datetime
 from hashlib import sha256 as hashlib_sha256
 from pathlib import Path
 from subprocess import run as subprocess_run
+from tracemalloc import (
+    get_traced_memory as tracemalloc_get_traced_memory,
+    is_tracing as tracemalloc_is_tracing,
+    reset_peak as tracemalloc_reset_peak,
+    start as tracemalloc_start,
+    stop as tracemalloc_stop,
+)
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 SOURCE_GLOBS = (
-    ("engram", ("*.py", "*.json")),
+    ("engram", ("*.py", "*.json", "*.toml")),
     ("scripts", ("*.py",)),
     ("eval", ("*.py", "*.json")),
-    ("tests", ("*.py",)),
+    ("tests", ("*.py", "*.json")),
     # Workflows are globbed: naming one file broke every benchmark when it was renamed.
     (".github/workflows", ("*.yml",)),
 )
@@ -81,3 +88,36 @@ def recorded_at() -> str:
     """Return one current UTC artifact timestamp."""
     result = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     return result
+
+
+class TracedMemoryScope:
+    """Measure Python traced-memory delta and peak without polluting or stopping a caller's tracer."""
+
+    def __init__(self) -> None:
+        self.was_tracing = False
+        self.baseline_current = 0
+
+    def __enter__(self) -> "TracedMemoryScope":
+        self.was_tracing = tracemalloc_is_tracing()
+        if self.was_tracing:
+            current_before, _ = tracemalloc_get_traced_memory()
+            self.baseline_current = current_before
+            tracemalloc_reset_peak()
+        else:
+            self.baseline_current = 0
+            tracemalloc_start()
+        return self
+
+    def read(self) -> tuple[int, int]:
+        """Return (current_bytes, peak_bytes) attributable to this scope."""
+        raw_current, raw_peak = tracemalloc_get_traced_memory()
+        measured_current = max(0, raw_current - self.baseline_current)
+        measured_peak = max(0, raw_peak - self.baseline_current)
+        result = (measured_current, measured_peak)
+        return result
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> bool:
+        del exc_type, exc_val, exc_tb
+        if not self.was_tracing:
+            tracemalloc_stop()
+        return False

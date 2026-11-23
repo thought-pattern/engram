@@ -7,7 +7,6 @@ from pathlib import Path
 from platform import machine as platform_machine
 from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.constants_artifacts import LifecycleState
 from engram.constants_resolution import CandidateSource, EvidenceKind, ResolutionOutcome
@@ -18,7 +17,7 @@ from engram.resolution import candidate as resolution_candidate, evidence_refere
 from engram.resolution_budget import capture_resolution_budget
 from engram.resolution_evidence import feature_set
 from engram.resolution_frame import QueryFrameBuilder
-from scripts.benchmark_metadata import benchmark_source_state, recorded_at
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state, recorded_at
 
 
 def permissive_candidate_authority(candidate: dict, frame: dict) -> dict:
@@ -139,23 +138,22 @@ def measure_fusion(samples: int) -> dict:
             "samples": selected_samples,
             **measure(lambda values=values: fusion.decide(frame, values), selected_samples),
         }
-    tracemalloc_start()
-    peak_values = tuple(
-        resolution_candidate(
-            candidate_id=f"candidate:{CandidateSource.SPARSE.value}:memory-{index:04d}",
-            statement_id=f"memory-{index:04d}",
-            response=BENCHMARK_RESPONSE,
-            source=CandidateSource.SPARSE,
-            features=feature_set(values={"sparse_score": 0.2}),
-            evidence=(),
-            scope=SCOPE,
-            lifecycle=LifecycleState.ACTIVE,
+    with TracedMemoryScope() as memory_scope:
+        peak_values = tuple(
+            resolution_candidate(
+                candidate_id=f"candidate:{CandidateSource.SPARSE.value}:memory-{index:04d}",
+                statement_id=f"memory-{index:04d}",
+                response=BENCHMARK_RESPONSE,
+                source=CandidateSource.SPARSE,
+                features=feature_set(values={"sparse_score": 0.2}),
+                evidence=(),
+                scope=SCOPE,
+                lifecycle=LifecycleState.ACTIVE,
+            )
+            for index in range(1_000)
         )
-        for index in range(1_000)
-    )
-    peak_decision = fusion.decide(frame, peak_values)
-    _, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+        peak_decision = fusion.decide(frame, peak_values)
+        _, peak_bytes = memory_scope.read()
     reinforced_latency = measure(lambda: fusion.decide(frame, reinforced), samples)
     gates = {
         "thousand_candidates_peak_under_64_mib": peak_bytes < 67_108_864,

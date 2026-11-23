@@ -32,6 +32,7 @@ from engram.evidence import (
 )
 from engram.graph import proposition_projection_to_dict
 from engram.graph_composition_resolution import composition_not_applicable, internal_composition_result, with_prior_graph_rows
+from engram.graph_recall import strict_current_proposition_projection
 from engram.relation import (
     RelationQuestion,
     object_type_match,
@@ -335,11 +336,7 @@ class StructuredGraphResolver:
             decision = self.internal_eligibility_evaluator.revalidate(
                 projection,
                 checked_frame,
-                lambda prop_id, window: self.internal_engram.current_proposition_projection(
-                    prop_id,
-                    window,
-                    raise_on_failure=True,
-                ),
+                lambda prop_id, window: strict_current_proposition_projection(self.internal_engram, prop_id, window),
                 trusted_frame=True,
             )
             graph_rows += 1
@@ -812,11 +809,7 @@ class SupportSemanticResolver:
                 decision = self.internal_eligibility_evaluator.revalidate(
                     projection,
                     checked_frame,
-                    lambda prop_id, window: self.internal_engram.current_proposition_projection(
-                        prop_id,
-                        window,
-                        raise_on_failure=True,
-                    ),
+                    lambda prop_id, window: strict_current_proposition_projection(self.internal_engram, prop_id, window),
                     trusted_frame=True,
                 )
                 if decision.get("revalidated", False):

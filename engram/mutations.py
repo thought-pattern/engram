@@ -28,7 +28,7 @@ from engram.constants_mutations import (
     ReceiptLookupOutcome,
 )
 from engram.constants_resolution import MAX_RESOURCE_COUNTER
-from engram.errors import ConflictError, InvalidRequestError, ResourceNotFoundError
+from engram.errors import ConflictError, InvalidRequestError, ResourceExhaustedError, ResourceNotFoundError
 from engram.feedback_values import canonical_signature
 from engram.resolution_sizing import encoded_size
 from engram.validation import Characters, require_text, require_utc_timestamp
@@ -122,6 +122,25 @@ def thaw_json(value: object) -> object:
         result = [thaw_json(item) for item in value]
         return result
     return value
+
+
+def strict_json_equal(left: object, right: object) -> bool:
+    """Compare validated receipt structures without equating booleans and numbers."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        equal = isinstance(left, bool) and isinstance(right, bool) and left is right
+        return equal
+    if isinstance(left, int) and isinstance(right, float) or isinstance(left, float) and isinstance(right, int):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        equal = set(left) == set(right) and all(strict_json_equal(left.get(key, ()), right.get(key, ())) for key in left)
+        return equal
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        equal = len(left) == len(right) and all(
+            strict_json_equal(left_item, right_item) for left_item, right_item in zip(left, right, strict=True)
+        )
+        return equal
+    equal = type(left) is type(right) and left == right
+    return equal
 
 
 def freeze_result(value: object) -> dict:
@@ -509,7 +528,7 @@ class MutationReceiptLedger:
             next_sequence = validated_state.get("next_sequence", 0)
         self.max_receipts = positive_int(max_receipts, "max_receipts", MAX_RECEIPTS)
         self.max_tombstones = positive_int(max_tombstones, "max_tombstones", MAX_TOMBSTONES)
-        self.internal_next_sequence = positive_int(next_sequence, "next receipt sequence")
+        self.internal_next_sequence = positive_int(next_sequence, "next receipt sequence", MAX_RESOURCE_COUNTER + 1)
         if not isinstance(receipts, tuple):
             raise InvalidRequestError("receipts must be a tuple of MutationReceipt values")
         if not isinstance(tombstones, tuple):
@@ -652,7 +671,7 @@ class MutationReceiptLedger:
                 raise ConflictError(f"request_id result was pruned and cannot be replayed safely: {request_id}")
             if outcome == ReceiptLookupOutcome.REPLAY:
                 existing = receipt_lookup_receipt(lookup)
-                if existing != validated_receipt:
+                if not strict_json_equal(existing, validated_receipt):
                     raise ConflictError(f"completed mutation receipt cannot be changed: {request_id}")
                 return existing
             if outcome == ReceiptLookupOutcome.IN_PROGRESS:
@@ -662,14 +681,26 @@ class MutationReceiptLedger:
                     raise ConflictError(f"prepared mutation receipt can only advance to COMPLETED: {request_id}")
                 self.internal_receipts[request_id] = validated_receipt
                 self.internal_revision += 1
+                self.prune()
                 # The retained receipt is completed replay authority; callers get an isolated copy.
                 result = deepcopy(validated_receipt)
                 return result
+            if self.internal_next_sequence > MAX_RESOURCE_COUNTER:
+                raise ResourceExhaustedError("receipt sequence space is exhausted")
             if sequence != self.internal_next_sequence:
                 received_sequence = sequence
                 raise ConflictError(
                     f"receipt sequence conflict: expected {self.internal_next_sequence}, received {received_sequence}"
                 )
+            incoming_completed = (
+                validated_receipt.get("completion_state", ReceiptCompletionState.PREPARED) == ReceiptCompletionState.COMPLETED
+            )
+            has_prunable = incoming_completed or any(
+                item.get("completion_state", ReceiptCompletionState.PREPARED) == ReceiptCompletionState.COMPLETED
+                for item in self.internal_receipts.values()
+            )
+            if len(self.internal_receipts) >= self.max_receipts and not has_prunable:
+                raise ResourceExhaustedError("receipt ledger retention is full of unfinished mutations")
             self.internal_receipts[request_id] = validated_receipt
             self.internal_next_sequence += 1
             self.internal_revision += 1
@@ -679,7 +710,14 @@ class MutationReceiptLedger:
 
     def prune(self) -> None:
         while len(self.internal_receipts) > self.max_receipts:
-            oldest = next(iter(self.internal_receipts.values()))
+            completed = [
+                item
+                for item in self.internal_receipts.values()
+                if item.get("completion_state", ReceiptCompletionState.PREPARED) == ReceiptCompletionState.COMPLETED
+            ]
+            if not completed:
+                break
+            oldest = min(completed, key=lambda item: item.get("sequence", 0))
             oldest_request_id = oldest.get("request_id", "")
             del self.internal_receipts[oldest_request_id]
             tombstone = receipt_tombstone(
@@ -690,7 +728,7 @@ class MutationReceiptLedger:
             )
             self.internal_tombstones[oldest_request_id] = tombstone
         while len(self.internal_tombstones) > self.max_tombstones:
-            oldest = next(iter(self.internal_tombstones.values()))
+            oldest = min(self.internal_tombstones.values(), key=lambda item: item.get("sequence", 0))
             del self.internal_tombstones[oldest.get("request_id", "")]
 
     def snapshot(self) -> dict:
@@ -787,6 +825,6 @@ def validate_mutation_receipt_ledger_state(value: object) -> dict:
         max_tombstones,
         tuple(mutation_receipt_from_dict(receipt) for receipt in receipts),
         tuple(receipt_tombstone_from_dict(tombstone) for tombstone in tombstones),
-        positive_int(data.get("next_sequence", 0), "next receipt sequence"),
+        positive_int(data.get("next_sequence", 0), "next receipt sequence", MAX_RESOURCE_COUNTER + 1),
     )
     return result

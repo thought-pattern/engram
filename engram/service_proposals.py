@@ -10,7 +10,7 @@ from copy import deepcopy
 from uuid import uuid4
 
 from engram import sessions
-from engram.artifacts import cached_response_artifact_to_dict
+from engram.artifacts import cached_response_artifact_to_dict, metadata_values_equal
 from engram.constants import DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA, REGULATOR_OUTCOMES
 from engram.constants_artifacts import MAX_ARTIFACT_ID_BYTES, MAX_SOURCE_LABEL_BYTES, LifecycleState, Tier
 from engram.constants_evidence import EligibilityExclusionReason
@@ -119,6 +119,12 @@ def propose(
             required_source_label=required_source_label,
         )
 
+        while request_id in core.inflight_proposals:
+            if core.inflight_proposals.get(request_id, "") != signature:
+                raise ConflictError("request_id is already associated with a different proposal request")
+            core.resolution_condition.wait()
+            core.require_running()
+
         existing_proposal_id = core.proposal_requests.get(request_id, "")
         if existing_proposal_id:
             existing = core.proposals.get(existing_proposal_id, {})
@@ -129,164 +135,172 @@ def propose(
             result = service_proposal_result(existing, idempotent=True)
             return result
 
-        scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
-        feedback_frame = core.query_frame_builder.build(
-            request,
-            scope,
-            required_metadata=required_metadata,
-            required_source_label=required_source_label,
-            diagnostic_seed=f"proposal:{request_id}",
-        )
-        feedback_policy_value = policy_fingerprint(core.resolution_orchestrator.internal_fusion.policy)
-        frame_eligibility_context = feedback_frame.get("eligibility_context", {})
-        response_artifacts = core.engram.response_repository.trusted_artifacts()
-
-        def artifact_matches_scope(artifact: dict) -> bool:
-            statement_id = str(artifact.get("statement_id", ""))
-            generation = artifact.get("generation", 0)
-            if isinstance(generation, bool) or not isinstance(generation, int):
-                raise LifecycleError("accepted-response artifact generation is malformed")
-            if core.engram.feedback_store.trusted_stale_excluded(statement_id, generation, True):
-                return False
-            if core.engram.feedback_store.trusted_policy_suppressed(statement_id, namespace, feedback_policy_value):
-                return False
-            if (
-                artifact.get("scope", {}) != scope
-                or getattr(artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
-            ):
-                return False
-            if frame_eligibility_context.get("evaluation_time_available", False):
-                validity_reason = validity_exclusion_reason(artifact, frame_eligibility_context.get("evaluation_time", ""))
-                if validity_reason != EligibilityExclusionReason.ELIGIBLE:
-                    return False
-            provenance = artifact.get("provenance", {})
-            if required_source_label and provenance.get("source_label", "") != required_source_label:
-                return False
-            artifact_metadata = artifact.get("metadata", {})
-            if not isinstance(provenance, dict) or not isinstance(artifact_metadata, dict):
-                raise LifecycleError("accepted-response artifact metadata is malformed")
-            result = all(
-                key in artifact_metadata and artifact_metadata.get(key, {}) == value for key, value in required_metadata.items()
-            )
-            return result
-
-        exact_artifact: dict[str, object] = {}
+        core.inflight_proposals[request_id] = signature
         try:
-            eligibility_context = capture_standalone_eligibility_context(core.internal_clock, scope, True)
-            exact = core.engram.response_repository.exact_lookup(
-                scoped_retrieval_key_from_text(scope, request),
-                eligibility_context,
-            )
-            lookup = exact.get("lookup", {})
-            if lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.FOUND:
-                found = response_artifacts.get(lookup.get("statement_id", ""), {})
-                if found and artifact_matches_scope(found):
-                    exact_artifact = found
-        except InvalidRequestError:
-            exact_artifact = {}
-        sparse_matches = ()
-        if not exact_artifact:
-            sparse_discovery = core.engram.sparse_candidates(
+            scope = scope_key(namespace=namespace, context_fingerprint=context_fingerprint)
+            feedback_frame = core.query_frame_builder.build(
                 request,
                 scope,
-                limit=limit,
-                max_working_memory_bytes=64 * 1024 * 1024,
-                artifact_filter=artifact_matches_scope,
+                required_metadata=required_metadata,
+                required_source_label=required_source_label,
+                diagnostic_seed=f"proposal:{request_id}",
             )
-            if sparse_discovery.get("complete", False):
-                sparse_matches = tuple(
-                    (response_artifacts.get(match.get("statement_id", ""), {}), float(match.get("score", 0.0)))
-                    for match in sparse_discovery.get("matches", ())
+            feedback_policy_value = policy_fingerprint(core.resolution_orchestrator.internal_fusion.policy)
+            frame_eligibility_context = feedback_frame.get("eligibility_context", {})
+            response_artifacts = core.engram.response_repository.trusted_artifacts()
+
+            def artifact_matches_scope(artifact: dict) -> bool:
+                statement_id = str(artifact.get("statement_id", ""))
+                generation = artifact.get("generation", 0)
+                if isinstance(generation, bool) or not isinstance(generation, int):
+                    raise LifecycleError("accepted-response artifact generation is malformed")
+                if core.engram.feedback_store.trusted_stale_excluded(statement_id, generation, True):
+                    return False
+                if core.engram.feedback_store.trusted_policy_suppressed(statement_id, namespace, feedback_policy_value):
+                    return False
+                if (
+                    artifact.get("scope", {}) != scope
+                    or getattr(artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
+                ):
+                    return False
+                if frame_eligibility_context.get("evaluation_time_available", False):
+                    validity_reason = validity_exclusion_reason(artifact, frame_eligibility_context.get("evaluation_time", ""))
+                    if validity_reason != EligibilityExclusionReason.ELIGIBLE:
+                        return False
+                provenance = artifact.get("provenance", {})
+                if required_source_label and provenance.get("source_label", "") != required_source_label:
+                    return False
+                artifact_metadata = artifact.get("metadata", {})
+                if not isinstance(provenance, dict) or not isinstance(artifact_metadata, dict):
+                    raise LifecycleError("accepted-response artifact metadata is malformed")
+                result = all(
+                    key in artifact_metadata and metadata_values_equal(artifact_metadata.get(key, {}), value)
+                    for key, value in required_metadata.items()
                 )
-        vector_matches = (
-            ()
-            if exact_artifact
-            else core.engram.vector_supported_matches(
-                request,
-                limit=limit,
-                artifact_filter=artifact_matches_scope,
+                return result
+
+            exact_artifact: dict[str, object] = {}
+            try:
+                eligibility_context = capture_standalone_eligibility_context(core.internal_clock, scope, True)
+                exact = core.engram.response_repository.exact_lookup(
+                    scoped_retrieval_key_from_text(scope, request),
+                    eligibility_context,
+                )
+                lookup = exact.get("lookup", {})
+                if lookup.get("outcome", ExactLookupOutcome.MISS) == ExactLookupOutcome.FOUND:
+                    found = response_artifacts.get(lookup.get("statement_id", ""), {})
+                    if found and artifact_matches_scope(found):
+                        exact_artifact = found
+            except InvalidRequestError:
+                exact_artifact = {}
+            sparse_matches = ()
+            if not exact_artifact:
+                sparse_discovery = core.engram.sparse_candidates(
+                    request,
+                    scope,
+                    limit=limit,
+                    max_working_memory_bytes=64 * 1024 * 1024,
+                    artifact_filter=artifact_matches_scope,
+                )
+                if sparse_discovery.get("complete", False):
+                    sparse_matches = tuple(
+                        (response_artifacts.get(match.get("statement_id", ""), {}), float(match.get("score", 0.0)))
+                        for match in sparse_discovery.get("matches", ())
+                    )
+            vector_matches = (
+                ()
+                if exact_artifact
+                else core.engram.vector_supported_matches(
+                    request,
+                    limit=limit,
+                    artifact_filter=artifact_matches_scope,
+                )
             )
-        )
-        merged = {}
-        match_sources = (
-            (("exact", ((exact_artifact, 1.0),)),) if exact_artifact else (("keyword", sparse_matches), ("vector", vector_matches))
-        )
-        for source, matches in match_sources:
-            for artifact, score in matches:
-                if not artifact or not artifact_matches_scope(artifact):
-                    continue
+            merged = {}
+            match_sources = (
+                (("exact", ((exact_artifact, 1.0),)),)
+                if exact_artifact
+                else (("keyword", sparse_matches), ("vector", vector_matches))
+            )
+            for source, matches in match_sources:
+                for artifact, score in matches:
+                    if not artifact or not artifact_matches_scope(artifact):
+                        continue
+                    statement_id = artifact.get("statement_id", "")
+                    entry = merged.setdefault(
+                        statement_id,
+                        {
+                            "artifact": artifact,
+                            "keyword_score": 0.0,
+                            "vector_score": 0.0,
+                        },
+                    )
+                    score_field = "keyword_score" if source == "exact" else f"{source}_score"
+                    entry[score_field] = max(float(entry.get(score_field, 0.0)), float(score))
+            ranked = sorted(
+                merged.values(),
+                key=lambda entry: (
+                    max(entry.get("keyword_score", 0.0), entry.get("vector_score", 0.0)),
+                    entry.get("artifact", {}).get("provenance", {}).get("accepted_at", ""),
+                    entry.get("artifact", {}).get("statement_id", ""),
+                ),
+                reverse=True,
+            )[:limit]
+            candidates = []
+            queried_response_ids = []
+            for entry in ranked:
+                artifact = entry.get("artifact", {})
+                keyword_score = entry.get("keyword_score", 0.0)
+                vector_score = entry.get("vector_score", 0.0)
                 statement_id = artifact.get("statement_id", "")
-                entry = merged.setdefault(
-                    statement_id,
-                    {
-                        "artifact": artifact,
-                        "keyword_score": 0.0,
-                        "vector_score": 0.0,
-                    },
-                )
-                score_field = "keyword_score" if source == "exact" else f"{source}_score"
-                entry[score_field] = max(float(entry.get(score_field, 0.0)), float(score))
-        ranked = sorted(
-            merged.values(),
-            key=lambda entry: (
-                max(entry.get("keyword_score", 0.0), entry.get("vector_score", 0.0)),
-                entry.get("artifact", {}).get("provenance", {}).get("accepted_at", ""),
-                entry.get("artifact", {}).get("statement_id", ""),
-            ),
-            reverse=True,
-        )[:limit]
-        candidates = []
-        queried_response_ids = []
-        for entry in ranked:
-            artifact = entry.get("artifact", {})
-            keyword_score = entry.get("keyword_score", 0.0)
-            vector_score = entry.get("vector_score", 0.0)
-            statement_id = artifact.get("statement_id", "")
-            selected_score = max(keyword_score, vector_score)
-            queried_response_ids.append(statement_id)
-            candidate = artifact_candidate_result(artifact, selected_score)
-            candidate["query_count"] = candidate.get("query_count", 0) + 1
-            candidate["retrieval"] = {
-                "keyword_score": keyword_score,
-                "vector_score": vector_score,
-                "selected": "exact" if exact_artifact else "vector" if vector_score > keyword_score else "keyword",
+                selected_score = max(keyword_score, vector_score)
+                queried_response_ids.append(statement_id)
+                candidate = artifact_candidate_result(artifact, selected_score)
+                candidate["query_count"] = candidate.get("query_count", 0) + 1
+                candidate["retrieval"] = {
+                    "keyword_score": keyword_score,
+                    "vector_score": vector_score,
+                    "selected": "exact" if exact_artifact else "vector" if vector_score > keyword_score else "keyword",
+                }
+                candidates.append(candidate)
+            proposal_id = f"proposal_{uuid4().hex[:16]}"
+            proposal = {
+                "proposal_id": proposal_id,
+                "request_id": request_id,
+                "user_id": normalized_user_id,
+                "namespace": namespace,
+                "context_fingerprint": context_fingerprint,
+                "resolved_request": feedback_frame.get("resolved_text", ""),
+                "keywords": list(feedback_frame.get("identity", {}).get("lexical_terms", ())),
+                "candidates": candidates,
             }
-            candidates.append(candidate)
-        proposal_id = f"proposal_{uuid4().hex[:16]}"
-        proposal = {
-            "proposal_id": proposal_id,
-            "request_id": request_id,
-            "user_id": normalized_user_id,
-            "namespace": namespace,
-            "context_fingerprint": context_fingerprint,
-            "resolved_request": feedback_frame.get("resolved_text", ""),
-            "keywords": list(feedback_frame.get("identity", {}).get("lexical_terms", ())),
-            "candidates": candidates,
-        }
-        queried_ids = tuple(sorted(queried_response_ids))
-        candidate_responses = {candidate.get("statement_id", ""): candidate.get("response", "") for candidate in candidates}
-        record = {
-            "signature": signature,
-            "proposal": proposal,
-            "candidate_responses": candidate_responses,
-            "queried_response_ids": queried_ids,
-            "queries_recorded": not queried_ids,
-            "resolution": {},
-            "resolution_signature": "",
-            "pending_resolution": {},
-            "feedback_frame": feedback_frame,
-            "candidacy_observations": (),
-            "candidacy_applied": not candidates,
-        }
-        core.proposals[proposal_id] = record
-        core.proposal_requests[request_id] = proposal_id
-        core.regulated_metrics["proposals"] += 1
-        if not candidates:
-            core.regulated_metrics["misses"] += 1
-        core.enforce_transient_bound()
-        finish_proposal_accounting(core, request_id, proposal_id, record)
-        result = service_proposal_result(record, idempotent=False)
-        return result
+            queried_ids = tuple(sorted(queried_response_ids))
+            candidate_responses = {candidate.get("statement_id", ""): candidate.get("response", "") for candidate in candidates}
+            record = {
+                "signature": signature,
+                "proposal": proposal,
+                "candidate_responses": candidate_responses,
+                "queried_response_ids": queried_ids,
+                "queries_recorded": not queried_ids,
+                "resolution": {},
+                "resolution_signature": "",
+                "pending_resolution": {},
+                "feedback_frame": feedback_frame,
+                "candidacy_observations": (),
+                "candidacy_applied": not candidates,
+            }
+            core.proposals[proposal_id] = record
+            core.proposal_requests[request_id] = proposal_id
+            core.regulated_metrics["proposals"] += 1
+            if not candidates:
+                core.regulated_metrics["misses"] += 1
+            core.enforce_transient_bound()
+            finish_proposal_accounting(core, request_id, proposal_id, record)
+            result = service_proposal_result(record, idempotent=False)
+            return result
+        finally:
+            core.inflight_proposals.pop(request_id, "")
+            core.resolution_condition.notify_all()
 
 
 def resolve(core, proposal_id: str, outcome: str, statement_id: str = "", reason: str = "") -> dict:
@@ -385,6 +399,8 @@ def record_recall(core, request_id: str, statement_ids: list) -> list:
             raise InvalidRequestError("statement_ids must be a list")
         for statement_id in statement_ids:
             require_any_text(statement_id, "statement_id", MAX_ARTIFACT_ID_BYTES, allow_empty=False)
+            core.engram.response_repository.get_artifact(statement_id)
+        for statement_id in statement_ids:
             core.response_mutations.record_response_hit(
                 statement_id, accounting_request_id("recall-hit", f"{request_id}\0{statement_id}")
             )
@@ -405,13 +421,16 @@ def current_proposal_candidate(core, record: dict, statement_id: str) -> dict:
     """Return the proposed artifact while it is still the accepted candidate, or raise a conflict.
 
     The same text survives a retire, supersede, or invalidation, so an accepted verdict
-    also requires the artifact to be ACTIVE. Generation is not compared: proposal
-    accounting advances it.
+    also requires the artifact to be ACTIVE and valid at evaluation time. Generation is
+    not compared: proposal accounting advances it.
     """
     current_artifact = core.engram.response_repository.get_artifact(statement_id)
+    evaluation_time = canonical_utc(core.internal_clock())
+    validity_reason = validity_exclusion_reason(current_artifact, evaluation_time)
     if (
         current_artifact.get("response", "") != record.get("candidate_responses", {}).get(statement_id, "")
         or getattr(current_artifact.get("lifecycle", LifecycleState.RETIRED), "value", "") != "ACTIVE"
+        or validity_reason != EligibilityExclusionReason.ELIGIBLE
     ):
         raise ConflictError("candidate is no longer current; resolve it as rejected_stale")
     return current_artifact

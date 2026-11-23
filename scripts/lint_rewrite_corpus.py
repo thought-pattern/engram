@@ -27,7 +27,17 @@ def lint(cases_path: Path) -> dict[str, object]:
     structural = list(lint_rewrite_corpus(rules))
     engine = RewriteEngine(rules)
     regressions = []
-    for raw_case in internal_cases(cases_path):
+    regression_cases = internal_cases(cases_path)
+    if not regression_cases:
+        regressions.append(
+            {
+                "severity": "error",
+                "code": "empty_regression_corpus",
+                "case_id": "",
+                "detail": "rewrite evaluation corpus contains no regression cases",
+            }
+        )
+    for raw_case in regression_cases:
         case = dict(raw_case)
         case_id = str(case.get("case_id", ""))
         try:

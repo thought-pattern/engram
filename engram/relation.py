@@ -4,6 +4,7 @@ from math import isfinite as math_isfinite
 
 from spacy.tokens import Doc
 
+from engram.constants_identity import MAX_ENTITIES
 from engram.constants_relation import (
     CANONICAL_RESOLUTION_FIELDS,
     MAX_RELATION_CANDIDATES,
@@ -61,7 +62,7 @@ def canonical_resolution(
     normalized_evidence = tuple(
         require_identifier(value, "canonical resolution evidence", maximum_bytes=MAX_RELATION_LABEL_BYTES) for value in evidence
     )
-    if len(normalized_ids) > MAX_RELATION_CANDIDATES or normalized_ids != tuple(sorted(set(normalized_ids))):
+    if len(normalized_ids) > MAX_ENTITIES or normalized_ids != tuple(sorted(set(normalized_ids))):
         raise InvalidRequestError("canonical resolution candidate IDs must be bounded, unique, and sorted")
     if len(normalized_evidence) > MAX_RELATION_SURFACES or normalized_evidence != tuple(sorted(set(normalized_evidence))):
         raise InvalidRequestError("canonical resolution evidence must be bounded, unique, and sorted")

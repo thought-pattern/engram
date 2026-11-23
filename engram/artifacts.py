@@ -136,6 +136,26 @@ def freeze_json_value(value: object, name: str, depth: int, item_count: list[int
     raise InvalidRequestError(f"{name} contains an unsupported JSON value")
 
 
+def metadata_values_equal(left: object, right: object) -> bool:
+    """Compare JSON metadata values with strict Boolean/number typing and list/tuple equivalence."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        result = isinstance(left, bool) and isinstance(right, bool) and left == right
+        return result
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        result = left == right
+        return result
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        result = len(left) == len(right) and all(
+            metadata_values_equal(first, second) for first, second in zip(left, right, strict=True)
+        )
+        return result
+    if isinstance(left, dict) and isinstance(right, dict):
+        result = set(left) == set(right) and all(metadata_values_equal(left.get(key, ()), right.get(key, ())) for key in left)
+        return result
+    result = isinstance(left, str) and isinstance(right, str) and left == right
+    return result
+
+
 def freeze_lifecycle_audit(value: object) -> dict:
     """Validate the reserved lifecycle audit a terminal transition writes into metadata."""
     if not isinstance(value, dict):

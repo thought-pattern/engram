@@ -4,6 +4,7 @@ from hashlib import sha256 as hashlib_sha256
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
 
+from engram.artifacts import metadata_values_equal
 from engram.constants import EARLIEST_UTC
 from engram.constants_artifacts import LifecycleState
 from engram.constants_fusion import (
@@ -56,6 +57,7 @@ from engram.feedback_values import (
     internal_fingerprint,
 )
 from engram.graph import validate_proposition_projection
+from engram.graph_recall import strict_relation_one_hop_projections
 from engram.relation import phrase_relation_result, select_relation_propositions
 from engram.reranking import TransparentLogisticReranker
 from engram.resolution import (
@@ -424,13 +426,13 @@ class EngramCandidateAuthority:
                 TemporalQueryOperator.NOW,
             }
             try:
-                one_hop_rows = self.internal_engram.relation_one_hop_proposition_projections(
+                one_hop_rows = strict_relation_one_hop_projections(
+                    self.internal_engram,
                     expected_identity[0],
                     expected_identity[1],
                     row_limit=MAX_RELATION_PLAN_ROWS,
                     include_historical=include_historical,
                     basis_window=assertion_basis_window(frame),
-                    raise_on_failure=True,
                 )
             except (RuntimeError, ValueError):
                 result = {}
@@ -564,10 +566,21 @@ class EngramCandidateAuthority:
         proposition_ids, identity_chain, trust_chain, predicate_labels, terminal_labels, terminal_types = chains
         try:
             operator = GraphCompositionOperator(str(provenance.get("operator", "")))
-            object_type = ExpectedObjectType(str(terminal_types[0])) if terminal_types else ExpectedObjectType.UNKNOWN
+            terminal_type = ExpectedObjectType(str(terminal_types[0])) if terminal_types else ExpectedObjectType.UNKNOWN
         except ValueError:
             result = {}
             return result
+        if operator == GraphCompositionOperator.COUNT:
+            object_type = ExpectedObjectType.NUMBER
+        elif operator in {
+            GraphCompositionOperator.EXISTS,
+            GraphCompositionOperator.AND,
+            GraphCompositionOperator.OR,
+            GraphCompositionOperator.NOT,
+        }:
+            object_type = ExpectedObjectType.BOOLEAN
+        else:
+            object_type = terminal_type
         evaluator = PropositionEligibilityEvaluator()
         for proposition_id, identity_value, trust in zip(proposition_ids, identity_chain, trust_chain, strict=True):
             identity = identity_value if isinstance(identity_value, tuple) else ()
@@ -825,10 +838,12 @@ class EngramCandidateAuthority:
                 return result
             if "generation" in candidate_provenance:
                 candidate_generation = candidate_provenance.get("generation", 0)
+                content_gen = self.internal_engram.response_repository.content_generation(statement_id)
                 if (
                     isinstance(candidate_generation, bool)
                     or not isinstance(candidate_generation, int)
-                    or candidate_generation != generation
+                    or candidate_generation < max(1, content_gen)
+                    or candidate_generation > generation
                 ):
                     result = candidate_eligibility(
                         False,
@@ -843,7 +858,8 @@ class EngramCandidateAuthority:
                 return result
             # Presence is tested first, so the lookup default is never compared.
             if any(
-                key not in metadata or metadata.get(key, "") != value for key, value in frame.get("required_metadata", {}).items()
+                key not in metadata or not metadata_values_equal(metadata.get(key, ""), value)
+                for key, value in frame.get("required_metadata", {}).items()
             ):
                 result = candidate_eligibility(False, False, False, (FusionPolicyReason.REQUIRED_METADATA_MISMATCH,))
                 return result
@@ -1233,7 +1249,7 @@ class CandidateFusionEngine:
         result = merge_validated_candidate_eligibility(structural, authority)
         return result
 
-    def internal_score(self, normalized: dict) -> tuple[float, dict[FusionFeature, float]]:
+    def internal_score(self, normalized: dict, *, answer_eligible: bool = True) -> tuple[float, dict[FusionFeature, float]]:
         # The validated policy weights and normalized values cover every FusionFeature.
         weights = self.policy.get("weights", {})
         normalized_values = normalized.get("values", {})
@@ -1254,7 +1270,7 @@ class CandidateFusionEngine:
         base = numerator / denominator if denominator else 0.0
         exact = normalized_values.get(FusionFeature.EXACT, 0.0) if FusionFeature.EXACT in normalized.get("available", ()) else 0.0
         weighted[FusionFeature.EXACT] = exact
-        score = exact + (1.0 - exact) * base
+        score = exact + (1.0 - exact) * base if answer_eligible else max(exact * 0.5, base)
         bounded_score = bounded_unit(score)
         result = (bounded_score, dict(weighted))
         return result
@@ -1363,7 +1379,7 @@ class CandidateFusionEngine:
             reasons.append(FusionPolicyReason.IDENTITY_FEATURE_MISMATCH)
         if (
             active
-            and not exact_present
+            and not deterministic_present
             and frame.get("expected_object_type", ExpectedObjectType.UNKNOWN) != ExpectedObjectType.UNKNOWN
             and (FusionFeature.OBJECT_TYPE not in available or values.get(FusionFeature.OBJECT_TYPE, 0.0) == 0.0)
         ):
@@ -1378,7 +1394,7 @@ class CandidateFusionEngine:
             "feature_available": eligibility.get("feature_available", ()),
         }
         normalized = {"values": values, "available": tuple(feature for feature in FusionFeature if feature in available)}
-        score, score_contributions = self.internal_score(normalized)
+        score, score_contributions = self.internal_score(normalized, answer_eligible=answer_eligible)
         digest = hashlib_sha256(f"{self.policy_fingerprint}:{frame.get('diagnostic_id', '')}:{statement_id}".encode()).hexdigest()
         fused = trusted_candidate(
             candidate_id=f"fused:sha256:{digest}",

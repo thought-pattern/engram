@@ -156,27 +156,51 @@ def build_evidence_package(
     omitted = duplicate_count
     if duplicate_count:
         reasons.add(EvidencePackageTruncationReason.DUPLICATE_PROPOSITION_ID)
-    retained = canonical[:retained_limit]
-    if len(canonical) > retained_limit:
-        omitted += len(canonical) - retained_limit
-        reasons.add(EvidencePackageTruncationReason.RECORD_LIMIT)
-
+    empty_envelope = {
+        "records": (),
+        "retained_count": 0,
+        "omitted_count": 0,
+        "truncated": False,
+        "truncation_reasons": (),
+    }
+    if encoded_size(evidence_package_payload(empty_envelope)) > byte_limit:
+        raise InvalidRequestError("evidence package max_bytes cannot contain the empty package envelope")
+    retained_items: list[dict] = []
+    for record in canonical:
+        if len(retained_items) >= retained_limit:
+            omitted += 1
+            reasons.add(EvidencePackageTruncationReason.RECORD_LIMIT)
+            continue
+        trial_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
+        trial_records = (*retained_items, record)
+        trial_package: dict = {
+            "records": trial_records,
+            "retained_count": len(trial_records),
+            "omitted_count": omitted,
+            "truncated": omitted > 0,
+            "truncation_reasons": trial_reasons,
+        }
+        if encoded_size(evidence_package_payload(trial_package)) <= byte_limit:
+            retained_items.append(record)
+        else:
+            omitted += 1
+            reasons.add(EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT)
     while True:
         ordered_reasons = tuple(sorted(reasons, key=lambda reason: reason.value))
+        retained_tuple = tuple(retained_items)
         package: dict = {
-            "records": retained,
-            "retained_count": len(retained),
+            "records": retained_tuple,
+            "retained_count": len(retained_tuple),
             "omitted_count": omitted,
             "truncated": omitted > 0,
             "truncation_reasons": ordered_reasons,
         }
-        payload = evidence_package_payload(package)
-        if encoded_size(payload) <= byte_limit:
+        if encoded_size(evidence_package_payload(package)) <= byte_limit:
             result = package
             break
-        if not retained:
+        if not retained_items:
             raise InvalidRequestError("evidence package max_bytes cannot contain the empty package envelope")
-        retained = retained[:-1]
+        retained_items.pop()
         omitted += 1
         reasons.add(EvidencePackageTruncationReason.SERIALIZED_SIZE_LIMIT)
     return result

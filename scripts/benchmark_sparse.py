@@ -8,14 +8,13 @@ from pathlib import Path
 from sqlite3 import connect as sqlite3_connect
 from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import sparse_config
 from engram.constants_artifacts import INITIAL_ARTIFACT_STATISTICS, LifecycleState, Tier
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.sparse import SparseIndex, search_sparse_artifacts, sparse_document_from_artifact, sparse_tokens
-from scripts.benchmark_metadata import benchmark_source_state, recorded_at
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/sparse/benchmark.json")
 SCALE_DOCUMENTS = 10_000
@@ -259,6 +258,8 @@ def internal_relevance(
                 "top_statement_ids": ids,
             }
         )
+    if positive < 1 or negatives < 1:
+        raise ValueError("sparse benchmark corpus requires at least one positive query and one negative control")
     result = {
         "engine": name,
         "positive_cases": positive,
@@ -360,14 +361,12 @@ def scale_profile() -> dict:
     cold_build = internal_measure(lambda: query(timed_index), 1)
     steady_query = internal_measure(lambda: query(timed_index), SCALE_QUERY_SAMPLES)
     traced_index = SparseIndex()
-    tracemalloc_start()
-    cold_outcome = query(traced_index)
-    cold_current_bytes, cold_peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
-    tracemalloc_start()
-    steady_outcome = query(traced_index)
-    query_current_bytes, query_peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as cold_scope:
+        cold_outcome = query(traced_index)
+        cold_current_bytes, cold_peak_bytes = cold_scope.read()
+    with TracedMemoryScope() as steady_scope:
+        steady_outcome = query(traced_index)
+        query_current_bytes, query_peak_bytes = steady_scope.read()
     memory_complete = cold_outcome.get("complete", False) and steady_outcome.get("complete", False)
     result = {
         "documents": SCALE_DOCUMENTS,
@@ -399,10 +398,12 @@ def benchmark(corpus_path: Path, repeats: int = 50, include_scale: bool = True) 
         raise ValueError(f"sparse benchmark corpus is missing gates: {', '.join(missing_gates)}")
     selected_scope = scope_key(namespace=str(corpus.get("namespace", "")))
     # Each corpus document becomes one accepted response in the corpus namespace.
+    if not documents:
+        raise ValueError("sparse benchmark corpus documents must not be empty")
     accepted = []
     for raw in documents:
         if not isinstance(raw, dict):
-            continue
+            raise ValueError("sparse benchmark corpus documents must be objects")
         request = str(raw.get("request", ""))
         aliases_value = raw.get("aliases", [])
         if not isinstance(aliases_value, list):

@@ -262,6 +262,20 @@ def current_proposition_projection(
     return result
 
 
+def strict_current_proposition_projection(
+    engram,
+    proposition_id: str,
+    basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+) -> tuple[dict, ...]:
+    """Re-read a Proposition by ID while propagating database failures on unpatched Engram readers."""
+    reader = engram.current_proposition_projection
+    if getattr(reader, "__func__", ()) is current_proposition_projection:
+        result = current_proposition_projection(engram, proposition_id, basis_window, raise_on_failure=True)
+        return result
+    result = reader(proposition_id, basis_window)
+    return result
+
+
 def warm_vector_recall(engram) -> bool:
     """Load the query model and report whether the optional graph ANN path is ready."""
     graph_config = engram.config.get("graph", {})
@@ -440,6 +454,44 @@ def relation_one_hop_proposition_projections(
         max_working_memory_bytes,
     )
     run_cooperative_check(cooperative_check)
+    return result
+
+
+def strict_relation_one_hop_projections(
+    engram,
+    subject_entity_id: str,
+    predicate_id: str,
+    *,
+    row_limit: int = MAX_RELATION_PLAN_ROWS,
+    include_historical: bool = False,
+    cooperative_check=(),
+    max_working_memory_bytes: int = 0,
+    basis_window: dict = UNCONSTRAINED_ASSERTION_BASIS,
+) -> list[dict]:
+    """Run one-hop Proposition projections while propagating database failures on unpatched readers."""
+    reader = engram.relation_one_hop_proposition_projections
+    if getattr(reader, "__func__", ()) is relation_one_hop_proposition_projections:
+        result = relation_one_hop_proposition_projections(
+            engram,
+            subject_entity_id,
+            predicate_id,
+            row_limit=row_limit,
+            include_historical=include_historical,
+            cooperative_check=cooperative_check,
+            max_working_memory_bytes=max_working_memory_bytes,
+            basis_window=basis_window,
+            raise_on_failure=True,
+        )
+        return result
+    result = reader(
+        subject_entity_id,
+        predicate_id,
+        row_limit=row_limit,
+        include_historical=include_historical,
+        cooperative_check=cooperative_check,
+        max_working_memory_bytes=max_working_memory_bytes,
+        basis_window=basis_window,
+    )
     return result
 
 

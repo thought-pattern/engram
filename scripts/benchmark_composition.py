@@ -228,6 +228,9 @@ def run_case(case: dict[str, object], frame, evaluator: PropositionEligibilityEv
         or not all(isinstance(reason, str) for reason in expected_reasons)
     ):
         raise ValueError("composition corpus expected reasons must be a string list")
+    unknown_expected = sorted(name for name in expected if name != "reasons" and name not in observed)
+    if unknown_expected:
+        raise ValueError(f"composition corpus expected unknown measurement(s): {', '.join(unknown_expected)}")
     comparable = {name: observed.get(name, False) for name in expected if name != "reasons"}
     reasons_match = set(expected_reasons).issubset(observed.get("reasons", []))
     passed = comparable == {name: value for name, value in expected.items() if name != "reasons"} and reasons_match
@@ -265,8 +268,8 @@ def run(corpus_path: Path) -> dict[str, object]:
     results = []
     for split in ("development", "held_out"):
         raw_cases = corpus.get(split, [])
-        if split not in corpus or not isinstance(raw_cases, list):
-            raise ValueError("composition corpus splits must be lists")
+        if split not in corpus or not isinstance(raw_cases, list) or not raw_cases:
+            raise ValueError(f"composition corpus {split} split must be a non-empty list")
         for raw_case in raw_cases:
             if not isinstance(raw_case, dict):
                 raise ValueError("composition corpus cases must be objects")

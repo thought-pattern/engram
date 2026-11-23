@@ -13,14 +13,9 @@ from tempfile import TemporaryDirectory as tempfile_TemporaryDirectory
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
 
 from mcp.client import Client
-from yaml import safe_dump as yaml_safe_dump, safe_load as yaml_safe_load
+from yaml import safe_dump as yaml_safe_dump
 
-from engram.constants_service import (
-    MCP_CONFORMANCE_MESSAGES,
-    MCP_CONFORMANCE_MINIMUM_TURNS,
-    MCP_TURN_EVALUATION_CHECKS,
-    MCP_TURN_EVENT_FIELDS,
-)
+from engram.config import read_config_mapping
 from engram.conversation_seed import load_conversation_pairs
 from engram.mcp_server import EngramMCPServer, MCPConversationService
 from scripts.benchmark_metadata import benchmark_source_state
@@ -29,6 +24,56 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 
 DEFAULT_OUTPUT = Path("eval/results/artifacts/mcp-conversation-1000-turns.json")
 PREFERENCE_CONTINUITY_SEED = REPOSITORY / "eval" / "fixtures" / "preference-continuity-mcp-seed.json"
+MCP_CONFORMANCE_MINIMUM_TURNS = 1_000
+MCP_CONFORMANCE_MESSAGES = (
+    "hello",
+    "How are you?",
+    "What can you remember?",
+    "Tell me more.",
+    "Why?",
+    "Where are we?",
+    "When is now?",
+    "Who are you?",
+    "What did I say?",
+    "Continue.",
+)
+MCP_TURN_EVENT_FIELDS = {
+    "turn",
+    "input",
+    "response",
+    "unknown",
+    "user_id",
+    "source",
+    "score",
+    "pattern",
+    "captured",
+    "dialogue_act",
+    "active_topic",
+    "entities",
+    "fact_admissions",
+    "elapsed_seconds",
+    "context_changes",
+    "learned_statements",
+}
+MCP_TURN_EVALUATION_CHECKS = {
+    "exact_fields",
+    "turn_sequence",
+    "input_continuity",
+    "user_continuity",
+    "response_nonempty",
+    "unknown_boolean",
+    "source_nonempty",
+    "score_finite",
+    "pattern_string",
+    "captured_list",
+    "dialogue_act_string",
+    "active_topic_string",
+    "entities_list",
+    "fact_admissions_list",
+    "elapsed_nonnegative",
+    "context_changes_object",
+    "learned_statements_list",
+}
 CONTEXT_RECALL_MESSAGES = (
     "Sushi is good.",
     "What's good?",
@@ -53,18 +98,8 @@ PREFERENCE_CONTINUITY_MESSAGES = (
     "Tell me which animals I dislike.",
     "What preferences did I share?",
 )
-PREFERENCE_CONTINUITY_EXPECTATIONS = {
-    "I like sushi.": (),
-    "I like cats.": (),
-    "I dislike dogs.": (),
-    "What food do I like?": ("sushi",),
-    "What animals do I like?": ("cat",),
-    "What animals do I dislike?": ("dog", "dislike"),
-    "Please remind me what food I like.": ("sushi",),
-    "Tell me which animals I like.": ("cat",),
-    "Tell me which animals I dislike.": ("dog", "dislike"),
-    "What preferences did I share?": ("sushi", "cat", "dog"),
-}
+NEGATIVE_PREFERENCE_MARKERS = ("dislike", "don't like", "do not like", "not like", "hate")
+POSITIVE_PREFERENCE_MARKERS = ("like", "love", "enjoy", "prefer", "favorite")
 # Provisioning-manifest fields copied into the ephemeral semantic config, with their
 # concrete types; every one is required before the copy.
 SEMANTIC_MANIFEST_FIELD_DEFAULTS = {
@@ -109,6 +144,7 @@ def evaluate_turn(result: dict, expected_turn: int, expected_input: str, expecte
         "input_continuity": result.get("input", "") == expected_input,
         "user_continuity": result.get("user_id", "") == expected_user_id,
         "response_nonempty": isinstance(response, str) and bool(response),
+        "unknown_boolean": isinstance(result.get("unknown", ""), bool),
         "source_nonempty": isinstance(source, str) and bool(source),
         "score_finite": (not isinstance(score, bool) and isinstance(score, (int, float)) and math_isfinite(float(score))),
         "pattern_string": isinstance(result.get("pattern", ""), str),
@@ -141,6 +177,41 @@ def evaluate_turn(result: dict, expected_turn: int, expected_input: str, expecte
         "latency_ms": round(latency_ms, 6),
     }
     return evaluation
+
+
+def preference_turn_satisfied(message: str, response_text: str) -> bool:
+    """Verify both the recalled entity and the polarity of a preference-continuity turn."""
+    if message in {"I like sushi.", "I like cats.", "I dislike dogs."}:
+        return True
+    has_negative = any(marker in response_text for marker in NEGATIVE_PREFERENCE_MARKERS)
+    has_positive = any(marker in response_text for marker in POSITIVE_PREFERENCE_MARKERS)
+    if message in {"What food do I like?", "Please remind me what food I like."}:
+        result = "sushi" in response_text and has_positive and not has_negative
+        return result
+    if message in {"What animals do I like?", "Tell me which animals I like."}:
+        result = "cat" in response_text and has_positive and not has_negative
+        return result
+    if message in {"What animals do I dislike?", "Tell me which animals I dislike."}:
+        result = "dog" in response_text and has_negative
+        return result
+    if message == "What preferences did I share?":
+        clauses = [part.strip() for part in response_text.replace(";", ",").replace(".", ",").split(",") if part.strip()]
+        sushi_positive = any(
+            "sushi" in clause
+            and any(pos in clause for pos in POSITIVE_PREFERENCE_MARKERS)
+            and not any(neg in clause for neg in NEGATIVE_PREFERENCE_MARKERS)
+            for clause in clauses
+        )
+        cat_positive = any(
+            "cat" in clause
+            and any(pos in clause for pos in POSITIVE_PREFERENCE_MARKERS)
+            and not any(neg in clause for neg in NEGATIVE_PREFERENCE_MARKERS)
+            for clause in clauses
+        )
+        dog_negative = any("dog" in clause and any(neg in clause for neg in NEGATIVE_PREFERENCE_MARKERS) for clause in clauses)
+        result = sushi_positive and cat_positive and dog_negative
+        return result
+    return True
 
 
 def run_length_encode_passes(evaluations: list[dict]) -> list[dict]:
@@ -222,12 +293,11 @@ async def internal_run(
                 profile_check = "sushi_recall_when_asked"
                 profile_passed = isinstance(response, str) and "sushi" in response.casefold() if message == "What's good?" else True
             elif profile == "preference-continuity":
-                expected_terms = PREFERENCE_CONTINUITY_EXPECTATIONS.get(message, ())
                 response_text = response.casefold() if isinstance(response, str) else ""
                 profile_check = "preference_continuity"
                 # An absent user_id never matches, even for an empty requested user.
                 user_matches = "user_id" in result and result.get("user_id", "") == user_id
-                profile_passed = user_matches and all(term in response_text for term in expected_terms)
+                profile_passed = user_matches and preference_turn_satisfied(message, response_text)
             if profile_check:
                 evaluation["profile_check"] = profile_check
                 evaluation["profile_passed"] = profile_passed
@@ -290,7 +360,7 @@ async def internal_run(
     semantic_active = semantic_status.get("enabled", False) is True
     reranker_active = reranker_status.get("enabled", False) is True
     utility_active = utility_status.get("enabled", False) is True
-    configured_values = yaml_safe_load(Path(config_path).read_text(encoding="utf-8")) if config_path else {}
+    configured_values = read_config_mapping(config_path) if config_path else {}
     retrieval_rewrites_active = configured_values.get("retrieval_rewrites_enabled", False) is True
     optional_components_ready = (
         (not sparse_active or sparse_status.get("ready", False) is True)
@@ -369,6 +439,39 @@ async def internal_run(
     return run_result
 
 
+def build_conformance_config(args, temporary_directory: str) -> str:
+    """Build an ephemeral runtime config preserving supplied settings and resolving relative paths."""
+    if not (args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility):
+        result = str(args.config)
+        return result
+    raw_config: dict = read_config_mapping(args.config) if args.config else {}
+    if args.enable_rewrites:
+        raw_config["retrieval_rewrites_enabled"] = True
+    if args.enable_sparse:
+        existing_sparse = raw_config.get("sparse", {})
+        raw_config["sparse"] = {**(existing_sparse if isinstance(existing_sparse, dict) else {}), "enabled": True}
+    if args.enable_semantic:
+        manifest = json_loads(Path(args.semantic_manifest).read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or not SEMANTIC_MANIFEST_FIELD_DEFAULTS.keys() <= manifest.keys():
+            raise ValueError("--semantic-manifest is malformed")
+        existing_semantic = raw_config.get("semantic", {})
+        raw_config["semantic"] = {
+            **(existing_semantic if isinstance(existing_semantic, dict) else {}),
+            **{name: manifest.get(name, default) for name, default in sorted(SEMANTIC_MANIFEST_FIELD_DEFAULTS.items())},
+            "enabled": True,
+        }
+    if args.enable_reranker:
+        existing_reranker = raw_config.get("reranker", {})
+        raw_config["reranker"] = {**(existing_reranker if isinstance(existing_reranker, dict) else {}), "enabled": True}
+    if args.enable_utility:
+        existing_utility = raw_config.get("utility", {})
+        raw_config["utility"] = {**(existing_utility if isinstance(existing_utility, dict) else {}), "enabled": True}
+    selected_path = Path(temporary_directory) / "config.yml"
+    selected_path.write_text(yaml_safe_dump(raw_config, sort_keys=True), encoding="utf-8")
+    result = str(selected_path)
+    return result
+
+
 def main(argv: tuple[str, ...] = ()) -> int:
     parser = argparse_ArgumentParser(description=__doc__)
     parser.add_argument("--turns", type=int, default=MCP_CONFORMANCE_MINIMUM_TURNS)
@@ -425,35 +528,8 @@ def main(argv: tuple[str, ...] = ()) -> int:
         raise ValueError("--memgraph-probe-every must be nonnegative")
     if args.memgraph_probe_every > args.turns:
         raise ValueError("--memgraph-probe-every must not exceed --turns, or no requested probe would run")
-    selected_config = args.config
     with tempfile_TemporaryDirectory(prefix="engram-mcp-conformance-") as temporary_directory:
-        if args.enable_rewrites or args.enable_sparse or args.enable_semantic or args.enable_reranker or args.enable_utility:
-            raw_config = {}
-            if args.config:
-                loaded = yaml_safe_load(Path(args.config).read_text(encoding="utf-8"))
-                if loaded:
-                    if not isinstance(loaded, dict):
-                        raise ValueError("--config must contain a YAML object")
-                    raw_config = loaded
-            if args.enable_rewrites:
-                raw_config["retrieval_rewrites_enabled"] = True
-            if args.enable_sparse:
-                raw_config["sparse"] = {"enabled": True}
-            if args.enable_semantic:
-                manifest = json_loads(Path(args.semantic_manifest).read_text(encoding="utf-8"))
-                if not isinstance(manifest, dict) or not SEMANTIC_MANIFEST_FIELD_DEFAULTS.keys() <= manifest.keys():
-                    raise ValueError("--semantic-manifest is malformed")
-                raw_config["semantic"] = {
-                    "enabled": True,
-                    **{name: manifest.get(name, default) for name, default in sorted(SEMANTIC_MANIFEST_FIELD_DEFAULTS.items())},
-                }
-            if args.enable_reranker:
-                raw_config["reranker"] = {"enabled": True}
-            if args.enable_utility:
-                raw_config["utility"] = {"enabled": True}
-            selected_path = Path(temporary_directory) / "config.yml"
-            selected_path.write_text(yaml_safe_dump(raw_config, sort_keys=True), encoding="utf-8")
-            selected_config = str(selected_path)
+        selected_config = build_conformance_config(args, temporary_directory)
         result = asyncio_run(
             internal_run(
                 args.turns,

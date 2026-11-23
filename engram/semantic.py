@@ -133,7 +133,7 @@ def representation_specs(artifact: dict, settings: dict) -> tuple[dict, ...]:
             continue
         seen.add(key)
         if len(normalized.encode("utf-8")) > settings.get("max_input_bytes", 0):
-            raise InvalidRequestError("semantic request representation exceeds max_input_bytes")
+            continue
         values.append(
             {
                 "statement_id": artifact.get("statement_id", ""),
@@ -496,6 +496,8 @@ class StandaloneSemanticRetriever:
                     cooperative_check()
                 embedding = record.get("embedding", ())
                 similarity = sum(first * second for first, second in zip(query, embedding, strict=True))
+                if query == embedding or similarity >= 1.0 - 1e-12:
+                    similarity = 1.0
                 if similarity <= 0.0 or similarity < settings.get("min_similarity", 0.0):
                     continue
                 match = {

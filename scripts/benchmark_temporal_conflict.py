@@ -83,7 +83,10 @@ def run(corpus_path: Path) -> dict:
     results = []
     durations = []
     for split in ("development", "held_out"):
-        for case in corpus.get(split, []):
+        split_cases = corpus.get(split, [])
+        if not isinstance(split_cases, list) or not split_cases:
+            raise ValueError(f"temporal conflict corpus {split} split must be a non-empty list")
+        for case in split_cases:
             if not isinstance(case, dict) or not CASE_FIELDS.issubset(case):
                 raise ValueError("temporal conflict corpus cases must declare every case field")
             cardinality = case.get("cardinality", "")

@@ -144,6 +144,8 @@ def sparse_outcome(core: EngramCore) -> dict:
 
 
 def artifact_scenarios(size: int, iterations: int) -> dict:
+    if size < iterations + 2:
+        raise ValueError("accepted-response sizes must be at least iterations + 2")
     # Two cores hold the same size accepted responses (size - 1 unrelated plus the target),
     # one with sparse retrieval enabled; each ledger is seeded like a long-running process's.
     cores = []
@@ -430,8 +432,10 @@ def main(argv: tuple[str, ...] = ()) -> int:
         parser.error("iterations must be at least 3")
     if any(size < 2 for size in (*args.sizes, *args.pattern_sizes, *args.trim_sizes)):
         parser.error("sizes must be at least 2")
-    if any(size <= args.iterations for size in (*args.sizes, *args.pattern_sizes)):
-        parser.error("sizes must exceed the iteration count (each scenario also runs one warm-up)")
+    if any(size < args.iterations + 2 for size in args.sizes):
+        parser.error("accepted-response sizes must be at least iterations + 2 (target plus warm-up and measured retirements)")
+    if any(size <= args.iterations for size in args.pattern_sizes):
+        parser.error("pattern sizes must exceed the iteration count (each scenario also runs one warm-up)")
     FREEZE_GC[0] = not args.no_gc_freeze
     if args.receipts < 0:
         parser.error("receipts must not be negative")

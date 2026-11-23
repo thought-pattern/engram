@@ -1,6 +1,6 @@
 """Canonical native feedback values and explicit interchange codecs."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256 as hashlib_sha256
 from math import isfinite as math_isfinite
 
@@ -139,9 +139,12 @@ def canonical_utc(value: datetime) -> str:
 
 def bucket_start(value: str, bucket_seconds: int) -> str:
     parsed = require_utc_datetime(value, "feedback observed_at")
-    unix_seconds = int(parsed.timestamp())
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    delta = parsed - epoch
+    total_microseconds = (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+    unix_seconds = total_microseconds // 1_000_000
     start_seconds = unix_seconds - (unix_seconds % bucket_seconds)
-    result = canonical_utc(datetime.fromtimestamp(start_seconds, UTC))
+    result = canonical_utc(epoch + timedelta(seconds=start_seconds))
     return result
 
 

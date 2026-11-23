@@ -9,56 +9,43 @@ from logging import getLogger as logging_getLogger
 
 from engram.constants_artifacts import Tier
 from engram.constants_language import MAX_PATTERN_WORDS
-from engram.errors import InvalidRequestError
+from engram.errors import InvalidRequestError, ResourceExhaustedError
 from engram.facts_spacy import extract_facts
 from engram.nlp import extract_fact, fact_query_patterns, fact_subject_upper
 from engram.pattern import pattern_word_count
 from engram.statement_store import visible_to
-from engram.text import normalize
 
 logger = logging_getLogger("engram.core")
 
 
-def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label: str = "", tier: Tier = Tier.DYNAMIC) -> bool:
-    """Learn a fact extracted from natural language.
+def learn_fact_with_id(
+    engram,
+    fact: dict,
+    introduced_by_user_id: str = "",
+    source_label: str = "",
+    tier: Tier = Tier.DYNAMIC,
+) -> tuple[bool, str]:
+    """Learn one extracted fact and return ``(learned, statement_id)``.
 
-    Creates patterns for the subject and common query forms so the fact
-    can be retrieved later.
-
-    Args:
-        fact: The extracted fact to learn.
-        introduced_by_user_id: The person who stated the fact in chat. The
-            fact belongs to them and answers only their chat; empty learns
-            shared knowledge.
-        source_label: Optional non-user source label.
-        tier: Storage tier for the generated statements.
-
-    Returns:
-        True if the fact was learned. False if it is already known, if the
-        subject's pattern belongs to a seed or hand-stored statement, if a
-        person's subject is one a shared statement registers, or if the
-        subject is longer than MAX_PATTERN_WORDS. A new fact about a subject
-        replaces the fact its owner already taught about it.
+    When an identical fact already exists for the same owner, ``(False, existing_id)``
+    is returned; when learning is declined (protected seed/hand-stored pattern or
+    overlong subject), ``(False, "")`` is returned.
     """
     if not isinstance(introduced_by_user_id, str):
         raise ValueError("introduced_by_user_id must be a string")
     if not isinstance(source_label, str):
         raise ValueError("source_label must be a string")
 
-    # Check and store under the re-entrant mutation and statement locks so
-    # concurrent speakers cannot admit duplicate copies of the same fact.
-    # store() takes them in this order too.
     owner = introduced_by_user_id
     subject_pattern = fact_subject_upper(fact)
     if pattern_word_count(subject_pattern) > MAX_PATTERN_WORDS:
         logger.info("Not learning a fact whose subject is longer than %d words", MAX_PATTERN_WORDS)
-        result = False
-        return result
+        declined = (False, "")
+        return declined
     with engram.mutation_lock, engram.statement_lock:
-        # A person's fact never shadows a shared category in their chat.
         if owner and engram.pattern_matcher.holds_category(subject_pattern):
-            result = False
-            return result
+            declined = (False, "")
+            return declined
         carriers = [
             engram.statement_by_id.get(statement_id, {})
             for statement_id in engram.pattern_statements.get(subject_pattern, ())
@@ -67,23 +54,16 @@ def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label
         for existing in carriers:
             if existing.get("introduced_by_user_id", "") != owner or existing.get("pattern", "") != subject_pattern:
                 continue
-            # Restating a fact changes nothing, and only a learned fact about
-            # this subject is replaced: never a seed or hand-stored statement.
-            if (
-                existing.get("tier", Tier.STATIC) != Tier.DYNAMIC
-                or existing.get("text", "") == fact.get("original", "")
-                or subject_pattern not in engram.fact_subject_patterns(existing.get("text", ""))
+            if existing.get("text", "") == fact.get("original", ""):
+                unchanged = (False, existing.get("id", ""))
+                return unchanged
+            if existing.get("tier", Tier.STATIC) != Tier.DYNAMIC or subject_pattern not in engram.fact_subject_patterns(
+                existing.get("text", "")
             ):
-                result = False
-                return result
+                declined = (False, "")
+                return declined
         replaced_ids = set(engram.replaceable_statement_ids(subject_pattern, "", "", owner))
 
-        # Store one fact statement with alternate retrieval patterns.
-        # Aliases live in the matcher and map to this one statement, so a
-        # fact does not consume capacity once per query phrasing. The
-        # statement being replaced gives up its aliases to the new one; an
-        # alias a shared statement or another of the owner's facts already
-        # registers is left to it.
         aliases = []
         for query_pattern in fact_query_patterns(fact)[1:]:
             query_pattern = query_pattern.strip()
@@ -103,10 +83,7 @@ def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label
                 aliases.append(query_pattern)
         aliases = list(dict.fromkeys(aliases))
 
-        # Keyword-index under the original sentence so retrieval sees the
-        # fact's content ("Is the sky blue?" needs [sky, blue], not just
-        # [sky]). store() safely re-enters statement_lock here.
-        engram.store(
+        stored_id = engram.store(
             text=fact.get("original", ""),
             pattern=subject_pattern,
             pattern_aliases=aliases,
@@ -117,8 +94,20 @@ def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label
             replace_learned=True,
         )
 
-    result = True
-    return result
+    outcome = (True, stored_id)
+    return outcome
+
+
+def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label: str = "", tier: Tier = Tier.DYNAMIC) -> bool:
+    """Learn a fact extracted from natural language."""
+    learned, _ = learn_fact_with_id(
+        engram,
+        fact,
+        introduced_by_user_id=introduced_by_user_id,
+        source_label=source_label,
+        tier=tier,
+    )
+    return learned
 
 
 def fact_subject_patterns(engram, text: str) -> set[str]:
@@ -129,6 +118,22 @@ def fact_subject_patterns(engram, text: str) -> set[str]:
         facts = [fact] if fact else []
     result = {fact_subject_upper(fact) for fact in facts}
     return result
+
+
+def store_unpatterned_shared_fact(engram, fact_text: str, source_label: str, tier: Tier) -> str:
+    """Deduplicate against shared unpatterned statements by exact collapsed text and store if new."""
+    collapsed_target = " ".join(fact_text.split())
+    with engram.mutation_lock, engram.statement_lock:
+        for stmt in engram.statements:
+            if (
+                not stmt.get("pattern", "")
+                and not stmt.get("introduced_by_user_id", "")
+                and " ".join(stmt.get("text", "").split()) == collapsed_target
+            ):
+                existing_id = stmt.get("id", "")
+                return existing_id
+        stored_id = engram.store(text=fact_text, tier=tier, introduced_by_user_id="", source_label=source_label)
+    return stored_id
 
 
 def add_fact(engram, text: str, source_label: object = "", tier: Tier = Tier.DYNAMIC) -> str:
@@ -150,25 +155,51 @@ def add_fact(engram, text: str, source_label: object = "", tier: Tier = Tier.DYN
         facts = [fact] if fact else []
 
     if facts:
-        primary_pattern = fact_subject_upper(facts[0])
+        stored_ids: list[str] = []
+        batch_ids: set[str] = set()
         for fact in facts:
-            engram.learn_fact(fact, introduced_by_user_id="", source_label=source_label, tier=tier)
+            subject_pattern = fact_subject_upper(fact)
+            with engram.statement_lock:
+                same_batch_subject = any(
+                    statement_id in batch_ids and statement_id in engram.statement_by_id
+                    for statement_id in engram.pattern_statements.get(subject_pattern, ())
+                )
+            if same_batch_subject:
+                fallback_id = store_unpatterned_shared_fact(
+                    engram,
+                    fact.get("original", fact_text),
+                    source_label,
+                    tier,
+                )
+                if fallback_id:
+                    stored_ids.append(fallback_id)
+                    batch_ids.add(fallback_id)
+                continue
+            _, stmt_id = learn_fact_with_id(
+                engram,
+                fact,
+                introduced_by_user_id="",
+                source_label=source_label,
+                tier=tier,
+            )
+            if not stmt_id:
+                stmt_id = store_unpatterned_shared_fact(
+                    engram,
+                    fact.get("original", fact_text),
+                    source_label,
+                    tier,
+                )
+            if stmt_id:
+                stored_ids.append(stmt_id)
+                batch_ids.add(stmt_id)
         with engram.statement_lock:
-            shared_carriers = [
-                statement_id
-                for statement_id in engram.pattern_statements.get(primary_pattern, ())
-                if statement_id in engram.statement_by_id
-                and not engram.statement_by_id.get(statement_id, {}).get("introduced_by_user_id", "")
-            ]
-            result = shared_carriers[-1] if shared_carriers else ""
-            return result
+            live_ids = [sid for sid in stored_ids if sid in engram.statement_by_id]
+        if not live_ids:
+            raise ResourceExhaustedError("dynamic statement capacity could not admit the fact")
+        primary_id = live_ids[0]
+        return primary_id
 
-    normalized_text = normalize(fact_text)
-    with engram.statement_lock:
-        for stmt in engram.statements:
-            if not stmt.get("pattern", "") and normalize(stmt.get("text", "")) == normalized_text:
-                result = stmt.get("id", "")
-                return result
-
-    result = engram.store(text=fact_text, tier=tier, introduced_by_user_id="", source_label=source_label)
+    result = store_unpatterned_shared_fact(engram, fact_text, source_label, tier)
+    if not result:
+        raise ResourceExhaustedError("dynamic statement capacity could not admit the fact")
     return result

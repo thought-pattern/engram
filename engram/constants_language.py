@@ -212,7 +212,7 @@ POSSESSIVE_PRONOUNS = {"my", "your", "our", "their", "his", "her", "its"}
 
 # spaCy dependency labels marking subjects and objects
 SUBJECT_DEPS = {"nsubj", "nsubjpass"}
-OBJECT_DEPS = {"dobj", "attr", "acomp", "oprd", "dative"}
+OBJECT_DEPS = {"dobj", "attr", "acomp", "oprd"}
 
 # Articles dropped from the front of an extracted span
 ARTICLES = {"a", "an", "the"}
@@ -292,7 +292,8 @@ DEFAULT_CONTRACTIONS: dict[str, str] = {
     "musta": "must have",
     # Apostrophe-less variants. Only forms that are not valid standalone English
     # words are included, to avoid corrupting normal text. Deliberately omitted:
-    # "its", "were", "well", "ill", "id", "shed", "wed", "lets" (all real words).
+    # "its", "were", "well", "ill", "id", "shed", "wed", "lets", "cant", "wont"
+    # (all real words).
     "im": "i am",
     "ive": "i have",
     "youre": "you are",
@@ -324,8 +325,6 @@ DEFAULT_CONTRACTIONS: dict[str, str] = {
     "couldnt": "could not",
     "wouldnt": "would not",
     "shouldnt": "should not",
-    "cant": "cannot",
-    "wont": "will not",
 }
 
 # Person substitution (first person <-> second person)

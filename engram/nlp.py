@@ -95,8 +95,11 @@ def fact_query_patterns(fact: dict) -> list[str]:
 
     # Inverse lookup: "Sushi is good" should answer "What's good?"
     # while retaining the full original sentence as the response.
-    patterns.append(f"WHAT IS {obj}")
-    patterns.append(f"WHAT ARE {obj}")
+    # Negated facts and non-copula action verbs do not define the object.
+    predicate_lower = str(fact.get("predicate", "")).strip().lower()
+    if predicate_lower in COPULAS and not fact.get("negated", False):
+        patterns.append(f"WHAT IS {obj}")
+        patterns.append(f"WHAT ARE {obj}")
 
     return patterns
 
@@ -105,7 +108,8 @@ def is_question(text: str) -> bool:
     """Check if text is a question.
 
     Three detectors: a trailing question mark, a question-word lead
-    (what/who/where/...), or an inverted copula ("Is it ...").
+    (what/who/where/...), or an inverted auxiliary/copula ("Is it ...",
+    "Does copper ...", "Can copper ...").
     """
     if text.rstrip().endswith("?"):
         result = True
@@ -127,8 +131,26 @@ def is_question(text: str) -> bool:
                 return result
 
     words = text.lower().split()
-    result = len(words) >= 2 and words[0] in COPULAS
-    return result
+    if len(words) < 2:
+        return False
+    lead = words[0]
+    second = words[1].rstrip(".,!;:")
+    if lead in (COPULAS | {"am", "does", "did", "could", "would", "should", "shall", "has", "had"}):
+        result = second not in COPULAS
+        return result
+    if len(words) >= 3 and lead in {"can", "will", "might", "must"}:
+        result = second not in COPULAS
+        return result
+    if len(words) >= 3 and lead == "do":
+        result = second != "not"
+        return result
+    if len(words) >= 3 and lead == "have":
+        result = second not in {"a", "an"}
+        return result
+    if len(words) >= 3 and lead == "may":
+        result = second in {"i", "we"}
+        return result
+    return False
 
 
 def input_kind(text: str) -> str:
@@ -231,9 +253,18 @@ def extract_copula_fact(tokens: list[str], tagged: list[tuple[str, str]], origin
             return result
 
     normalized_original = original.rstrip(".") + "."
+    negated = bool(obj_tokens and obj_tokens[0].lower() in {"not", "never", "no"}) or bool(
+        subject_tokens and subject_tokens[0].lower() == "no"
+    )
     # An extracted fact carries the subject, the copula verb as predicate, the
     # complement as obj, and the original sentence.
-    fact = {"subject": subject, "predicate": copula, "obj": obj, "original": normalized_original}
+    fact = {
+        "subject": subject,
+        "predicate": copula,
+        "obj": obj,
+        "original": normalized_original,
+        "negated": negated,
+    }
     return fact
 
 

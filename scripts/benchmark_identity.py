@@ -7,10 +7,9 @@ from pathlib import Path
 from platform import machine as platform_machine, processor as platform_processor
 from sys import argv as sys_argv
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.identity import extract_standalone_identity, normalize_retrieval_key, scope_key, scoped_retrieval_key_from_text
-from scripts.benchmark_metadata import benchmark_source_state
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state
 
 DEFAULT_OUTPUT = Path("eval/results/identity/benchmark.json")
 REQUESTS = (
@@ -64,10 +63,9 @@ def run_benchmark(iterations: int, memory_objects: int) -> dict:
     identity = internal_measure(lambda: extract_standalone_identity(next_request(), scope), iterations)
     scoped_key = internal_measure(lambda: scoped_retrieval_key_from_text(scope, next_request()), iterations)
 
-    tracemalloc_start()
-    identities = [extract_standalone_identity(REQUESTS[index % len(REQUESTS)], scope) for index in range(memory_objects)]
-    current, peak = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as memory_scope:
+        identities = [extract_standalone_identity(REQUESTS[index % len(REQUESTS)], scope) for index in range(memory_objects)]
+        current, peak = memory_scope.read()
     assert len(identities) == memory_objects
 
     result = {

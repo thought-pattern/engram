@@ -104,7 +104,12 @@ def record_resolution(telemetry: dict, resolution: dict, *, replayed: bool) -> b
         resolver = resolvers.get(name, {})
         state = result.get("state", ResolverState.FAILED).value
         candidates = result.get("candidates", ())
-        evidence_count = len(result.get("evidence", ())) + len(result.get("proposition_evidence", ()))
+        candidate_evidence = sum(len(candidate.get("evidence", ())) for candidate in candidates)
+        consumed_evidence = max(0, result.get("consumption", {}).get("evidence", 0) - candidate_evidence)
+        evidence_count = max(
+            len(result.get("evidence", ())) + len(result.get("proposition_evidence", ())),
+            consumed_evidence,
+        )
         states = resolver.get("states", {})
         resolver["invocations"] = resolver.get("invocations", 0) + 1
         states[state] = states.get(state, 0) + 1

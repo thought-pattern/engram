@@ -1,6 +1,7 @@
 """Benchmark Section 13 semantic retrieval and transparent reranking."""
 
 from argparse import ArgumentParser as argparse_ArgumentParser
+from collections import Counter
 from datetime import UTC, datetime
 from importlib import util as importlib_util
 from json import dumps as json_dumps, loads as json_loads
@@ -10,7 +11,6 @@ from resource import RUSAGE_SELF, getrusage as resource_getrusage
 from statistics import fmean as statistics_fmean
 from sys import platform as sys_platform
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from psutil import Process as psutil_Process
 
@@ -21,7 +21,7 @@ from engram.identity import extract_standalone_identity, retrieval_representatio
 from engram.reranking import TransparentLogisticReranker
 from engram.semantic import StandaloneSemanticRetriever, model_artifact_sha256
 from engram.sparse import search_sparse_artifacts
-from scripts.benchmark_metadata import benchmark_source_state
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state
 
 # Model manifest fields the benchmark reads, with the type each carries; a manifest lacking one is refused.
 MODEL_MANIFEST_FIELD_DEFAULTS = {
@@ -84,17 +84,28 @@ def rank(statement_ids: list[str], expected: str) -> int:
 
 def partition_metrics(rows: list[dict]) -> dict:
     positives = [row for row in rows if row.get("expected_statement_id", "")]
-    reciprocal = [1.0 / row.get("rank", 0) if row.get("rank", 0) else 0.0 for row in positives]
+    incomplete_rows = [row for row in rows if not row.get("complete", True)]
+    incomplete_reasons = Counter(str(row.get("reason", "")) for row in incomplete_rows)
+    reciprocal = [1.0 / row.get("rank", 0) if row.get("complete", True) and row.get("rank", 0) else 0.0 for row in positives]
     false_answers = [
         row
         for row in rows
-        if row.get("top_statement_id", "") and row.get("top_statement_id", "") != row.get("expected_statement_id", "")
+        if (not row.get("complete", True))
+        or (row.get("top_statement_id", "") and row.get("top_statement_id", "") != row.get("expected_statement_id", ""))
     ]
     result = {
         "query_count": len(rows),
         "positive_count": len(positives),
-        "recall_at_1": sum(row.get("rank", 0) == 1 for row in positives) / len(positives) if positives else 0.0,
-        "recall_at_3": sum(0 < row.get("rank", 0) <= 3 for row in positives) / len(positives) if positives else 0.0,
+        "incomplete_count": len(incomplete_rows),
+        "incomplete_reasons": dict(sorted(incomplete_reasons.items())),
+        "recall_at_1": (
+            sum(row.get("complete", True) and row.get("rank", 0) == 1 for row in positives) / len(positives) if positives else 0.0
+        ),
+        "recall_at_3": (
+            sum(row.get("complete", True) and 0 < row.get("rank", 0) <= 3 for row in positives) / len(positives)
+            if positives
+            else 0.0
+        ),
         "mrr": statistics_fmean(reciprocal) if reciprocal else 0.0,
         "false_answer_rate": len(false_answers) / len(rows) if rows else 0.0,
     }
@@ -245,9 +256,10 @@ def run_semantic_phase(semantic, queries: list, selected_scope, artifacts: tuple
         repeated = semantic_search(semantic, query.get("text", ""), selected_scope, artifacts)
         first_scores = {value.get("statement_id", ""): value.get("similarity", 0.0) for value in semantic_result.get("matches", ())}
         second_scores = {value.get("statement_id", ""): value.get("similarity", 0.0) for value in repeated.get("matches", ())}
+        all_ids = set(first_scores) | set(second_scores)
         drift_max = max(
             drift_max,
-            max((abs(score - second_scores.get(key, 0.0)) for key, score in first_scores.items()), default=0.0),
+            max((abs(first_scores.get(key, 0.0) - second_scores.get(key, 0.0)) for key in all_ids), default=0.0),
         )
         semantic_ids = [value.get("statement_id", "") for value in semantic_result.get("matches", ())]
         results.append(semantic_result)
@@ -256,6 +268,8 @@ def run_semantic_phase(semantic, queries: list, selected_scope, artifacts: tuple
                 "query_id": query.get("query_id", ""),
                 "partition": query.get("partition", ""),
                 "expected_statement_id": query.get("expected_statement_id", ""),
+                "complete": semantic_result.get("complete", False),
+                "reason": semantic_result.get("reason", ""),
                 "top_statement_id": semantic_ids[0] if semantic_ids else "",
                 "rank": rank(semantic_ids, query.get("expected_statement_id", "")),
                 "latency_ms": semantic_ms,
@@ -303,6 +317,8 @@ def run_sparse_phase(queries: list, semantic_results: list, selected_scope, arti
                 "query_id": query.get("query_id", ""),
                 "partition": query.get("partition", ""),
                 "expected_statement_id": query.get("expected_statement_id", ""),
+                "complete": sparse_result.get("complete", False),
+                "reason": sparse_result.get("reason", ""),
                 "top_statement_id": sparse_ids[0] if sparse_ids else "",
                 "rank": rank(sparse_ids, query.get("expected_statement_id", "")),
                 "candidate_ids": sparse_ids,
@@ -332,6 +348,8 @@ def run_reranker_phase(reranker, queries: list, semantic_results: list, shortlis
                 "query_id": query.get("query_id", ""),
                 "partition": query.get("partition", ""),
                 "expected_statement_id": query.get("expected_statement_id", ""),
+                "complete": semantic_result.get("complete", False),
+                "reason": semantic_result.get("reason", ""),
                 "top_statement_id": reranked_ids[0] if reranked_ids else "",
                 "rank": rank(reranked_ids, query.get("expected_statement_id", "")),
                 "latency_ms": rerank_ms,
@@ -349,11 +367,10 @@ def reranker_peak_traced_bytes(reranker, shortlists: list) -> int:
     runs as a separate pass so it does not distort the timed phase, and each result is
     discarded as the service would.
     """
-    tracemalloc_start()
-    for shortlist in shortlists:
-        reranker.rerank(shortlist)
-    _, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as rerank_scope:
+        for shortlist in shortlists:
+            reranker.rerank(shortlist)
+        _, peak_bytes = rerank_scope.read()
     return peak_bytes
 
 
@@ -364,9 +381,11 @@ def semantic_gate_report(holdout_semantic: dict, holdout_sparse: dict, semantic_
         "engineering_holdout_recall_at_1": semantic_recall,
         "engineering_holdout_recall_delta_vs_sparse": semantic_recall - holdout_sparse.get("recall_at_1", 0.0),
         "engineering_holdout_false_answer_rate": holdout_semantic.get("false_answer_rate", 0.0),
+        "incomplete_queries": holdout_semantic.get("incomplete_count", 0),
         "peak_memory_mib": semantic_peak_rss / 1_048_576,
     }
     checks = {
+        "all_queries_complete": holdout_semantic.get("incomplete_count", 0) == 0,
         "engineering_holdout_recall_at_1": values.get("engineering_holdout_recall_at_1", 0.0)
         >= thresholds.get("engineering_holdout_recall_at_1_min", 0.0),
         "engineering_holdout_recall_delta_vs_sparse": values.get("engineering_holdout_recall_delta_vs_sparse", 0.0)
@@ -395,6 +414,7 @@ def reranker_gate_report(holdout_reranker: dict, holdout_semantic: dict, reranke
         "peak_memory_mib": reranker_peak_bytes / 1_048_576,
     }
     checks = {
+        "all_queries_complete": holdout_reranker.get("incomplete_count", 0) == 0,
         "engineering_holdout_recall_delta": values.get("engineering_holdout_recall_delta", 0.0)
         >= thresholds.get("engineering_holdout_recall_delta_min", 0.0),
         "engineering_holdout_false_answer_delta": values.get("engineering_holdout_false_answer_delta", 0.0)

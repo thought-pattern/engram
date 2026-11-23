@@ -32,25 +32,28 @@ from re import IGNORECASE, Match as re_Match, compile as re_compile, sub as re_s
 from engram.constants import EMPTY_MAPPING
 from engram.constants_language import MAX_PATTERN_WORDS, WILDCARD_TOKENS
 from engram.substitutions import split_sentences
-from engram.text import lemmatize_text, lemmatize_text_spacy, normalize, stem_text
+from engram.text import lemmatize_text, lemmatize_text_spacy, stem_text
 
 
 def word_set_table(sets: object) -> dict[str, list[str]]:
     """Validate a ``{set:name}`` table and return an owned copy of it.
 
     Raises:
-        ValueError: ``sets`` is not an object whose names are strings and whose
-            members are lists of strings.
+        ValueError: ``sets`` is not an object whose names are valid table names
+            and whose members are lists of strings.
     """
     if not isinstance(sets, dict):
         raise ValueError("sets must be an object of named word lists")
     table: dict[str, list[str]] = {}
     for name, members in sets.items():
         well_formed = (
-            isinstance(name, str) and isinstance(members, (list, tuple)) and all(isinstance(member, str) for member in members)
+            isinstance(name, str)
+            and is_table_name(name)
+            and isinstance(members, (list, tuple))
+            and all(isinstance(member, str) for member in members)
         )
         if not well_formed:
-            raise ValueError("each word set must name a list of strings")
+            raise ValueError("each word set must name a list of strings with an alphanumeric table name")
         table[name] = list(members)
     return table
 
@@ -59,12 +62,12 @@ def bot_property_table(bot_properties: object) -> dict[str, str]:
     """Validate a ``{bot:name}`` table and return an owned copy of it.
 
     Raises:
-        ValueError: ``bot_properties`` is not an object of string names and values.
+        ValueError: ``bot_properties`` is not an object of valid string names and values.
     """
     if not isinstance(bot_properties, dict):
         raise ValueError("bot_properties must be an object of strings")
-    if not all(isinstance(name, str) and isinstance(value, str) for name, value in bot_properties.items()):
-        raise ValueError("bot_properties must be an object of strings")
+    if not all(isinstance(name, str) and is_table_name(name) and isinstance(value, str) for name, value in bot_properties.items()):
+        raise ValueError("bot_properties must be an object of strings with alphanumeric table names")
     table = dict(bot_properties)
     return table
 
@@ -126,14 +129,19 @@ def last_sentence(text: str) -> str:
 
 
 def prepare_pattern_text(text: str) -> str:
-    """Normalize user text with the same word breaks patterns use.
+    """Normalize input text with the same word breaks and trailing-# tokens patterns use.
 
     ``normalize`` keeps an intra-word hyphen and drops underscores. Matching
-    breaks both marks first, so a hyphenated question and a spaced pattern
-    share one token sequence. Stored sentences and repetition checks still
-    use ``normalize`` unchanged.
+    breaks both marks first, and preserves a trailing ``#`` attached to an
+    alphanumeric word (such as ``C#`` or ``F#``) so it matches pattern atoms.
     """
-    result = normalize(break_intra_word_marks(text))
+    broken = break_intra_word_marks(text).lower()
+    kept = [
+        char
+        for index, char in enumerate(broken)
+        if char.isalnum() or char.isspace() or (char == "#" and index > 0 and broken[index - 1].isalnum())
+    ]
+    result = " ".join("".join(kept).split())
     return result
 
 
@@ -157,12 +165,20 @@ def normalize_pattern(pattern: str) -> str:
     bot_refs: list[str] = []
 
     def save_set(m: re_Match) -> str:
-        set_refs.append(m.group(1).lower())
+        raw_name = m.group(1)
+        if not is_table_name(raw_name):
+            unchanged = m.group(0)
+            return unchanged
+        set_refs.append(raw_name.lower())
         placeholder = f"\x05{len(set_refs) - 1}\x05"
         return placeholder
 
     def save_bot(m: re_Match) -> str:
-        bot_refs.append(m.group(1).lower())
+        raw_name = m.group(1)
+        if not is_table_name(raw_name):
+            unchanged = m.group(0)
+            return unchanged
+        bot_refs.append(raw_name.lower())
         placeholder = f"\x06{len(bot_refs) - 1}\x06"
         return placeholder
 
@@ -172,9 +188,9 @@ def normalize_pattern(pattern: str) -> str:
     result = result.lower()
     result = break_intra_word_marks(result)
 
-    # Replace wildcards with placeholders (use control chars that won't appear in text)
-    result = result.replace("*", "\x01").replace("_", "\x02")
-    result = result.replace("#", "\x03").replace("^", "\x04")
+    # Replace wildcards and word-trailing # (such as c#) with placeholders
+    result = result.replace("*", "\x01").replace("_", "\x02").replace("^", "\x04")
+    result = re_sub(r"(?<!\S)#(?!\S)|(?<=[a-z0-9])#", "\x03", result)
 
     # Preserve $ prefix by replacing $word with placeholder
     # \x07 is placeholder for $
@@ -218,7 +234,7 @@ def specific_pattern_result(result: tuple) -> tuple:
     return result
 
 
-def match_first(matchers: tuple, text: str, that: str = "", topic: str = "") -> tuple:
+def match_first(matchers: tuple, text: str, that: str = "", topic: str = "", *, include_spans: bool = False) -> tuple:
     """Match input through several matchers; return (position, match) for the winner, or ().
 
     ``that`` is the previous reply. Only its last sentence is matched, and it
@@ -228,10 +244,6 @@ def match_first(matchers: tuple, text: str, that: str = "", topic: str = "") -> 
     matcher's exact match still beats an earlier one's lemma match. A
     pure-wildcard match must not block the flexible fallbacks: the first one
     found is set aside and answers only when nothing more specific matches.
-
-    Returns:
-        Tuple of (matcher position, (response, captured, thatstars, topicstars,
-        pattern, topic, that)), or ().
     """
     words = prepare_pattern_text(text).split()
     if not words:
@@ -241,12 +253,10 @@ def match_first(matchers: tuple, text: str, that: str = "", topic: str = "") -> 
     that_text = last_sentence(that)
     that_words = prepare_pattern_text(that_text).split() if that_text else []
     topic_words = prepare_pattern_text(topic).split() if topic else []
-    # Captures always come from the prepared words, including in the lemma
-    # and stem walks, whose words line up with these by position.
     sources = (words, that_words, topic_words)
     catchall = ()
     for position, matcher in enumerate(matchers):
-        found = matcher.match_words(words, that_words, topic_words, "exact", sources)
+        found = matcher.match_words(words, that_words, topic_words, "exact", sources, include_spans=include_spans)
         if found and not is_pure_wildcard(found[4]):
             result = (position, found)
             return result
@@ -265,6 +275,7 @@ def match_first(matchers: tuple, text: str, that: str = "", topic: str = "") -> 
                     matcher.flexible_words(topic_words, mode),
                     mode,
                     sources,
+                    include_spans=include_spans,
                 )
             )
             if found:
@@ -414,10 +425,29 @@ class PatternMatcher:
         """Return the normalized topic, pattern, and that path an entry is filed under."""
         topic = entry.get("topic", "")
         that = entry.get("that", "")
+        pattern = entry.get("pattern", "")
         topic_key = normalize_pattern(topic) if topic else ""
+        if topic.strip() and not topic_key:
+            topic_key = "\x00"
         that_key = normalize_pattern(that) if that else ""
-        result = (topic_key, normalize_pattern(entry.get("pattern", "")), bool(that), that_key)
+        if that.strip() and not that_key:
+            that_key = "\x00"
+        pattern_key = normalize_pattern(pattern)
+        if pattern.strip() and not pattern_key:
+            pattern_key = "\x00"
+        has_that = bool(that.strip())
+        result = (topic_key, pattern_key, has_that, that_key)
         return result
+
+    def path_entries(self, pattern: str, that: str = "", topic: str = "") -> tuple[dict, ...]:
+        """Return every entry registered on the same normalized (pattern, that, topic) path."""
+        key = self.path_key({"pattern": pattern, "that": that, "topic": topic})
+        entries = tuple(
+            dict(self.internal_entries.get(entry_id, {}))
+            for entry_id in self.internal_path_claims.get(key, [])
+            if entry_id in self.internal_entries
+        )
+        return entries
 
     def index_entry(self, entry_id: int, entry: dict) -> None:
         """File one category under its topic, pattern, and that path.
@@ -723,6 +753,8 @@ class PatternMatcher:
         topic_words: list[str],
         mode: str,
         sources: tuple[list[str], list[str], list[str]],
+        *,
+        include_spans: bool = False,
     ) -> tuple:
         """Walk the pattern, then its that segment, then its topic segment.
 
@@ -734,14 +766,16 @@ class PatternMatcher:
             if "that" in node.segments:
 
                 def on_that(that_node: GraphNode, thatstars: list[tuple[int, int]]) -> tuple:
-                    found = self.topic_category(that_node, stars, thatstars, topic_words, mode, sources)
+                    found = self.topic_category(
+                        that_node, stars, thatstars, topic_words, mode, sources, include_spans=include_spans
+                    )
                     return found
 
                 that_root = node.segments.get("that", EMPTY_GRAPH_NODE)
                 matched_that = self.walk(that_root, that_words, 0, [], mode, on_that, set())
                 if matched_that:
                     return matched_that
-            found = self.topic_category(node, stars, [], topic_words, mode, sources)
+            found = self.topic_category(node, stars, [], topic_words, mode, sources, include_spans=include_spans)
             return found
 
         found = self.walk(self.default_trie, words, 0, [], mode, on_pattern, set())
@@ -755,19 +789,21 @@ class PatternMatcher:
         topic_words: list[str],
         mode: str,
         sources: tuple[list[str], list[str], list[str]],
+        *,
+        include_spans: bool = False,
     ) -> tuple:
         """Take the category below a pattern or that leaf; a matching topic beats no topic."""
         if "topic" in node.segments:
 
             def on_topic(topic_node: GraphNode, topicstars: list[tuple[int, int]]) -> tuple:
-                taken = self.take_category(topic_node, stars, thatstars, topicstars, sources)
+                taken = self.take_category(topic_node, stars, thatstars, topicstars, sources, include_spans=include_spans)
                 return taken
 
             topic_root = node.segments.get("topic", EMPTY_GRAPH_NODE)
             found = self.walk(topic_root, topic_words, 0, [], mode, on_topic, set())
             if found:
                 return found
-        taken = self.take_category(node, stars, thatstars, [], sources)
+        taken = self.take_category(node, stars, thatstars, [], sources, include_spans=include_spans)
         return taken
 
     def take_category(
@@ -777,6 +813,8 @@ class PatternMatcher:
         thatstars: list[tuple[int, int]],
         topicstars: list[tuple[int, int]],
         sources: tuple[list[str], list[str], list[str]],
+        *,
+        include_spans: bool = False,
     ) -> tuple:
         """Return the match tuple for a leaf category, or empty when the leaf is bare."""
         category = node.category
@@ -784,7 +822,7 @@ class PatternMatcher:
             result = ()
             return result
         words, that_words, topic_words = sources
-        result = (
+        base = (
             category.get("response", ""),
             [" ".join(words[start:end]) for start, end in stars],
             [" ".join(that_words[start:end]) for start, end in thatstars],
@@ -793,6 +831,7 @@ class PatternMatcher:
             category.get("topic", ""),
             category.get("that", ""),
         )
+        result = (*base, tuple(stars)) if include_spans else base
         return result
 
     def walk(

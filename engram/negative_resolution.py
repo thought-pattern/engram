@@ -1,6 +1,6 @@
 """Memory-only bounded negative-resolution contracts and expiry ownership."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from heapq import heapify as heapq_heapify, heappop as heapq_heappop, heappush as heapq_heappush
 from threading import RLock as threading_RLock
 
@@ -295,6 +295,10 @@ class NegativeResolutionStore:
                 result = negative_lookup(False)
                 return result
             record = self.internal_records.get(fingerprint, {})
+            if at < utc_datetime(record.get("created_at", "")):
+                self.internal_metrics["misses"] = self.internal_metrics.get("misses", 0) + 1
+                result = negative_lookup(False)
+                return result
             updated = negative_resolution_with_changes(record, {"hit_count": record.get("hit_count", 0) + 1})
             self.internal_records[fingerprint] = updated
             self.internal_metrics["hits"] = self.internal_metrics.get("hits", 0) + 1
@@ -307,6 +311,11 @@ class NegativeResolutionStore:
         except InvalidRequestError as err:
             raise InvalidRequestError("negative admission key must be NegativeResolutionKey") from err
         at = require_utc_datetime(evaluation_time, "negative admission evaluation_time")
+        max_utc = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+        if at >= max_utc:
+            raise InvalidRequestError("negative admission evaluation_time has no representable future expiry")
+        ttl_delta = timedelta(seconds=self.ttl_seconds)
+        expires_dt = max_utc if max_utc - at <= ttl_delta else at + ttl_delta
         fingerprint = negative_resolution_key_fingerprint(validated_key)
         relationship = negative_resolution_key_relationship_fingerprint(validated_key)
         with self.internal_lock:
@@ -320,7 +329,7 @@ class NegativeResolutionStore:
                 validated_key,
                 NegativeResolutionReason.INSUFFICIENT_KNOWLEDGE,
                 created_at,
-                canonical_utc(at + timedelta(seconds=self.ttl_seconds)),
+                canonical_utc(expires_dt),
             )
             self.internal_records[fingerprint] = record
             self.internal_record_relationships[fingerprint] = relationship

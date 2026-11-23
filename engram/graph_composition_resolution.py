@@ -27,6 +27,7 @@ from engram.constants_relation import (
 from engram.constants_resolution import CandidateSource, EvidenceKind, ResolverState
 from engram.errors import InvalidRequestError, WorkingMemoryExceededError
 from engram.evidence import assertion_basis_window, proposition_evidence_record
+from engram.graph_recall import strict_current_proposition_projection, strict_relation_one_hop_projections
 from engram.relation import RelationQuestion, resolve_canonical_subject
 from engram.resolution import (
     candidate as resolution_candidate,
@@ -201,7 +202,8 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
     """Execute one compiled plan through the resolver's fixed one-hop Proposition reads and eligibility checks."""
 
     def query(subject_id: str, predicate_id: str, limit: int) -> list[dict]:
-        result = resolver.internal_engram.relation_one_hop_proposition_projections(
+        result = strict_relation_one_hop_projections(
+            resolver.internal_engram,
             subject_id,
             predicate_id,
             row_limit=limit,
@@ -209,7 +211,6 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
             cooperative_check=check,
             max_working_memory_bytes=budget.get("max_working_memory_bytes", 0),
             basis_window=assertion_basis_window(frame),
-            raise_on_failure=True,
         )
         return result
 
@@ -221,11 +222,7 @@ def execute_composition(resolver, frame: dict, budget: dict, plan: dict, include
         lambda projection: resolver.internal_eligibility_evaluator.revalidate(
             projection,
             checked_frame,
-            lambda prop_id, window: resolver.internal_engram.current_proposition_projection(
-                prop_id,
-                window,
-                raise_on_failure=True,
-            ),
+            lambda prop_id, window: strict_current_proposition_projection(resolver.internal_engram, prop_id, window),
             trusted_frame=True,
         ),
         check,

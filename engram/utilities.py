@@ -5,7 +5,7 @@ plugins dynamically, execute Python expressions, or consult ambient time.
 """
 
 from datetime import date, datetime, timedelta
-from decimal import Decimal, DecimalException, localcontext
+from decimal import ROUND_HALF_EVEN, Decimal, DecimalException, localcontext
 from hashlib import sha256 as hashlib_sha256
 from importlib.resources import files
 from logging import getLogger as logging_getLogger
@@ -298,6 +298,7 @@ def evaluate_arithmetic(text: str) -> tuple[str, str, int]:
     tokens = arithmetic_tokens(match.group(1))
     with localcontext() as context:
         context.prec = UTILITY_NUMERIC_PRECISION_DIGITS
+        context.rounding = ROUND_HALF_EVEN
         try:
             value, index, operations = arithmetic_expression(tokens, 0, 0, 0)
         except DecimalException as err:
@@ -523,7 +524,10 @@ def evaluate_date_time(text: str) -> tuple[str, str, int]:
         if requested_zone.casefold() not in UTILITY_TIMEZONE_LOOKUP:
             raise UtilityInputError("timezone_not_allowed")
         zone_name = UTILITY_TIMEZONE_LOOKUP.get(requested_zone.casefold(), "")
-        converted = source.astimezone(packaged_zone_info(zone_name))
+        try:
+            converted = source.astimezone(packaged_zone_info(zone_name))
+        except (OverflowError, ValueError) as err:
+            raise UtilityInputError("date_time_domain") from err
         response = f"{converted.isoformat()}[{zone_name}]"
         result = (response, f"convert time {source.isoformat()} to {zone_name}", 1)
         return result
@@ -546,9 +550,9 @@ UTILITY_UNITS = {
     "s": ("duration", Decimal("1"), Decimal("0"), "s"),
     "min": ("duration", Decimal("60"), Decimal("0"), "min"),
     "h": ("duration", Decimal("3600"), Decimal("0"), "h"),
-    "c": ("temperature", Decimal("1"), Decimal("0"), "C"),
-    "f": ("temperature", Decimal("0.5555555555555555555555555555555556"), Decimal("32"), "F"),
-    "k": ("temperature", Decimal("1"), Decimal("273.15"), "K"),
+    "C": ("temperature", Decimal("1"), Decimal("0"), "C"),
+    "F": ("temperature", Decimal("0.5555555555555555555555555555555556"), Decimal("32"), "F"),
+    "K": ("temperature", Decimal("1"), Decimal("273.15"), "K"),
 }
 
 
@@ -561,8 +565,8 @@ def evaluate_unit_conversion(text: str) -> tuple[str, str, int]:
     if not match:
         raise UtilityInputError("unit_syntax")
     value = numeric_literal(match.group(1))
-    source_name = match.group(2).casefold()
-    target_name = match.group(3).casefold()
+    source_name = match.group(2)
+    target_name = match.group(3)
     if source_name not in UTILITY_UNITS or target_name not in UTILITY_UNITS:
         raise UtilityInputError("unit_unknown")
     source = UTILITY_UNITS.get(source_name, ("", Decimal(0), Decimal(0), ""))
@@ -571,8 +575,12 @@ def evaluate_unit_conversion(text: str) -> tuple[str, str, int]:
         raise UtilityInputError("dimension_mismatch")
     with localcontext() as context:
         context.prec = UTILITY_UNIT_PRECISION_DIGITS
-        base = (value - source[2]) * source[1]
-        converted = checked_decimal(base / target[1] + target[2])
+        context.rounding = ROUND_HALF_EVEN
+        if source[3] == target[3]:
+            converted = checked_decimal(+value)
+        else:
+            base = (value - source[2]) * source[1]
+            converted = checked_decimal(base / target[1] + target[2])
     response = f"{decimal_text(converted)} {target[3]}"
     canonical = f"convert {decimal_text(value)} {source[3]} to {target[3]}"
     return response, canonical, 1
@@ -623,7 +631,7 @@ def compare_semver(
 
 
 def evaluate_version(text: str) -> tuple[str, str, int]:
-    match = re_fullmatch(r"\s*compare\s+version\s+(\S+)\s+(?:and|to|with)\s+(\S+)\s*\??\s*", text, IGNORECASE)
+    match = re_fullmatch(r"\s*compare\s+version\s+(\S+)\s+(?:and|to|with)\s+(\S+?)\s*\??\s*", text, IGNORECASE)
     if not match:
         raise UtilityInputError("version_syntax")
     left = semver(match.group(1))
@@ -636,7 +644,7 @@ def evaluate_version(text: str) -> tuple[str, str, int]:
 
 
 def evaluate_identifier(text: str) -> tuple[str, str, int]:
-    match = re_fullmatch(r"\s*validate\s+(uuid|slug)\s+(\S+)\s*\??\s*", text, IGNORECASE)
+    match = re_fullmatch(r"\s*validate\s+(uuid|slug)\s+(\S+?)\s*\??\s*", text, IGNORECASE)
     if not match:
         raise UtilityInputError("identifier_syntax")
     kind = match.group(1).casefold()
@@ -675,8 +683,8 @@ UTILITY_EVALUATORS = {
 
 
 def internal_accepts(plugin_name: str, text: str) -> bool:
-    lowered = text.strip().casefold()
-    result = any(lowered == prefix.strip() or lowered.startswith(prefix) for prefix in UTILITY_PREFIXES.get(plugin_name, ()))
+    collapsed = " ".join(text.split()).casefold()
+    result = any(collapsed == prefix.strip() or collapsed.startswith(prefix) for prefix in UTILITY_PREFIXES.get(plugin_name, ()))
     return result
 
 

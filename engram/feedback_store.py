@@ -1,6 +1,5 @@
 """Thread-safe process-memory feedback ingestion, receipts and history ownership."""
 
-from datetime import timedelta
 from threading import RLock as threading_RLock
 
 from engram.constants_feedback import (
@@ -70,16 +69,20 @@ def record_buckets(value: object) -> tuple[dict, ...]:
 
 def aged_values(records: tuple[object, ...], at: str, policy: dict) -> dict[FeedbackOutcome, float]:
     evaluation = require_utc_datetime(at, "feedback history evaluation time")
+    bucket_seconds = policy.get("bucket_seconds", 0)
+    half_life_seconds = policy.get("half_life_seconds", 0.0)
     values = dict.fromkeys(FeedbackOutcome, 0.0)
     for record in records:
         for bucket in record_buckets(record):
             start = require_utc_datetime(bucket.get("start_at", ""), "feedback bucket start_at")
-            # A bucket represents its complete interval. Using its deterministic
-            # end prevents same-bucket samples from falling below the integer
-            # floor merely because they arrived after the bucket boundary.
-            effective_at = start + timedelta(seconds=policy.get("bucket_seconds", 0))
-            age_seconds = max(0.0, (evaluation - effective_at).total_seconds())
-            weight = 0.5 ** (age_seconds / policy.get("half_life_seconds", 0.0))
+            # A bucket represents its complete interval. Computing elapsed time from
+            # start before subtracting bucket_seconds avoids year-10000 overflow on
+            # 9999-12-31 while excluding future buckets not yet reached at evaluation.
+            elapsed_from_start = (evaluation - start).total_seconds()
+            if elapsed_from_start < 0:
+                continue
+            age_seconds = max(0.0, elapsed_from_start - bucket_seconds)
+            weight = 0.5 ** (age_seconds / half_life_seconds)
             stats = bucket.get("statistics", {})
             for outcome, field_name in FEEDBACK_OUTCOME_COUNTER_FIELDS.items():
                 values[outcome] = values.get(outcome, 0.0) + stats.get(field_name, 0) * weight
@@ -298,17 +301,32 @@ class FeedbackStore:
         )
         relationship_members[relationship_fingerprint] = True
         outcome = observation.get("outcome", FeedbackOutcome.CANDIDATE)
+        observed_at = observation.get("observed_at", "")
         suppression_key = (
             observation.get("statement_id", ""),
             observation.get("scope", {}).get("namespace", ""),
             observation.get("policy_fingerprint", ""),
         )
+        existing_suppression = self.internal_policy_suppressions.get(suppression_key, {})
         if outcome == FeedbackOutcome.REJECTED_POLICY:
-            self.internal_policy_suppressions[suppression_key] = freeze_feedback_record(
-                policy_suppression(*suppression_key, observation.get("observed_at", ""))
+            newer_acceptance = any(
+                rec.get("key", {}).get("scope", {}).get("namespace", "") == suppression_key[1]
+                and rec.get("key", {}).get("statement", {}).get("statement_id", "") == suppression_key[0]
+                and rec.get("key", {}).get("statement", {}).get("policy_fingerprint", "") == suppression_key[2]
+                and rec.get("last_outcome", FeedbackOutcome.CANDIDATE) == FeedbackOutcome.ACCEPTED
+                and utc_datetime(rec.get("last_observed_at", "")) > utc_datetime(observed_at)
+                for rec in self.internal_relationship_records.values()
             )
-        elif outcome == FeedbackOutcome.ACCEPTED:
-            self.internal_policy_suppressions.pop(suppression_key, {})
+            if not newer_acceptance:
+                selected_observed_at = observed_at
+                if existing_suppression and utc_datetime(existing_suppression.get("observed_at", "")) > utc_datetime(observed_at):
+                    selected_observed_at = existing_suppression.get("observed_at", "")
+                self.internal_policy_suppressions[suppression_key] = freeze_feedback_record(
+                    policy_suppression(*suppression_key, selected_observed_at)
+                )
+        elif outcome == FeedbackOutcome.ACCEPTED and existing_suppression:
+            if utc_datetime(observed_at) > utc_datetime(existing_suppression.get("observed_at", "")):
+                self.internal_policy_suppressions.pop(suppression_key, {})
         if outcome == FeedbackOutcome.REJECTED_STALE:
             exclusion = stale_exclusion(
                 observation.get("statement_id", ""),
@@ -603,8 +621,10 @@ class FeedbackStore:
                 if exclusion.get("statement_id", "") != statement_id:
                     continue
                 if not exclusion.get("generation_available", False):
-                    result = not generation_available
-                    break
+                    if not generation_available:
+                        result = True
+                        break
+                    continue
                 if generation_available and current_generation >= exclusion.get("generation", 0):
                     result = True
                     break

@@ -365,6 +365,16 @@ class EngramCore:
         }
         return result
 
+    def ensure_resolution_context(self, record: dict) -> bool:
+        """Apply a cached resolution's contextual turn once candidacy feedback has succeeded."""
+        if record.get("contextual_applied", False):
+            return False
+        callback = record.get("contextual_callback", ())
+        if callable(callback):
+            callback()
+        record["contextual_applied"] = True
+        return True
+
     def cache_resolution(
         self,
         request_id: str,
@@ -373,6 +383,7 @@ class EngramCore:
         frame: dict,
         candidate_statement_ids: tuple[str, ...],
         candidacy_observations: tuple[dict, ...],
+        contextual_callback: object = (),
     ) -> dict:
         """Retain one public resolution result and its feedback references."""
         public_result = validate_resolution_result(result)
@@ -383,10 +394,13 @@ class EngramCore:
             "candidate_statement_ids": candidate_statement_ids,
             "candidacy_observations": candidacy_observations,
             "candidacy_applied": not candidacy_observations,
+            "contextual_callback": contextual_callback,
+            "contextual_applied": not callable(contextual_callback),
         }
         self.resolution_requests[request_id] = record
         if candidacy_observations:
             self.ensure_resolution_candidacy(request_id, record)
+        self.ensure_resolution_context(record)
         while len(self.resolution_requests) > MAX_TRANSIENT_RECORDS:
             evicted_request_id = next(iter(self.resolution_requests))
             self.resolution_requests.pop(evicted_request_id)
@@ -417,6 +431,7 @@ class EngramCore:
             "misses": self.regulated_metrics.get("misses", 0),
             "accepted": self.regulated_metrics.get("accepted", 0),
             "learned_created": self.regulated_metrics.get("learned_created", 0),
+            "learned_replaced": self.regulated_metrics.get("learned_replaced", 0),
             "retired": self.regulated_metrics.get("retired", 0),
             "idempotent_retries": self.regulated_metrics.get("idempotent_retries", 0),
             "pending_proposals": sum(1 for record in self.proposals.values() if not record.get("resolution", {})),
@@ -506,7 +521,9 @@ class EngramCore:
     def reset_regulated_state(self) -> None:
         self.proposals: dict[str, dict] = {}
         self.proposal_requests: dict[str, str] = {}
+        self.inflight_proposals: dict[str, str] = {}
         self.learn_requests: dict[str, dict] = {}
+        self.supersede_requests: dict[str, dict] = {}
         self.retire_requests: dict[str, dict] = {}
         self.regulated_metrics = {
             "proposals": 0,
@@ -527,7 +544,7 @@ class EngramCore:
     def enforce_transient_bound(self) -> None:
         while len(self.proposals) > MAX_TRANSIENT_RECORDS:
             self.remove_proposal(next(iter(self.proposals)))
-        for records in (self.learn_requests, self.retire_requests):
+        for records in (self.learn_requests, self.supersede_requests, self.retire_requests):
             while len(records) > MAX_TRANSIENT_RECORDS:
                 records.pop(next(iter(records)))
 

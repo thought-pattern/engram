@@ -16,6 +16,7 @@ from engram.constants_dialogue import (
     DIALOGUE_CLOSING,
     DIALOGUE_CLOSING_RE,
     DIALOGUE_COMMAND,
+    DIALOGUE_CONDITIONAL_RE,
     DIALOGUE_DISCOURSE_FACT_SUBJECT_LEADS,
     DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE,
     DIALOGUE_EMOTION,
@@ -51,6 +52,7 @@ from engram.constants_dialogue import (
     MAX_DIALOGUE_TOPIC_WORDS,
 )
 from engram.constants_language import ARTICLES, KIND_COMMAND, KIND_QUESTION
+from engram.constants_relation import MAX_CONTEXTUAL_TOPIC_BYTES
 from engram.nlp import input_kind, span_is_proper_noun
 
 
@@ -60,10 +62,17 @@ def classify_dialogue_act(text: str, fact: dict = EMPTY_MAPPING) -> str:
     ``fact`` is the sentence's extracted fact, or an empty dict when it has none.
     """
     stripped = text.strip()
-    if DIALOGUE_CLOSING_RE.search(stripped):
-        return DIALOGUE_CLOSING
     if DIALOGUE_TOPIC_SHIFT_RE.search(stripped):
         return DIALOGUE_TOPIC_SHIFT
+
+    kind = input_kind(stripped)
+    if kind == KIND_QUESTION:
+        return DIALOGUE_QUESTION
+    if kind == KIND_COMMAND:
+        return DIALOGUE_COMMAND
+
+    if DIALOGUE_CLOSING_RE.search(stripped):
+        return DIALOGUE_CLOSING
     if DIALOGUE_GRATITUDE_RE.search(stripped):
         return DIALOGUE_GRATITUDE
     if DIALOGUE_GREETING_RE.search(stripped):
@@ -71,11 +80,6 @@ def classify_dialogue_act(text: str, fact: dict = EMPTY_MAPPING) -> str:
     if DIALOGUE_SELF_INTRODUCTION_RE.search(stripped):
         return DIALOGUE_SELF_INTRODUCTION
 
-    kind = input_kind(stripped)
-    if kind == KIND_QUESTION:
-        return DIALOGUE_QUESTION
-    if kind == KIND_COMMAND:
-        return DIALOGUE_COMMAND
     if fact:
         return DIALOGUE_FACT
     if DIALOGUE_EMOTION_RE.search(stripped):
@@ -112,6 +116,9 @@ def clean_topic(value: str) -> str:
         result = ""
         return result
     topic = " ".join(words).strip(" \t\r\n.,!?;:'\"")
+    if len(topic.encode("utf-8")) > MAX_CONTEXTUAL_TOPIC_BYTES:
+        result = ""
+        return result
     topic_words = {word.lower() for word in re_findall(r"[\w'-]+", topic)}
     if not topic_words or topic_words & DIALOGUE_INVALID_TOPIC_WORDS:
         result = ""
@@ -252,6 +259,9 @@ def conversational_fact_admission(fact: dict, text: str) -> dict:
         return result
     if DIALOGUE_HEDGE_RE.search(text):
         result = {"admitted": False, "reason": "hedged"}
+        return result
+    if fact.get("conditional", False) or DIALOGUE_CONDITIONAL_RE.search(text):
+        result = {"admitted": False, "reason": "conditional"}
         return result
     if DIALOGUE_TRANSIENT_RE.search(text):
         result = {"admitted": False, "reason": "transient"}

@@ -62,24 +62,32 @@ def main() -> int:
     if destination.exists() and not destination.is_dir():
         raise SystemExit(f"existing model destination is not a directory: {destination}")
     if destination.exists() and any(destination.iterdir()):
-        if not manifest_path.is_file() or not (destination / "LICENSE").is_file():
+        if not (destination / "LICENSE").is_file():
             raise SystemExit(f"existing model destination is incomplete: {destination}")
-        existing_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
-        # An identity field that is absent conflicts just as a different value does.
-        if not isinstance(existing_manifest, dict) or any(
-            name not in existing_manifest or existing_manifest.get(name, value) != value
-            for name, value in expected_identity.items()
-        ):
-            raise SystemExit(f"existing model manifest conflicts with the requested revision: {manifest_path}")
-        checksum = model_artifact_sha256(destination)
-        if existing_manifest.get("artifact_sha256", "") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
-            raise SystemExit(f"existing model artifact checksum mismatch: {destination}")
+        if manifest_path.is_file():
+            existing_manifest = json_loads(manifest_path.read_text(encoding="utf-8"))
+            # An identity field that is absent conflicts just as a different value does.
+            if not isinstance(existing_manifest, dict) or any(
+                name not in existing_manifest or existing_manifest.get(name, value) != value
+                for name, value in expected_identity.items()
+            ):
+                raise SystemExit(f"existing model manifest conflicts with the requested revision: {manifest_path}")
+            checksum = model_artifact_sha256(destination)
+            if existing_manifest.get("artifact_sha256", "") != checksum or checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
+                raise SystemExit(f"existing model artifact checksum mismatch: {destination}")
+        else:
+            checksum = model_artifact_sha256(destination)
+            if checksum != APPROVED_SEMANTIC_ARTIFACT_SHA256:
+                raise SystemExit(f"existing model destination is incomplete: {destination}")
         manifest = {
             **expected_identity,
             "artifact_sha256": checksum,
             "model_path": destination.as_posix(),
         }
-        manifest_path.write_text(json_dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        with TemporaryDirectory(prefix=f".{destination.name}-manifest-", dir=destination.parent) as temp_manifest_dir:
+            staged_manifest_only = Path(temp_manifest_dir) / "manifest.json"
+            staged_manifest_only.write_text(json_dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            staged_manifest_only.replace(manifest_path)
         print(json_dumps({**manifest, "manifest_path": manifest_path.as_posix(), "reused": True}, sort_keys=True))
         return 0
     destination.parent.mkdir(parents=True, exist_ok=True)

@@ -242,6 +242,8 @@ class ResolverExecutor:
         for entry in current_plan.get("entries", ()):
             run_cooperative_check(cooperative_check)
             resolver_name, _, _, resolve_operation = resolver_contract(entry.get("resolver", ()))
+            if not entry.get("configured", False):
+                continue
             if ledger.snapshot().get("resolvers", 0) >= max_resolvers:
                 exhausted = resolver_result(
                     resolver=resolver_name,
@@ -252,8 +254,6 @@ class ResolverExecutor:
                 results.append(exhausted)
                 ledger.add(exhausted.get("consumption", {}))
                 break
-            if not entry.get("configured", False):
-                continue
             if not entry.get("available", False):
                 results.append(
                     resolver_result(
@@ -283,13 +283,14 @@ class ResolverExecutor:
                 logger.warning("Resolver %s failed", resolver_name, exc_info=err)
                 finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
-                result = resolver_result(
+                failed_raw = resolver_result(
                     resolver=resolver_name,
                     state=ResolverState.FAILED,
                     reason_code="resolver_exception",
                     diagnostics={"exception_type": type(err).__name__},
                     consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
                 )
+                result = bound_validated_resolver_result(failed_raw, lease)
             else:
                 finished = resolver_clock_ns(self.internal_clock_ns)
                 elapsed = max(0, finished - started)
@@ -297,13 +298,14 @@ class ResolverExecutor:
                     current_raw = validate_resolver_result(raw)
                 except InvalidRequestError as err:
                     logger.warning("Resolver %s returned an invalid result", resolver_name, exc_info=err)
-                    result = resolver_result(
+                    invalid_raw = resolver_result(
                         resolver=resolver_name,
                         state=ResolverState.FAILED,
                         reason_code="invalid_resolver_result",
                         diagnostics={"exception_type": type(err).__name__},
                         consumption=budget_consumption(elapsed_ns=elapsed, resolvers=1),
                     )
+                    result = bound_validated_resolver_result(invalid_raw, lease)
                 else:
                     updated_consumption = trusted_budget_consumption_with_changes(
                         current_raw.get("consumption", {}),
@@ -319,12 +321,15 @@ class ResolverExecutor:
             results.append(result)
             ledger.add(result_consumption)
             reservations.append(resolver_reservation(resolver_name, entry.get("order", 0), lease, result_consumption))
+            resolver_obj = entry.get("resolver", ())
+            can_short_circuit = getattr(resolver_obj, "can_short_circuit", ())
             if (
                 resolver_name == "exact"
                 and result.get("state", ResolverState.FAILED) == ResolverState.COMPLETED
                 and len(result_candidates) == 1
                 and result_candidates[0].get("source", CandidateSource.UTILITY) == CandidateSource.EXACT
                 and not frame.get("rewrite_chain", ())
+                and (not callable(can_short_circuit) or can_short_circuit(result_candidates[0], frame))
             ):
                 exact_short_circuited = True
                 break

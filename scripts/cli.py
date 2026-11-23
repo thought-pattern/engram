@@ -77,8 +77,9 @@ class InteractiveChat:
         elif command == "finish":
             print(json_dumps(self.core.finish_conversation(self.session_id, conversation_token=self.conversation_token), indent=2))
         elif command == "topic" and len(parts) >= 2:
-            self.core.set_predicate(self.session_id, "topic", parts[1])
-            print(f"Topic set to: {parts[1]}")
+            topic_name = " ".join(parts[1:]).strip()
+            self.core.set_predicate(self.session_id, "topic", topic_name)
+            print(f"Topic set to: {topic_name}")
         elif command == "set" and len(parts) >= 3:
             self.core.set_predicate(self.session_id, parts[1], parts[2])
             print(f"Set {parts[1]} = {parts[2]}")

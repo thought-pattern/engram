@@ -58,6 +58,7 @@ DIALOGUE_DISCOURSE_TOPIC_PREFIX_RE = re_compile(
 DIALOGUE_HEDGE_RE = re_compile(
     r"\b(?:maybe|perhaps|possibly|probably|supposedly|apparently|i guess|i suppose|might|could|would)\b", IGNORECASE
 )
+DIALOGUE_CONDITIONAL_RE = re_compile(r"\b(?:if|only if|unless|provided that|assuming that|in case|on condition that)\b", IGNORECASE)
 DIALOGUE_TRANSIENT_RE = re_compile(
     r"\b(?:right now|at the moment|for now|today|tonight|currently|temporarily|lately|this morning|"
     r"this afternoon|this evening|this week|this month|this year)\b",

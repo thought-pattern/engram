@@ -10,7 +10,6 @@ from platform import machine as platform_machine, processor as platform_processo
 from subprocess import run as subprocess_run
 from sys import argv as sys_argv, executable as sys_executable, stderr as sys_stderr
 from time import perf_counter as time_perf_counter, perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.artifacts import validate_cached_response_artifact
 from engram.config import engram_config, graph_config
@@ -19,7 +18,7 @@ from engram.core import Engram
 from engram.identity import extract_standalone_identity, retrieval_representation, scope_key
 from engram.repository import ArtifactRepository
 from engram.service import EngramCore
-from scripts.benchmark_metadata import benchmark_source_state
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -108,20 +107,45 @@ def internal_measure(operation: object, iterations: int) -> dict:
 def artifact_result(corpus_size: int, iterations: int) -> dict:
     # Corpus construction is traced in isolation: corpus_size - 1 unrelated artifacts and one target.
     gc_collect()
-    tracemalloc_start()
-    engram = Engram(config=benchmark_engram_config(max(corpus_size + 10, 100)))
-    selected_scope = scope_key()
-    artifacts = []
-    for index in range(max(0, corpus_size - 1)):
-        noise_request = f"noise-token-{index} archive-entry-{index}"
+    with TracedMemoryScope() as artifact_scope:
+        engram = Engram(config=benchmark_engram_config(max(corpus_size + 10, 100)))
+        selected_scope = scope_key()
+        artifacts = []
+        for index in range(max(0, corpus_size - 1)):
+            noise_request = f"noise-token-{index} archive-entry-{index}"
+            artifacts.append(
+                validate_cached_response_artifact(
+                    {
+                        "statement_id": f"runtime-noise-{index}",
+                        "generation": 1,
+                        "response": f"Synthetic response {index}.",
+                        "query_identity": extract_standalone_identity(noise_request, selected_scope),
+                        "retrieval": retrieval_representation(noise_request),
+                        "tier": Tier.STATIC,
+                        "lifecycle": LifecycleState.ACTIVE,
+                        "scope": selected_scope,
+                        "support_references": (),
+                        "valid_from": "",
+                        "valid_from_available": False,
+                        "valid_until": "",
+                        "valid_until_available": False,
+                        "superseded_by": "",
+                        "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                        "statistics": INITIAL_ARTIFACT_STATISTICS,
+                        "metadata": {},
+                    }
+                )
+            )
+        target_id = "runtime-target"
+        request = "What are the baseline support hours?"
         artifacts.append(
             validate_cached_response_artifact(
                 {
-                    "statement_id": f"runtime-noise-{index}",
+                    "statement_id": target_id,
                     "generation": 1,
-                    "response": f"Synthetic response {index}.",
-                    "query_identity": extract_standalone_identity(noise_request, selected_scope),
-                    "retrieval": retrieval_representation(noise_request),
+                    "response": "Baseline support is open from nine to five.",
+                    "query_identity": extract_standalone_identity(request, selected_scope),
+                    "retrieval": retrieval_representation(request),
                     "tier": Tier.STATIC,
                     "lifecycle": LifecycleState.ACTIVE,
                     "scope": selected_scope,
@@ -137,37 +161,11 @@ def artifact_result(corpus_size: int, iterations: int) -> dict:
                 }
             )
         )
-    target_id = "runtime-target"
-    request = "What are the baseline support hours?"
-    artifacts.append(
-        validate_cached_response_artifact(
-            {
-                "statement_id": target_id,
-                "generation": 1,
-                "response": "Baseline support is open from nine to five.",
-                "query_identity": extract_standalone_identity(request, selected_scope),
-                "retrieval": retrieval_representation(request),
-                "tier": Tier.STATIC,
-                "lifecycle": LifecycleState.ACTIVE,
-                "scope": selected_scope,
-                "support_references": (),
-                "valid_from": "",
-                "valid_from_available": False,
-                "valid_until": "",
-                "valid_until_available": False,
-                "superseded_by": "",
-                "provenance": RUNTIME_BENCHMARK_PROVENANCE,
-                "statistics": INITIAL_ARTIFACT_STATISTICS,
-                "metadata": {},
-            }
-        )
-    )
-    engram.response_repository = ArtifactRepository(tuple(artifacts))
-    core = EngramCore(engram)
-    # The working list is not retained by the core; release it before reading current bytes.
-    del artifacts
-    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+        engram.response_repository = ArtifactRepository(tuple(artifacts))
+        core = EngramCore(engram)
+        # The working list is not retained by the core; release it before reading current bytes.
+        del artifacts
+        current_bytes, peak_bytes = artifact_scope.read()
     memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_ids = []
@@ -204,83 +202,82 @@ def vector_result(corpus_size: int, support_fanout: int, iterations: int) -> dic
     # Corpus construction is traced in isolation: unrelated artifacts plus support_fanout artifacts
     # citing the one Proposition the synthetic vector graph returns.
     gc_collect()
-    tracemalloc_start()
-    config = benchmark_engram_config(max(corpus_size + 10, 100))
-    config["graph"] = graph_config(enabled=False, vector_enabled=False)
-    engram = Engram(config=config)
-    selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
-    # The five-field opaque support reference.
-    support_reference = {
-        "record_kind": "proposition",
-        "id": proposition_id,
-        "state_revision": 0,
-        "support_revision": 0,
-        "dependency_state_digest": "dep_" + "a" * 64,
-    }
-    artifacts = []
-    noise_count = max(0, corpus_size - support_fanout)
-    for index in range(noise_count):
-        request = f"unrelated-token-{index}"
-        artifacts.append(
-            validate_cached_response_artifact(
-                {
-                    "statement_id": f"runtime-vector-noise-{index}",
-                    "generation": 1,
-                    "response": f"Unrelated response {index}.",
-                    "query_identity": extract_standalone_identity(request, selected_scope),
-                    "retrieval": retrieval_representation(request),
-                    "tier": Tier.STATIC,
-                    "lifecycle": LifecycleState.ACTIVE,
-                    "scope": selected_scope,
-                    "support_references": (),
-                    "valid_from": "",
-                    "valid_from_available": False,
-                    "valid_until": "",
-                    "valid_until_available": False,
-                    "superseded_by": "",
-                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
-                    "statistics": INITIAL_ARTIFACT_STATISTICS,
-                    "metadata": {},
-                }
+    with TracedMemoryScope() as vector_scope:
+        config = benchmark_engram_config(max(corpus_size + 10, 100))
+        config["graph"] = graph_config(enabled=False, vector_enabled=False)
+        engram = Engram(config=config)
+        selected_scope = scope_key(namespace="benchmark", context_fingerprint="runtime")
+        # The five-field opaque support reference.
+        support_reference = {
+            "record_kind": "proposition",
+            "id": proposition_id,
+            "state_revision": 0,
+            "support_revision": 0,
+            "dependency_state_digest": "dep_" + "a" * 64,
+        }
+        artifacts = []
+        noise_count = max(0, corpus_size - support_fanout)
+        for index in range(noise_count):
+            request = f"unrelated-token-{index}"
+            artifacts.append(
+                validate_cached_response_artifact(
+                    {
+                        "statement_id": f"runtime-vector-noise-{index}",
+                        "generation": 1,
+                        "response": f"Unrelated response {index}.",
+                        "query_identity": extract_standalone_identity(request, selected_scope),
+                        "retrieval": retrieval_representation(request),
+                        "tier": Tier.STATIC,
+                        "lifecycle": LifecycleState.ACTIVE,
+                        "scope": selected_scope,
+                        "support_references": (),
+                        "valid_from": "",
+                        "valid_from_available": False,
+                        "valid_until": "",
+                        "valid_until_available": False,
+                        "superseded_by": "",
+                        "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                        "statistics": INITIAL_ARTIFACT_STATISTICS,
+                        "metadata": {},
+                    }
+                )
             )
-        )
-    for index in range(support_fanout):
-        request = f"supported-artifact-token-{index}"
-        artifacts.append(
-            validate_cached_response_artifact(
-                {
-                    "statement_id": f"runtime-vector-supported-{index}",
-                    "generation": 1,
-                    "response": f"Supported response {index}.",
-                    "query_identity": extract_standalone_identity(request, selected_scope),
-                    "retrieval": retrieval_representation(request),
-                    "tier": Tier.STATIC,
-                    "lifecycle": LifecycleState.ACTIVE,
-                    "scope": selected_scope,
-                    "support_references": (support_reference,),
-                    "valid_from": "",
-                    "valid_from_available": False,
-                    "valid_until": "",
-                    "valid_until_available": False,
-                    "superseded_by": "",
-                    "provenance": RUNTIME_BENCHMARK_PROVENANCE,
-                    "statistics": INITIAL_ARTIFACT_STATISTICS,
-                    "metadata": {},
-                }
+        for index in range(support_fanout):
+            request = f"supported-artifact-token-{index}"
+            artifacts.append(
+                validate_cached_response_artifact(
+                    {
+                        "statement_id": f"runtime-vector-supported-{index}",
+                        "generation": 1,
+                        "response": f"Supported response {index}.",
+                        "query_identity": extract_standalone_identity(request, selected_scope),
+                        "retrieval": retrieval_representation(request),
+                        "tier": Tier.STATIC,
+                        "lifecycle": LifecycleState.ACTIVE,
+                        "scope": selected_scope,
+                        "support_references": (support_reference,),
+                        "valid_from": "",
+                        "valid_from_available": False,
+                        "valid_until": "",
+                        "valid_until_available": False,
+                        "superseded_by": "",
+                        "provenance": RUNTIME_BENCHMARK_PROVENANCE,
+                        "statistics": INITIAL_ARTIFACT_STATISTICS,
+                        "metadata": {},
+                    }
+                )
             )
-        )
-    engram.response_repository = ArtifactRepository(tuple(artifacts))
-    graph_settings = engram.config.get("graph", {})
-    graph_settings["enabled"] = True
-    graph_settings["vector_enabled"] = True
-    engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
-    engram.graph_embedding_model = SyntheticEmbeddingModel()
-    engram.encode_graph_query = lambda text: [0.0] * 384
-    core = EngramCore(engram)
-    # The working list is not retained by the core; release it before reading current bytes.
-    del artifacts
-    current_bytes, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+        engram.response_repository = ArtifactRepository(tuple(artifacts))
+        graph_settings = engram.config.get("graph", {})
+        graph_settings["enabled"] = True
+        graph_settings["vector_enabled"] = True
+        engram.internal_graph_client = SyntheticVectorGraph(proposition_id)
+        engram.graph_embedding_model = SyntheticEmbeddingModel()
+        engram.encode_graph_query = lambda text: [0.0] * 384
+        core = EngramCore(engram)
+        # The working list is not retained by the core; release it before reading current bytes.
+        del artifacts
+        current_bytes, peak_bytes = vector_scope.read()
     memory = {"current_bytes": current_bytes, "peak_bytes": peak_bytes}
     sequence = [0]
     candidate_counts = []

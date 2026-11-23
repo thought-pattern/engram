@@ -8,7 +8,7 @@ eviction of DYNAMIC statements. Each function that takes ``engram`` is bound on
 
 from bisect import bisect_left
 from copy import deepcopy
-from heapq import heappop as heapq_heappop, heappush as heapq_heappush, heapreplace as heapq_heapreplace
+from heapq import heapify as heapq_heapify, heappop as heapq_heappop, heappush as heapq_heappush, heapreplace as heapq_heapreplace
 
 from engram.constants import DEFAULT_CAPACITY, EARLIEST_UTC
 from engram.constants_artifacts import Tier
@@ -316,7 +316,29 @@ def evict_statement(engram, statement_id: str) -> None:
     del engram.statement_by_id[statement_id]
     del engram.statement_sequence[statement_id]
     engram.dynamic_statement_ids.discard(statement_id)
+    compact_dynamic_lru(engram)
     engram.eviction_count += 1
+
+
+def compact_dynamic_lru(engram) -> None:
+    """Keep ``dynamic_lru`` proportional to live ``dynamic_statement_ids`` across replacements and retirements."""
+    heap = engram.dynamic_lru
+    while heap:
+        top = heap[0]
+        top_id = top[3]
+        top_seq = top[2]
+        if top_id in engram.dynamic_statement_ids and engram.statement_sequence.get(top_id, -1) == top_seq:
+            break
+        heapq_heappop(heap)
+    live_count = len(engram.dynamic_statement_ids)
+    if len(heap) > max(live_count, 1) * 2:
+        rebuilt = [
+            lru_entry(engram.statement_by_id.get(live_id, {}), engram.statement_sequence.get(live_id, 0))
+            for live_id in engram.dynamic_statement_ids
+            if live_id in engram.statement_by_id
+        ]
+        heapq_heapify(rebuilt)
+        heap[:] = rebuilt
 
 
 def detach_statement(engram, stmt: dict) -> None:

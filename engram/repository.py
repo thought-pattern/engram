@@ -5,7 +5,7 @@ from datetime import datetime
 from heapq import nsmallest as heapq_nsmallest
 from threading import RLock as threading_RLock
 
-from engram.artifacts import lifecycle_after_capacity_eviction, validate_cached_response_artifact
+from engram.artifacts import lifecycle_after_capacity_eviction, metadata_values_equal, validate_cached_response_artifact
 from engram.constants_artifacts import AdmissionOutcome, LifecycleState, RepositoryRemovalReason, Tier
 from engram.constants_mutations import (
     MAX_PLANNED_CANDIDATES,
@@ -68,11 +68,36 @@ def trusted_or_validated_artifact(artifact: object, trusted: dict) -> dict:
     Returning the live object keeps the stored form canonical. ``trusted`` is
     {} when no live artifact exists; a validated artifact is never empty.
     """
-    if trusted and (artifact is trusted or artifact == trusted):
+    if trusted and (
+        artifact is trusted
+        or (
+            isinstance(artifact, dict)
+            and artifact == trusted
+            and metadata_values_equal(artifact.get("metadata", {}), trusted.get("metadata", {}))
+        )
+    ):
         result = trusted
         return result
     result = validate_cached_response_artifact(artifact)
     return result
+
+
+def artifact_same_content(left: dict, right: dict) -> bool:
+    """Return whether two validated artifacts differ only in generation or usage statistics."""
+    if not left or not right:
+        return False
+    ignored = {"generation", "statistics"}
+    left_keys = set(left) - ignored
+    right_keys = set(right) - ignored
+    if left_keys != right_keys:
+        return False
+    for key in left_keys:
+        if key == "metadata":
+            if not metadata_values_equal(left.get(key, {}), right.get(key, {})):
+                return False
+        elif left.get(key, ()) != right.get(key, ()):
+            return False
+    return True
 
 
 def repository_state(
@@ -268,6 +293,8 @@ class ArtifactRepository:
         self.internal_key_owners: dict[tuple, set[str]] = {}
         # DYNAMIC statement IDs, so admission need not scan STATIC artifacts.
         self.internal_dynamic_ids: set[str] = set()
+        # Minimum artifact generation since the last non-statistics edit for each statement_id.
+        self.internal_content_generations: dict[str, int] = {}
         # Recent candidates this repository built: id -> (candidate, base state,
         # changed statement IDs). A candidate handed back unchanged needs only
         # its changed entries checked, not every stored artifact.
@@ -314,9 +341,14 @@ class ArtifactRepository:
             indexed_artifact = self.internal_indexed.get(statement_id, ({}, ()))[0]
             if artifacts.get(statement_id, {}) is not indexed_artifact:
                 stale.append(statement_id)
+        prior_artifacts: dict[str, dict] = {}
         for statement_id in stale:
             self.internal_dynamic_ids.discard(statement_id)
-            _, signatures = self.internal_indexed.pop(statement_id)
+            prior_artifact, signatures = self.internal_indexed.pop(statement_id)
+            if statement_id in artifacts:
+                prior_artifacts[statement_id] = prior_artifact
+            else:
+                self.internal_content_generations.pop(statement_id, 0)
             for signature in signatures:
                 # Owner sets are removed once empty, so an absent set has nothing to discard.
                 owners = self.internal_key_owners.get(signature, set())
@@ -328,6 +360,13 @@ class ArtifactRepository:
         for statement_id, artifact in additions.items():
             if statement_id in self.internal_indexed:
                 continue
+            current_gen = artifact.get("generation", 1)
+            prior_artifact = prior_artifacts.get(statement_id, {})
+            prior_content_gen = self.internal_content_generations.get(statement_id, current_gen)
+            if prior_artifact and artifact_same_content(prior_artifact, artifact) and prior_content_gen <= current_gen:
+                self.internal_content_generations[statement_id] = prior_content_gen
+            else:
+                self.internal_content_generations[statement_id] = current_gen
             signatures = tuple(
                 trusted_scoped_retrieval_key_signature(binding.get("key", {}))
                 for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
@@ -337,6 +376,14 @@ class ArtifactRepository:
                 self.internal_dynamic_ids.add(statement_id)
             for signature in signatures:
                 self.internal_key_owners.setdefault(signature, set()).add(statement_id)
+
+    def content_generation(self, statement_id: str) -> int:
+        """Return the generation at which ``statement_id``'s non-statistics content was last set."""
+        with self.internal_lock:
+            artifact = self.internal_state.get("artifacts", {}).get(statement_id, {})
+            fallback = artifact.get("generation", 0)
+            result = self.internal_content_generations.get(statement_id, fallback)
+            return result
 
     def key_owner_ids(self, keys: tuple) -> tuple[str, ...]:
         """Return the statement IDs whose retrieval bindings include any of ``keys``."""
@@ -566,7 +613,7 @@ class ArtifactRepository:
         with self.internal_lock:
             validated_candidate = validate_repository_state(candidate, self.internal_state.get("artifacts", {}))
             self.replace_trusted(validated_candidate, expected)
-        published = self.snapshot()
+            published = self.snapshot()
         return published
 
     def replace_trusted(
@@ -598,7 +645,7 @@ class ArtifactRepository:
         with self.internal_lock:
             validated_state = validate_repository_state(state, self.internal_state.get("artifacts", {}))
             self.restore_trusted(validated_state)
-        recovered = self.snapshot()
+            recovered = self.snapshot()
         return recovered
 
     def restore_trusted(self, state: dict, changed=(), changed_known: bool = False) -> None:

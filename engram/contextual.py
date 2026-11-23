@@ -367,7 +367,8 @@ def enrich_query_frame(
             eligible_previous = prior
     classification = classify_query_frame_operator(original_text, eligible_previous)
     classified_operator = classification.get("operator", QueryOperator.UNKNOWN)
-    if operator == QueryOperator.UNKNOWN and classified_operator != QueryOperator.UNKNOWN:
+    lead_follow_up = normalized_request.startswith(("what about ", "how about "))
+    if (operator == QueryOperator.UNKNOWN or lead_follow_up) and classified_operator != QueryOperator.UNKNOWN:
         operator = classified_operator
         if classification.get("inherited", False):
             provenance.append(inheritance_provenance("operator", classification.get("source_turn", 0)))

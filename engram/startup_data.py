@@ -5,12 +5,24 @@ substitutions) and the STATIC corpus loaded into a fresh Engram. Each function t
 takes ``engram`` is bound on ``engram.core.Engram`` as the method of the same name.
 """
 
+from copy import deepcopy
 from json import JSONDecodeError as json_JSONDecodeError, load as json_load
 from os import path as os_path
 
 from engram.constants import CONVERSATION_DUPLICATE_POLICIES, DEFAULT_BOT_NAME, DEFAULT_CONVERSATION_DUPLICATE_POLICY
 from engram.constants_artifacts import Tier
-from engram.pattern import normalize_pattern
+from engram.constants_language import MAX_PATTERN_WORDS
+from engram.pattern import normalize_pattern, pattern_word_count
+
+
+def validate_static_pattern_fields(pattern: str, that: str, topic: str) -> None:
+    """Validate pattern, that, and topic bounds and table syntax before storing."""
+    if pattern:
+        for name, value in (("pattern", pattern), ("that", that), ("topic", topic)):
+            if value:
+                if pattern_word_count(value) > MAX_PATTERN_WORDS:
+                    raise ValueError(f"{name} exceeds the limit of {MAX_PATTERN_WORDS} words")
+                normalize_pattern(value)
 
 
 def normalize_seed_pair(pair, path: str) -> dict:
@@ -30,7 +42,8 @@ def normalize_seed_pair(pair, path: str) -> dict:
         raise ValueError(f"seed file {path} templates must be objects")
     if not text.strip() and not template:
         raise ValueError(f"seed file {path} entries require a response or template")
-    result = {"pattern": pattern, "response": text, "that": that, "topic": topic, "template": dict(template)}
+    validate_static_pattern_fields(pattern, that, topic)
+    result = {"pattern": pattern, "response": text, "that": that, "topic": topic, "template": deepcopy(dict(template))}
     return result
 
 
@@ -70,6 +83,9 @@ def load_seed_files(paths, duplicate_policy: str = DEFAULT_CONVERSATION_DUPLICAT
     for path in paths:
         for pair in read_seed_file(path):
             pair_pattern = pair.get("pattern", "")
+            if not pair_pattern.strip():
+                pairs.append(pair)
+                continue
             key = (
                 normalize_pattern(pair_pattern),
                 normalize_pattern(pair.get("that", "")),
@@ -257,7 +273,10 @@ def load_static_data(engram, pairs: list[dict]) -> int:
             raise ValueError("static templates must be objects")
         if not text.strip() and not template:
             raise ValueError("each static data entry requires a response or template")
-        normalized_pairs.append({"text": text, "pattern": pattern, "that": that, "topic": topic, "template": dict(template)})
+        validate_static_pattern_fields(pattern, that, topic)
+        normalized_pairs.append(
+            {"text": text, "pattern": pattern, "that": that, "topic": topic, "template": deepcopy(dict(template))}
+        )
 
     with engram.mutation_lock, engram.statement_lock, engram.session_lock:
         artifacts = engram.response_repository.trusted_artifacts()

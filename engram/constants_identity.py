@@ -107,18 +107,26 @@ IDENTITY_PUNCTUATION_TRANSLATION = str.maketrans(
         "\u201b": "'",
         "\u02bc": "'",
         "\uff07": "'",
+        "\u201c": '"',
+        "\u201d": '"',
         "\u2010": " ",
         "\u2011": " ",
         "\u2012": " ",
         "\u2013": " ",
         "\u2014": " ",
         "\u2212": "-",
+        "\u00d7": "*",
+        "\u00f7": "/",
+        "\u2260": "!=",
+        "\u2264": "<=",
+        "\u2265": ">=",
     }
 )
+IDENTITY_QUOTED_LITERAL_RE = re_compile(r"`[^`\n]+`|\"[^\"\n]+\"|(?<!\w)'[^'\n]+'(?!\w)")
 IDENTITY_CONTRACTION_RE = re_compile(
     r"(?<!\w)(?:" + "|".join(re_escape(key) for key in sorted(DEFAULT_CONTRACTIONS, key=len, reverse=True)) + r")(?!\w)"
 )
-IDENTITY_TECHNICAL_PUNCTUATION = set("._:/\\-+#@'<>=%|&*$")
+IDENTITY_TECHNICAL_PUNCTUATION = set("._:/\\-+#@'<>=%|&*$^~")
 IDENTITY_OPERATOR_TOKENS = set({"who", "what", "where", "when", "which", "why", "how", "many"})
 IDENTITY_AUXILIARIES = set(
     {

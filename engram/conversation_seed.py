@@ -50,9 +50,23 @@ def load_conversation_pairs(path: str = "") -> list[dict]:
 
 
 def require_conversation_catch_all(pairs: list[dict]) -> None:
-    """Require the deterministic wildcard needed for non-empty MCP replies."""
+    """Require an unscoped deterministic '*' wildcard needed for non-empty MCP replies."""
     if not isinstance(pairs, list):
         raise ValueError("conversation seed pairs must be a list")
-    patterns = [pair.get("pattern", "") if isinstance(pair, dict) else "" for pair in pairs]
-    if not any(isinstance(pattern, str) and pattern.strip() == "*" for pattern in patterns):
-        raise ValueError("conversational MCP static data requires a '*' catch-all pattern")
+    has_unscoped_catch_all = False
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        pattern = pair.get("pattern", "")
+        topic = pair.get("topic", "")
+        that = pair.get("that", "")
+        response = pair.get("response", "")
+        template = pair.get("template", {})
+        is_star = isinstance(pattern, str) and pattern.strip() == "*"
+        unscoped = not (isinstance(topic, str) and topic.strip()) and not (isinstance(that, str) and that.strip())
+        has_output = (isinstance(response, str) and bool(response.strip())) or (isinstance(template, dict) and bool(template))
+        if is_star and unscoped and has_output:
+            has_unscoped_catch_all = True
+            break
+    if not has_unscoped_catch_all:
+        raise ValueError("conversational MCP static data requires an unscoped '*' catch-all pattern")

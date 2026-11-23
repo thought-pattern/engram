@@ -363,11 +363,12 @@ def linear_composition_plan(
         output_binding = "$result" if hop == len(selected) - 1 else f"$hop{hop + 1}"
         predicate_type = predicate.get("object_type", ExpectedObjectType.UNKNOWN)
         if hop == len(selected) - 1:
-            step_type = (
-                predicate_type
-                if expected_object_type == ExpectedObjectType.UNKNOWN and operator in ordered_operators
-                else expected_object_type
-            )
+            if operator in {GraphCompositionOperator.COUNT, GraphCompositionOperator.EXISTS} or (
+                expected_object_type == ExpectedObjectType.UNKNOWN and operator in ordered_operators
+            ):
+                step_type = predicate_type
+            else:
+                step_type = expected_object_type
         else:
             step_type = predicate_type
         steps.append(

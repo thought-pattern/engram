@@ -140,7 +140,11 @@ def run(config_path: str) -> dict[str, object]:
                     "outcome": validated_result.get("outcome", ResolutionOutcome.MISS).value,
                     "responses": [candidate.get("response", "") for candidate in validated_result.get("response_candidates", ())],
                     "evidence_paths": [
-                        [step.get("proposition_id", "") for step in record.get("path", ()) if isinstance(step, dict)]
+                        [
+                            step.get("proposition_id", "") if isinstance(step, dict) else str(step)
+                            for step in record.get("path", ())
+                            if (isinstance(step, dict) and step.get("proposition_id", "")) or (isinstance(step, str) and step)
+                        ]
                         for record in evidence_records
                     ],
                     "structured_reason": structured.get("reason_code", ""),

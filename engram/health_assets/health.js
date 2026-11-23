@@ -1,4 +1,4 @@
-import {byId, count, duration, yesNo, text, tally, facts, table, mountStandard, renderStandard, start} from "/health-common.js";
+import {byId, count, duration, yesNo, tally, facts, table, mountStandard, renderStandard, start} from "/health-common.js";
 
 mountStandard(byId("standard-summary"), byId("standard-detail"));
 
@@ -7,13 +7,6 @@ function latency(figures) {
   const value = figures || {};
   if (!value.observations) return "No samples yet";
   return duration(value.total_ns / value.observations / 1e9) + " average · " + duration(value.max_ns / 1e9) + " longest · " + count(value.observations) + " samples";
-}
-
-function note(status) {
-  if (status.error) return status.error;
-  if (status.implementation) return status.implementation;
-  if (status.plugins) return tally(Object.fromEntries(Object.entries(status.plugins).map(([name, plugin]) => [name, plugin.ready ? 1 : 0])));
-  return "";
 }
 
 function render(snapshot) {
@@ -27,12 +20,13 @@ function render(snapshot) {
     ["Rollout default", rollout.default_mode || "Not observed"],
     ["Namespace overrides", count(rollout.namespace_override_count) + " · " + tally(rollout.namespace_modes)],
   ]);
-  table("component-rows", Object.entries(snapshot.components || {}), [
+  const issues = Object.entries(snapshot.components || {}).filter(([, status]) => status.enabled && (!status.ready || status.error));
+  byId("dependency-issues").hidden = !issues.length;
+  table("dependency-issue-rows", issues, [
     ([name]) => name,
-    ([, status]) => yesNo(status.enabled),
-    ([, status]) => yesNo(status.ready),
-    ([, status]) => note(status),
-  ], "No components reported");
+    ([, status]) => status.ready ? "Error reported" : "Not ready",
+    ([, status]) => status.error || "—",
+  ], "");
   const telemetry = snapshot.telemetry || {};
   const resolution = telemetry.resolution || {};
   const matcher = telemetry.matcher || {};
@@ -41,7 +35,7 @@ function render(snapshot) {
   facts("recall-facts", [
     ["Pattern matcher", count(matcher.queries) + " queries · " + count(matcher.hits) + " hits · " + count(matcher.evictions) + " evictions"],
     ["Regulated cache", count(cache.proposals) + " proposals · " + count(cache.misses) + " misses · " + count(cache.accepted) + " accepted"],
-    ["Learned / retired", count(cache.learned_created) + " / " + count(cache.retired)],
+    ["Learned / replaced / retired", count(cache.learned_created) + " / " + count(cache.learned_replaced) + " / " + count(cache.retired)],
     ["Proposals pending / retained", count(cache.pending_proposals) + " / " + count(cache.retained_proposals)],
     ["Regulator outcomes", tally(telemetry.regulator_outcomes)],
     ["Graph recall", count(graph.consultations) + " consultations · " + count(graph.hits) + " hits · " + count(graph.misses) + " misses · " + count(graph.failures) + " failures"],
@@ -55,7 +49,6 @@ function render(snapshot) {
     ([, resolver]) => tally(resolver.states),
     ([, resolver]) => count(resolver.selected_contributions),
   ], "No resolvers reported");
-  text("std-usage-scope", "Engram makes no model calls");
 }
 
 start("Engram", render);

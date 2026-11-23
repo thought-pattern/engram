@@ -18,7 +18,7 @@ Run ``python -m engram.nltk_data`` once after installation to pre-fetch
 everything.
 """
 
-from os import makedirs as os_makedirs
+from os import makedirs as os_makedirs, path as os_path
 from pathlib import Path
 from threading import Lock
 
@@ -29,6 +29,11 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from engram.constants_language import REQUIRED_PACKAGES
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
+DIRECTORY_REQUIRED_PATHS = {
+    "tokenizers/punkt_tab": "tokenizers/punkt_tab/english/",
+    "taggers/averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
+    "chunkers/maxent_ne_chunker_tab": "chunkers/maxent_ne_chunker_tab/english_ace_multiclass/",
+}
 
 
 def local_data_dir(root: Path = SOURCE_ROOT) -> str:
@@ -58,18 +63,29 @@ def configure_path() -> str:
     directory = local_data_dir()
     if directory:
         os_makedirs(directory, exist_ok=True)
-        if directory not in nltk_data.path:
-            nltk_data.path.insert(0, directory)
+        if not nltk_data.path or nltk_data.path[0] != directory:
+            nltk_data.path[:] = [directory, *(entry for entry in nltk_data.path if entry != directory)]
     return directory
 
 
 def is_available(find_path: str) -> bool:
     """Return True if a resource resolves on NLTK's path now.
 
-    Checks both the bare path (extracted installs, the default location) and the
-    ``.zip`` form (packages downloaded into a custom directory stay zipped). The
-    answer is not cached, so a change to the data or the path is seen at once.
+    Table-backed NLTK readers (such as ``punkt_tab``) open files inside an
+    extracted filesystem directory and cannot read from a ``.zip`` archive, so
+    those packages must resolve to an extracted directory. Other packages check
+    both the bare path and the ``.zip`` form. The answer is not cached, so a
+    change to the data or the path is seen at once.
     """
+    required_dir = DIRECTORY_REQUIRED_PATHS.get(find_path, "")
+    if required_dir:
+        try:
+            resolved = nltk_data.find(required_dir)
+        except LookupError:
+            result = False
+            return result
+        result = os_path.isdir(str(resolved))
+        return result
     for candidate in (find_path, find_path + ".zip"):
         try:
             nltk_data.find(candidate)

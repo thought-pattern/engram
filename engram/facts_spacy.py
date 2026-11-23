@@ -79,6 +79,16 @@ def extract_from_sentence(sent) -> dict:
         result = {}
         return result
 
+    conditional_marks = {"if", "unless", "whether", "assuming", "provided", "supposing"}
+    has_conditional_clause = any(
+        (child.dep_ == "advcl" and any(tok.dep_ == "mark" and tok.lower_ in conditional_marks for tok in child.children))
+        or (child.dep_ == "prep" and child.lower_ in {"if", "unless"})
+        for child in root.children
+    )
+    if has_conditional_clause:
+        result = {}
+        return result
+
     subject_token = first_child(root, SUBJECT_DEPS)
     if not isinstance(subject_token, Token):
         result = {}
@@ -89,28 +99,31 @@ def extract_from_sentence(sent) -> dict:
         result = {}
         return result
 
+    negated = any(child.dep_ == "neg" or child.lower_ in {"not", "never"} for child in root.children) or any(
+        tok.dep_ == "neg" or tok.lower_ == "no" for tok in subject_token.subtree
+    )
     is_copula = root.pos_ == "AUX" or root.lemma_ == "be"
 
     if is_copula:
         obj_token = first_child(root, OBJECT_DEPS)
         if isinstance(obj_token, Token):
-            predicate = root.text  # keep surface "is"/"are"/"was"/"were"
+            predicate = f"{root.text} not" if negated else root.text
         else:
             prep_text, obj_token = prep_link(root)
             if not isinstance(obj_token, Token):
                 result = {}
                 return result
-            predicate = prep_text  # "Paris is in France" -> (Paris, in, France)
+            predicate = f"not {prep_text}" if negated else prep_text
     else:
         obj_token = first_child(root, OBJECT_DEPS)
         if isinstance(obj_token, Token):
-            predicate = root.lemma_  # normalized relation: develop, have, chase
+            predicate = f"not {root.lemma_}" if negated else root.lemma_
         else:
             prep_text, obj_token = prep_link(root)
             if not isinstance(obj_token, Token):
                 result = {}
                 return result
-            predicate = f"{root.lemma_} {prep_text}"  # "belong to"
+            predicate = f"not {root.lemma_} {prep_text}" if negated else f"{root.lemma_} {prep_text}"
 
     obj = internal_phrase(obj_token)
     if not obj or obj.lower() in PRONOUNS:
@@ -125,6 +138,7 @@ def extract_from_sentence(sent) -> dict:
         "original": sent.text.strip(),
         "subject_type": subject_token.ent_type_,
         "obj_type": obj_token.ent_type_,
+        "negated": negated,
     }
     return fact
 

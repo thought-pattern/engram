@@ -508,7 +508,7 @@ def resolver_result_from_dict(value: object) -> dict:
         reason_code=require_any_text(
             data.get("reason_code", ""), "resolver result reason_code", MAX_REASON_CODE_BYTES, allow_empty=True
         ),
-        candidates=tuple(candidate_from_dict(freeze_mapping(item, "resolver candidate")) for item in candidates),
+        candidates=tuple(candidate_from_dict(item) for item in candidates),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolver evidence item")) for item in evidence),
         proposition_evidence=tuple(
             proposition_evidence_record_from_dict(freeze_mapping(item, "resolver Proposition evidence item"))
@@ -749,9 +749,11 @@ def resolution_result_from_dict(value: object) -> dict:
     selected_available = data.get("selected_candidate_available", False)
     if not isinstance(selected_available, bool):
         raise InvalidRequestError("selected_candidate_available must be a boolean")
-    selected_mapping = freeze_mapping(data.get("selected_candidate", {}), "selected_candidate")
-    selected = candidate_from_dict(selected_mapping) if selected_available else empty_candidate()
-    if not selected_available and selected_mapping:
+    raw_selected = data.get("selected_candidate", {})
+    if not isinstance(raw_selected, dict):
+        raise InvalidRequestError("selected_candidate must be an object")
+    selected = candidate_from_dict(raw_selected) if selected_available else empty_candidate()
+    if not selected_available and raw_selected:
         raise InvalidRequestError("unavailable selected_candidate must be an empty object")
     confidence_available = data.get("confidence_available", False)
     if not isinstance(confidence_available, bool):
@@ -771,13 +773,13 @@ def resolution_result_from_dict(value: object) -> dict:
         outcome=outcome,
         selected_candidate=selected,
         selected_candidate_available=selected_available,
-        response_candidates=tuple(candidate_from_dict(freeze_mapping(item, "response candidate")) for item in response_candidates),
+        response_candidates=tuple(candidate_from_dict(item) for item in response_candidates),
         evidence=tuple(evidence_reference_from_dict(freeze_mapping(item, "resolution evidence item")) for item in evidence),
         confidence=require_float(data.get("confidence", 0.0), "resolution confidence", 0.0, 1.0),
         confidence_available=confidence_available,
         reason_codes=tuple(require_any_text(item, "reason code", MAX_REASON_CODE_BYTES, allow_empty=False) for item in reasons),
         frame_diagnostics=freeze_mapping(data.get("frame_diagnostics", {}), "frame diagnostics"),
-        resolver_results=tuple(resolver_result_from_dict(freeze_mapping(item, "resolver result")) for item in resolver_results),
+        resolver_results=tuple(resolver_result_from_dict(item) for item in resolver_results),
         budget=budget_consumption_from_dict(freeze_mapping(data.get("budget", {}), "resolution budget")),
         evidence_package_available=package_available,
         evidence_package=evidence_package_from_dict(freeze_mapping(data.get("evidence_package", {}), "evidence package")),

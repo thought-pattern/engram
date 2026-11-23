@@ -96,14 +96,16 @@ class EngramHealth:
         arrival = getattr(self.calls, "arrival", {})
         accepted = arrival.get("accepted", arrived)
         accepted_at = arrival.get("accepted_at", observed_at)
+        already_counted = arrival.get("counted_received", False)
         with self.lock:
             self.next_key += 1
             key = self.next_key
             self.items[key] = {"operation": operation, "accepted": accepted, "accepted_at": accepted_at, "started": arrived}
-            self.requests["received"] = self.requests.get("received", 0) + 1
-            self.requests["last_received_at"] = observed_at
-            row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
-            row["received"] = row.get("received", 0) + 1
+            if not already_counted:
+                self.requests["received"] = self.requests.get("received", 0) + 1
+                self.requests["last_received_at"] = observed_at
+                row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
+                row["received"] = row.get("received", 0) + 1
         return key
 
     def arriving(self, operation: str) -> bool:
@@ -122,7 +124,16 @@ class EngramHealth:
         with self.lock:
             self.next_wait += 1
             token = self.next_wait
-            self.thread_waits[token] = {"operation": operation, "accepted": monotonic(), "accepted_at": observed_at}
+            self.thread_waits[token] = {
+                "operation": operation,
+                "accepted": monotonic(),
+                "accepted_at": observed_at,
+                "counted_received": True,
+            }
+            self.requests["received"] = self.requests.get("received", 0) + 1
+            self.requests["last_received_at"] = observed_at
+            row = self.requests.get("by_operation", {}).setdefault(operation, operation_counts())
+            row["received"] = row.get("received", 0) + 1
         return token
 
     def thread_started(self, token: int, work, *args, **kwargs):
@@ -137,12 +148,19 @@ class EngramHealth:
             self.calls.arrival = {}
         return result
 
-    def thread_cancelled(self, token: int) -> bool:
+    def thread_cancelled(self, token: int, *, rejected_submit: bool = False) -> bool:
         """Drop a pending gRPC thread-wait record when submission fails or its future is cancelled before running."""
         if not token:
             return False
         with self.lock:
-            removed = bool(self.thread_waits.pop(token, {}))
+            entry = self.thread_waits.pop(token, {})
+            if entry and rejected_submit and entry.get("counted_received", False):
+                operation = entry.get("operation", "")
+                self.requests["received"] = max(0, self.requests.get("received", 0) - 1)
+                row = self.requests.get("by_operation", {}).get(operation, {})
+                if row:
+                    row["received"] = max(0, row.get("received", 0) - 1)
+            removed = bool(entry)
         return removed
 
     def current_key(self) -> int:
@@ -395,7 +413,7 @@ class CountedExecutor(ThreadPoolExecutor):
         try:
             future = super().submit(self.metrics.thread_started, token, fn, *args, **kwargs)
         except BaseException:
-            self.metrics.thread_cancelled(token)
+            self.metrics.thread_cancelled(token, rejected_submit=True)
             raise
         if token:
             future.add_done_callback(lambda done: self.metrics.thread_cancelled(token) if done.cancelled() else False)

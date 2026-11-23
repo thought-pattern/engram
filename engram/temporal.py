@@ -9,19 +9,26 @@ from engram.constants_relation import MAX_TEMPORAL_SOURCE_BYTES, TEMPORAL_QUERY_
 from engram.errors import InvalidRequestError
 from engram.validation import require_available_utc_timestamp, require_text, utc_datetime
 
-DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}|\d{4})"
-BETWEEN_RE = re_compile(rf"\bbetween\s+({DATE_TOKEN})\s+(?:and|to)\s+({DATE_TOKEN})\b", IGNORECASE)
-AS_OF_RE = re_compile(rf"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at))\s+({DATE_TOKEN})\b", IGNORECASE)
+DATE_TOKEN = r"(?:\d{4}-\d{2}-\d{2}(?![-/:T\d])|\d{4}(?![-/:T]\d))"
+OPTIONAL_YEAR_LEAD = r"(?:(?:the\s+)?year\s+)?"
+BETWEEN_RE = re_compile(
+    rf"\bbetween\s+{OPTIONAL_YEAR_LEAD}({DATE_TOKEN})\s+(?:and|to)\s+{OPTIONAL_YEAR_LEAD}({DATE_TOKEN})\b",
+    IGNORECASE,
+)
+AS_OF_RE = re_compile(rf"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at))\s+{OPTIONAL_YEAR_LEAD}({DATE_TOKEN})\b", IGNORECASE)
 # A year followed by -MM or /MM is part of a full date, not the whole year.
-IN_YEAR_RE = re_compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b(?![-/]\d)", IGNORECASE)
-BEFORE_RE = re_compile(rf"\bbefore\s+({DATE_TOKEN})\b", IGNORECASE)
-AFTER_RE = re_compile(rf"\bafter\s+({DATE_TOKEN})\b", IGNORECASE)
+IN_YEAR_RE = re_compile(r"\b(?:in|during)\s+(?:the\s+)?(?:year\s+)?(\d{4})\b(?![-/:T]\d)", IGNORECASE)
+BEFORE_RE = re_compile(rf"\bbefore\s+{OPTIONAL_YEAR_LEAD}({DATE_TOKEN})\b", IGNORECASE)
+AFTER_RE = re_compile(rf"\bafter\s+{OPTIONAL_YEAR_LEAD}({DATE_TOKEN})\b", IGNORECASE)
 LATEST_RE = re_compile(r"\b(?:latest|most\s+recent)\b", IGNORECASE)
-CURRENT_RE = re_compile(r"\b(?:current|currently|presently|at\s+present)\b", IGNORECASE)
-NOW_RE = re_compile(r"\b(?:now|right\s+now)\b", IGNORECASE)
+CURRENT_RE = re_compile(r"\b(?:currently|presently|at\s+present|current)\b", IGNORECASE)
+NOW_RE = re_compile(r"\b(?:right\s+now|now)\b", IGNORECASE)
 BARE_YEAR_RE = re_compile(r"^\s*(\d{4})\s*[?!.]?\s*$")
-SYSTEM_AXIS_RE = re_compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded)|recorded)\b", IGNORECASE)
+SYSTEM_AXIS_RE = re_compile(r"\b(?:system\s+time|transaction\s+time|as\s+(?:known|recorded))\b", IGNORECASE)
 WHITESPACE_CONTROL_RE = re_compile(r"[\t\n\r\v\f]")
+YEAR_PRECEDING_RE = re_compile(r"\byear\s+$", IGNORECASE)
+PRECEDING_WORD_RE = re_compile(r"([^\W\d_]+)\s*-?\s*$")
+IMMEDIATE_FOLLOWING_WORD_RE = re_compile(r"\s+([^\W\d_]+)")
 # A bare four-digit number is a year only in this range and when no unit or
 # technical count word follows it: "in 1500 byte frames" and "after 2000
 # requests" are quantities. Full dates (YYYY-MM-DD) are always dates. Words
@@ -41,12 +48,32 @@ QUANTITY_WORDS = {
     "meter", "metre", "km", "cm", "mm", "mile", "foot", "feet", "ft", "inch",
     "kg", "gram", "lb", "ton", "liter", "litre", "ml",
 }  # fmt: skip
+NON_TEMPORAL_CURRENT_MODIFIERS = {
+    "electric", "electrical", "alternating", "direct", "eddy", "leakage",
+    "dark", "bias", "load", "collector", "emitter", "drain", "gate",
+    "anode", "cathode", "fault", "surge", "peak", "rms",
+    "ocean", "tidal", "rip", "air", "wind", "water", "river", "stream", "jet",
+}  # fmt: skip
+NON_NOUN_FOLLOWERS = {
+    "through", "in", "into", "across", "from", "to", "of", "at", "on", "by",
+    "for", "with", "without", "between", "under", "over", "around", "along",
+    "within", "during", "before", "after", "since", "until", "as", "than",
+    "that", "which", "who", "whom", "whose", "where", "when", "while", "if",
+    "unless", "because", "and", "or", "but", "nor", "so", "yet",
+    "is", "are", "was", "were", "be", "been", "being",
+    "has", "have", "had", "do", "does", "did",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+    "a", "an", "the", "this", "these", "those",
+    "flows", "flowing", "flowed",
+}  # fmt: skip
 FOLLOWING_WORD_RE = re_compile(r"\s*-?\s*([^\W\d_]+|%)")
-UNRESOLVED_RE = re_compile(
+UNRESOLVED_HEAD_RE = re_compile(
     r"\b(?:as\s+of|as\s+(?:known|recorded)\s+(?:on|at)|before|after|between|during|latest|most\s+recent|"
-    r"current|currently|presently|right\s+now|now)\b[^?.,;]*",
+    r"currently|presently|at\s+present|current|right\s+now|now)\b",
     IGNORECASE,
 )
+CLAUSE_PUNCTUATION_RE = re_compile(r"[?.,;]")
+TRAILING_CONJUNCTION_RE = re_compile(r"\s+(?:and|or|but)\s*$", IGNORECASE)
 
 
 def internal_confidence(value: object) -> float:
@@ -206,20 +233,98 @@ def bounded_source(text: str) -> str:
     return result
 
 
+def is_quantity_word(word: str) -> bool:
+    """Return whether a lowercased word or its regular singular form names a quantity unit."""
+    stems = [word, word.removesuffix("s"), word.removesuffix("es")]
+    if word.endswith("ies") and len(word) > 3:
+        stems.append(f"{word[:-3]}y")
+    result = any(stem in QUANTITY_WORDS for stem in stems)
+    return result
+
+
 def is_quantity(text: str, match: re_Match[str]) -> bool:
     """Return whether a bare four-digit number in a match reads as a quantity, not a year."""
     for group in range(1, match.re.groups + 1):
         value = match.group(group)
         if not value or not re_fullmatch(r"\d{4}", value):
             continue
-        if int(value) not in PLAUSIBLE_YEARS:
-            return True
+        explicit_year = bool(YEAR_PRECEDING_RE.search(text[: match.start(group)]))
         following = FOLLOWING_WORD_RE.match(text, match.end(group))
-        if following:
-            word = following.group(1).casefold()
-            if word in QUANTITY_WORDS or word.removesuffix("s") in QUANTITY_WORDS:
-                return True
+        if following and is_quantity_word(following.group(1).casefold()):
+            return True
+        if not explicit_year and int(value) not in PLAUSIBLE_YEARS:
+            return True
     return False
+
+
+def is_temporal_current(text: str, match: re_Match[str]) -> bool:
+    """Return whether a CURRENT_RE or UNRESOLVED_HEAD_RE match uses 'current' as a temporal modifier."""
+    matched_word = match.group(0).casefold()
+    if matched_word != "current":
+        return True
+    preceding = PRECEDING_WORD_RE.search(text[: match.start()])
+    if preceding and preceding.group(1).casefold() in NON_TEMPORAL_CURRENT_MODIFIERS:
+        return False
+    following = IMMEDIATE_FOLLOWING_WORD_RE.match(text, match.end())
+    if not following:
+        return False
+    next_word = following.group(1).casefold()
+    result = next_word not in NON_NOUN_FOLLOWERS
+    return result
+
+
+def unresolved_operator(source: str) -> TemporalQueryOperator:
+    """Map an unresolved temporal clause prefix to its closest operator."""
+    normalized = source.casefold()
+    operator = TemporalQueryOperator.AS_OF
+    for prefix, selected in (
+        ("before", TemporalQueryOperator.BEFORE),
+        ("after", TemporalQueryOperator.AFTER),
+        ("between", TemporalQueryOperator.BETWEEN),
+        ("during", TemporalQueryOperator.IN_YEAR),
+        ("latest", TemporalQueryOperator.LATEST),
+        ("most recent", TemporalQueryOperator.LATEST),
+        ("current", TemporalQueryOperator.CURRENT),
+        ("at present", TemporalQueryOperator.CURRENT),
+        ("present", TemporalQueryOperator.CURRENT),
+        ("right now", TemporalQueryOperator.NOW),
+        ("now", TemporalQueryOperator.NOW),
+    ):
+        if normalized.startswith(prefix):
+            operator = selected
+            break
+    return operator
+
+
+def collect_unresolved_clauses(
+    text: str,
+    candidates: list[tuple[TemporalQueryOperator, re_Match[str]]],
+    quantity_starts: set[int],
+) -> list[tuple[TemporalQueryOperator, str]]:
+    """Collect temporal heads outside recognized candidate spans and quantity phrases."""
+    candidate_spans = [cand_match.span() for _, cand_match in candidates]
+    clauses: list[tuple[TemporalQueryOperator, str]] = []
+    covered_until = -1
+    for head_match in UNRESOLVED_HEAD_RE.finditer(text):
+        start = head_match.start()
+        if start < covered_until or start in quantity_starts:
+            continue
+        if any(span_start <= start < span_end for span_start, span_end in candidate_spans):
+            continue
+        if not is_temporal_current(text, head_match):
+            continue
+        end = len(text)
+        punct = CLAUSE_PUNCTUATION_RE.search(text, start)
+        if punct:
+            end = min(end, punct.start())
+        for span_start, _ in candidate_spans:
+            if start < span_start < end:
+                end = span_start
+        clause = TRAILING_CONJUNCTION_RE.sub("", text[start:end]).strip()
+        if clause:
+            clauses.append((unresolved_operator(clause), clause))
+            covered_until = start + len(clause)
+    return clauses
 
 
 def internal_unresolved(operator: TemporalQueryOperator, axis: TemporalAxis, source: str) -> dict:
@@ -255,6 +360,8 @@ def parse_temporal_query(request: object) -> dict:
         # Every occurrence counts: a repeated qualifier with a different bound
         # is a compound request, while an exact repeat adds nothing.
         for match in pattern.finditer(text):
+            if operator == TemporalQueryOperator.CURRENT and not is_temporal_current(text, match):
+                continue
             if is_quantity(text, match):
                 quantity_starts.add(match.start())
                 continue
@@ -266,36 +373,18 @@ def parse_temporal_query(request: object) -> dict:
     bare_year = BARE_YEAR_RE.fullmatch(text)
     if bare_year and not is_quantity(text, bare_year):
         candidates = [(TemporalQueryOperator.IN_YEAR, bare_year)]
+    extra_unresolved = collect_unresolved_clauses(text, candidates, quantity_starts) if not bare_year else []
     if not candidates:
-        # A phrase already read as a quantity is not an unresolved date either.
-        uncertain = next(
-            (found for found in UNRESOLVED_RE.finditer(text) if found.start() not in quantity_starts),
-            (),
-        )
-        if not uncertain:
+        if not extra_unresolved:
             result = temporal_query()
             return result
-        source = uncertain.group(0).strip()
-        normalized = source.casefold()
-        operator = TemporalQueryOperator.AS_OF
-        for prefix, selected in (
-            ("before", TemporalQueryOperator.BEFORE),
-            ("after", TemporalQueryOperator.AFTER),
-            ("between", TemporalQueryOperator.BETWEEN),
-            ("during", TemporalQueryOperator.IN_YEAR),
-            ("latest", TemporalQueryOperator.LATEST),
-            ("most recent", TemporalQueryOperator.LATEST),
-            ("current", TemporalQueryOperator.CURRENT),
-            ("present", TemporalQueryOperator.CURRENT),
-            ("now", TemporalQueryOperator.NOW),
-        ):
-            if normalized.startswith(prefix):
-                operator = selected
-                break
-        result = internal_unresolved(operator, axis, source)
+        first_operator, first_source = extra_unresolved[0]
+        combined_source = first_source if len(extra_unresolved) == 1 else " | ".join(clause for _, clause in extra_unresolved)
+        result = internal_unresolved(first_operator, axis, combined_source)
         return result
-    if len(candidates) != 1:
-        source = " | ".join(match.group(0) for _, match in candidates)
+    if len(candidates) != 1 or extra_unresolved:
+        parts = [*(match.group(0) for _, match in candidates), *(clause for _, clause in extra_unresolved)]
+        source = " | ".join(parts)
         result = internal_unresolved(candidates[0][0], axis, source)
         return result
     operator, match = candidates[0]

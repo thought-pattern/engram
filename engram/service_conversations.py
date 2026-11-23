@@ -11,6 +11,7 @@ from uuid import uuid4
 from engram import sessions
 from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, DEFAULT_USER_ID, SessionOverflow
 from engram.constants_artifacts import MAX_METADATA_KEY_BYTES, MAX_METADATA_STRING_BYTES, MAX_RESPONSE_BYTES, MAX_SOURCE_LABEL_BYTES
+from engram.constants_relation import MAX_CONTEXTUAL_TOPIC_BYTES
 from engram.conversation import ConversationRuntime, require_conversation_start, statement_view
 from engram.errors import ConflictError, ConversationOwnershipError, LifecycleError, ResourceNotFoundError
 from engram.service_requests import normalize_service_user_id
@@ -74,6 +75,10 @@ def owned_conversation(core, user_id: str, conversation_token: str) -> Conversat
         if not expected or not isinstance(conversation_token, str) or conversation_token != expected:
             raise ConversationOwnershipError("anonymous conversation requires the token issued when it started")
     core.conversation_activity[runtime.user_id] = time_monotonic()
+    with core.engram.session_lock:
+        active_session = sessions.get_session(core.engram, runtime.session_id, create_if_missing=False)
+        if active_session:
+            active_session["last_active"] = core.engram.clock()
     return runtime
 
 
@@ -117,6 +122,7 @@ def make_conversation_room(core) -> None:
         else:
             selected = min(idle, key=lambda runtime: core.conversation_activity.get(runtime.user_id, 0.0))
         core.release_conversation(selected)
+        sessions.delete_session(core.engram, selected.session_id)
 
 
 def get_conversation(core, user_id: str) -> ConversationRuntime:
@@ -193,7 +199,8 @@ def set_predicate(core, user_id: str, name: str, value: str) -> None:
     with core.lock:
         core.require_running()
         require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
-        require_any_text(value, "value", MAX_METADATA_STRING_BYTES, allow_empty=True)
+        max_bytes = MAX_CONTEXTUAL_TOPIC_BYTES if name == "topic" else MAX_METADATA_STRING_BYTES
+        require_any_text(value, "value", max_bytes, allow_empty=True)
         normalized_user_id = normalize_service_user_id(user_id)
         with core.engram.session_lock:
             session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)

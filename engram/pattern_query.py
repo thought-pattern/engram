@@ -12,7 +12,13 @@ from logging import getLogger as logging_getLogger
 from engram import sessions as sessions_mod
 from engram.constants_artifacts import Tier
 from engram.constants_dialogue import DIALOGUE_ACKNOWLEDGMENT, DIALOGUE_EMOTION, DIALOGUE_OPINION
-from engram.constants_language import KIND_STATEMENT, MAX_FACT_SENTENCE_WORDS, MAX_PATTERN_WORDS
+from engram.constants_language import (
+    KIND_COMMAND,
+    KIND_QUESTION,
+    KIND_STATEMENT,
+    MAX_FACT_SENTENCE_WORDS,
+    MAX_PATTERN_WORDS,
+)
 from engram.constants_service import MAX_REQUEST_BYTES
 from engram.dialogue import (
     classify_dialogue_act,
@@ -35,7 +41,7 @@ from engram.models import (
     session_update_dialogue,
 )
 from engram.nlp import extract_fact, input_kind
-from engram.pattern import match_first, pattern_word_count
+from engram.pattern import PatternMatcher, match_first, pattern_word_count
 from engram.polish import polish_response
 from engram.substitutions import expand_contractions, get_all_input_subs, split_sentences
 from engram.template import template_context
@@ -45,22 +51,17 @@ from engram.validation import format_utc_timestamp
 logger = logging_getLogger("engram.core")
 
 
-def match_for(engram, owner: str, text: str, that: str = "", topic: str = "") -> tuple:
-    """Match one sentence in ``owner``'s chat; return (owner of the match, match) or ().
-
-    ``owner``'s own facts are tried before the shared categories at each
-    matcher stage, and no other person's facts are consulted. The match
-    owner is "" when a shared category answered. The caller holds
-    statement_lock.
-    """
+def match_for(engram, owner: str, text: str, that: str = "", topic: str = "", *, include_spans: bool = False) -> tuple:
+    """Match one sentence in ``owner``'s chat; return (owner of the match, match) or ()."""
     scoped = [("", engram.pattern_matcher)]
     if owner in engram.person_matchers:
         scoped.insert(0, (owner, engram.person_matchers.get(owner, engram.pattern_matcher)))
-    found = match_first(tuple(matcher for _, matcher in scoped), text, that=that, topic=topic)
-    if not found:
+    found = match_first(tuple(matcher for _, matcher in scoped), text, that=that, topic=topic, include_spans=include_spans)
+    if len(found) != 2:
         result = ()
         return result
-    position, matched = found
+    position = found[0]
+    matched = found[1]
     result = (scoped[position][0], matched)
     return result
 
@@ -69,19 +70,44 @@ def statement_for_match(engram, matched_pattern: str, matched_topic: str, matche
     """Return ``owner``'s statement carrying a matched (pattern, topic, that), or {}.
 
     ``owner`` is the owner of the matcher that matched ("" for shared). A
-    statement carries a pattern as its own or as an alias. Among
-    duplicates the highest priority wins, ties going to the earliest
-    stored. The caller holds statement_lock.
+    statement carries a pattern as its own or as an alias. All spellings filed
+    under the same normalized path are compared so among duplicates the highest
+    priority wins, ties going to the earliest stored. The caller holds
+    statement_lock.
     """
+    matcher = engram.person_matchers.get(owner, engram.pattern_matcher) if owner else engram.pattern_matcher
+    target_key = PatternMatcher.path_key({"pattern": matched_pattern, "that": matched_that, "topic": matched_topic})
+    path_entries = matcher.path_entries(matched_pattern, that=matched_that, topic=matched_topic)
+    candidate_patterns: list[str] = []
+    for entry in (*path_entries, {"pattern": matched_pattern}):
+        entry_pattern = entry.get("pattern", "")
+        if entry_pattern and entry_pattern not in candidate_patterns:
+            candidate_patterns.append(entry_pattern)
+
     selected: dict = {}
-    for statement_id in engram.pattern_statements.get(matched_pattern, ()):
-        # pattern_statements lists only stored statements (store and eviction keep them in step).
-        stmt = engram.statement_by_id.get(statement_id, {})
-        if not stmt or stmt.get("introduced_by_user_id", "") != owner:
-            continue
-        triple_match = stmt.get("topic", "") == matched_topic and stmt.get("that", "") == matched_that
-        if triple_match and (not selected or stmt.get("priority", 0) > selected.get("priority", 0)):
-            selected = stmt
+    selected_rank = (0, 0)
+    seen_ids: set[str] = set()
+    for candidate_pattern in candidate_patterns:
+        for statement_id in engram.pattern_statements.get(candidate_pattern, ()):
+            if statement_id in seen_ids:
+                continue
+            seen_ids.add(statement_id)
+            stmt = engram.statement_by_id.get(statement_id, {})
+            if not stmt or stmt.get("introduced_by_user_id", "") != owner:
+                continue
+            stmt_patterns = [stmt.get("pattern", ""), *stmt.get("pattern_aliases", ())]
+            same_path = any(
+                PatternMatcher.path_key({"pattern": reg_pattern, "that": stmt.get("that", ""), "topic": stmt.get("topic", "")})
+                == target_key
+                for reg_pattern in stmt_patterns
+                if reg_pattern
+            )
+            if not same_path:
+                continue
+            rank = (stmt.get("priority", 0), -engram.statement_sequence.get(statement_id, 0))
+            if not selected or rank > selected_rank:
+                selected = stmt
+                selected_rank = rank
     result = selected
     return result
 
@@ -100,7 +126,14 @@ def expand_for_match(engram, text: str) -> str:
 
 
 def pattern_query(
-    engram, text: str, context_id: str = "", user_id: str = "", *, include_graph: bool = True, evaluation_time: str = ""
+    engram,
+    text: str,
+    context_id: str = "",
+    user_id: str = "",
+    *,
+    include_graph: bool = True,
+    include_fallback: bool = True,
+    evaluation_time: str = "",
 ) -> tuple:
     """Query using AIML-style pattern matching.
 
@@ -228,7 +261,11 @@ def pattern_query(
             # ``sentence`` was already expanded before it was split. Expanding
             # it again would apply a custom substitution twice.
             scoped_match = engram.match_for(
-                speaker, sentence, that=engram.expand_for_match(that), topic=engram.expand_for_match(topic)
+                speaker,
+                sentence,
+                that=engram.expand_for_match(that),
+                topic=engram.expand_for_match(topic),
+                include_spans=True,
             )
 
         # Fact admission belongs to the observed user turn, not to the
@@ -238,10 +275,11 @@ def pattern_query(
         for fact in admitted_facts:
             engram.learn_fact(fact, introduced_by_user_id=speaker)
 
+        sentence_candidate: dict = {}
         if scoped_match:
             match_owner, result = scoped_match
-            _, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that = result
-            captured = restore_capture_case(captured, sentence)
+            _, captured, thatstars, topicstars, matched_pattern, matched_topic, matched_that, star_spans = result
+            captured = restore_capture_case(captured, sentence, spans=star_spans)
 
             # Find the statement carrying this (pattern, topic, that).
             # Among duplicates the highest priority wins, ties going to
@@ -249,13 +287,6 @@ def pattern_query(
             with engram.mutation_lock, engram.statement_lock:
                 selected = engram.statement_for_match(matched_pattern, matched_topic, matched_that, match_owner)
                 if selected:
-                    # Pattern selection is a query and a hit in one step
-                    # (there is no later confirmation on this path), so
-                    # record both -- this is what keeps frequently used
-                    # patterns alive under least-recently-used eviction.
-                    record_statement_query(selected)
-                    record_statement_hit(selected, turn_moment)
-
                     response_state = {"unknown": False}
                     render_info = {"interpolated": False}
                     final_response = engram.process_statement_template(
@@ -272,9 +303,6 @@ def pattern_query(
                         response_state=response_state,
                         render_info=render_info,
                     )
-                    # Output cleanup: repair casing (sentence starts, the
-                    # pronoun I) only when dynamic content was interpolated or
-                    # captured via <learn>; authored literals stay verbatim.
                     authored_text = selected.get("text", "") if not selected.get("template", {}) else ""
                     learned_capture = bool(selected.get("introduced_by_user_id", "")) and bool(selected.get("template", {}))
                     interpolated = render_info.get("interpolated", False) or learned_capture
@@ -284,25 +312,50 @@ def pattern_query(
                         and (not authored_text or final_response != authored_text)
                     ):
                         final_response = polish_response(final_response)
-                    responses.append(final_response)
-                    candidates.append(
-                        {
-                            "statement": selected,
-                            "captured": captured,
-                            "response": final_response,
-                            "dialogue_act": sentence_act,
-                            "unknown": response_state.get("unknown", False),
-                        }
-                    )
+                    sentence_candidate = {
+                        "statement": selected,
+                        "captured": captured,
+                        "response": final_response,
+                        "dialogue_act": sentence_act,
+                        "unknown": response_state.get("unknown", False),
+                    }
 
-                    that = final_response
-                    if session:
-                        with engram.session_lock:
-                            topic = session.get("predicates", {}).get("topic", "")
+        graph_needed = (
+            include_graph
+            and (not sentence_candidate or sentence_candidate.get("unknown", False))
+            and input_kind(sentence) in {KIND_COMMAND, KIND_QUESTION}
+        )
+        sentence_graph = engram.graph_lookup(sentence, evaluation_time=selected_evaluation_time) if graph_needed else ""
+        if sentence_graph:
+            sentence_candidate = {
+                "statement": {},
+                "captured": [],
+                "response": sentence_graph,
+                "dialogue_act": sentence_act,
+                "unknown": False,
+            }
+        elif sentence_candidate and sentence_candidate.get("statement", {}):
+            with engram.mutation_lock, engram.statement_lock:
+                matched_stmt = sentence_candidate.get("statement", {})
+                record_statement_query(matched_stmt)
+                record_statement_hit(matched_stmt, turn_moment)
+
+        if sentence_candidate and sentence_candidate.get("response", ""):
+            candidates.append(sentence_candidate)
+            that = sentence_candidate.get("response", "")
+            if session:
+                with engram.session_lock:
+                    topic = session.get("predicates", {}).get("topic", "")
+
+    known_candidates = [item for item in candidates if not item.get("unknown", False) and item.get("response", "")]
+    active_candidates = known_candidates if known_candidates else candidates
+    responses = [item.get("response", "") for item in active_candidates if item.get("response", "")]
 
     if not responses:
         selected_act = turn_dialogue_acts[-1] if turn_dialogue_acts else ""
-        graph_response = engram.graph_lookup(text, evaluation_time=selected_evaluation_time) if include_graph else ""
+        graph_response = (
+            engram.graph_lookup(text, evaluation_time=selected_evaluation_time) if include_graph and len(sentences) > 1 else ""
+        )
         if graph_response:
             if session:
                 with engram.session_lock:
@@ -311,7 +364,7 @@ def pattern_query(
             graph_result_tuple = ({}, [], graph_response)
             return graph_result_tuple
 
-        fallback_response = engram.config.get("fallback_response", "")
+        fallback_response = engram.config.get("fallback_response", "") if include_fallback else ""
         if fallback_response:
             if session:
                 with engram.session_lock:
@@ -326,10 +379,25 @@ def pattern_query(
         result = ()
         return result
 
-    selected_candidate = select_turn_candidate(candidates)
+    selected_candidate = select_turn_candidate(active_candidates)
     combined_response = " ".join(responses)
-    returned_stmt = candidates[-1].get("statement", {})
-    returned_captured = candidates[-1].get("captured", [])
+    pattern_candidates = [item for item in active_candidates if item.get("statement", {})]
+    if not pattern_candidates:
+        if session:
+            with engram.session_lock:
+                session_update_dialogue(
+                    session, selected_candidate.get("dialogue_act", ""), active_topic, turn_entities, turn_fact_admissions
+                )
+                session_update_context(session, combined_response, text, moment=turn_moment)
+        graph_only_tuple = ({}, [], combined_response)
+        return graph_only_tuple
+
+    returned_stmt = pattern_candidates[-1].get("statement", {})
+    returned_captured = pattern_candidates[-1].get("captured", [])
+    all_unknown = not bool(known_candidates)
+    if not all_unknown:
+        with engram.count_lock:
+            engram.hit_count += 1
 
     # A successful learned-fact recall is direct evidence of the new
     # topic, even when the query used an inverse alias such as
@@ -348,7 +416,7 @@ def pattern_query(
 
     with engram.statement_lock:
         returned_copy = deepcopy(returned_stmt)
-    returned_copy["unknown"] = any(candidate.get("unknown", False) for candidate in candidates)
+    returned_copy["unknown"] = all_unknown
     match_tuple = (returned_copy, returned_captured, combined_response)
     return match_tuple
 
@@ -399,6 +467,7 @@ def process_statement_template(
         person2_subs=engram.substitution_maps.get("person2", {}),
         gender_subs=engram.substitution_maps.get("gender", {}),
         category_count=len(engram.statements),
+        vocabulary_count=len(engram.keywords),
         graph_fn=engram.graph_read_fn,
         evaluation_time=evaluation_time,
     )
@@ -411,15 +480,24 @@ def process_statement_template(
             context["input_history"] = session.get("input_history", []).copy()
             context["response_history"] = session.get("response_history", []).copy()
             context["that_history"] = [s.copy() for s in session.get("that_history", [])]
+    elif topic:
+        context["predicates"] = {"topic": topic}
 
     def redirect_fn(pattern: str) -> str:
+        current_topic = str(context.get("predicates", {}).get("topic", topic))
+        expanded_pattern = engram.expand_for_match(pattern)
         with engram.statement_lock:
             scoped_match = engram.match_for(
-                speaker, engram.expand_for_match(pattern), that=engram.expand_for_match(that), topic=engram.expand_for_match(topic)
+                speaker,
+                expanded_pattern,
+                that=engram.expand_for_match(that),
+                topic=engram.expand_for_match(current_topic),
+                include_spans=True,
             )
         if scoped_match:
             match_owner, result = scoped_match
-            _, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that = result
+            _, new_captured, new_thatstars, new_topicstars, matched_pattern, matched_topic, matched_that, new_star_spans = result
+            new_captured = restore_capture_case(new_captured, expanded_pattern, spans=new_star_spans)
             with engram.mutation_lock, engram.statement_lock:
                 redirect_stmt = engram.statement_for_match(matched_pattern, matched_topic, matched_that, match_owner)
                 if redirect_stmt:
@@ -439,7 +517,8 @@ def process_statement_template(
                         response_history=context.get("response_history", []),
                         that_history=context.get("that_history", []),
                         session_id=context.get("session_id", ""),
-                        category_count=context.get("category_count", 0),
+                        category_count=len(engram.statements),
+                        vocabulary_count=len(engram.keywords),
                         redirect_fn=redirect_fn,
                         learn_fn=context.get("learn_fn", ()),
                         graph_fn=engram.graph_read_fn,

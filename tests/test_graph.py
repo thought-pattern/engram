@@ -5,6 +5,7 @@ unavailable graph raises, and every public execution path rejects mutations.
 MockGraphClient is an in-memory stand-in keyed on query parameters.
 """
 
+from re import findall as re_findall, sub as re_sub
 from unittest.mock import Mock, patch
 
 from pytest import approx as pytest_approx, raises as pytest_raises
@@ -63,6 +64,13 @@ class MockGraphClient:
             return result
 
         if "MATCH" in query_upper and "RETURN" in query_upper:
+            scrubbed = re_sub(r"'[^']*'|\"[^\"]*\"", "''", query)
+            bound_vars = set(re_findall(r"\(\s*([A-Za-z_]\w*)\s*(?::|\{|\))", scrubbed))
+            bound_vars.update(re_findall(r"\[\s*([A-Za-z_]\w*)\s*(?::|\{|\])", scrubbed))
+            referenced_vars = set(re_findall(r"\b([A-Za-z_]\w*)\s*\.", scrubbed))
+            unbound_vars = sorted(referenced_vars - bound_vars)
+            if unbound_vars:
+                raise ValueError(f"Unbound Cypher variable: {unbound_vars[0]}")
             # Triple query, object unknown: subject + predicate -> object.
             if subject and predicate and not obj:
                 for proposition in self.propositions:
@@ -124,6 +132,10 @@ class MockGraphClient:
         """Close the mock connection."""
         pass
 
+    def disconnect(self) -> None:
+        """Disconnect the mock connection."""
+        pass
+
 
 def encode_fake_embeddings(texts: list[str], **kwargs) -> list:
     """Stand in for SentenceTransformer.encode: one tracked 384-dimension zero vector per text."""
@@ -167,7 +179,10 @@ def test_template_graph_operations_graph_query_success():
 
     template = {
         "graph_query": {
-            "query": "MATCH (c:Proposition) RETURN hs.surface_form as result",
+            "query": (
+                "MATCH (c:Proposition {predicate: $predicate, object: $object})-[hs:HAS_SUBJECT]->(:Entity) "
+                "RETURN hs.surface_form as result"
+            ),
             "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
             "on_success": {"text": "{result} is the capital of {star2}."},
             "on_failure": {"text": "I don't know."},
@@ -186,7 +201,10 @@ def test_template_graph_operations_graph_query_not_found():
 
     template = {
         "graph_query": {
-            "query": "MATCH (c:Proposition) RETURN hs.surface_form as result",
+            "query": (
+                "MATCH (c:Proposition {predicate: $predicate, object: $object})-[hs:HAS_SUBJECT]->(:Entity) "
+                "RETURN hs.surface_form as result"
+            ),
             "params": {"predicate": "CAPITAL_OF", "object": "{star2}"},
             "on_success": {"text": "{result} is the capital."},
             "on_failure": {"text": "I don't know."},

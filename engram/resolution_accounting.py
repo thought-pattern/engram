@@ -1,5 +1,6 @@
 """Exactly-once accounting finalization of the response artifacts one resolution observed and accepted."""
 
+from copy import deepcopy
 from hashlib import sha256 as hashlib_sha256
 from threading import RLock as threading_RLock
 
@@ -214,7 +215,7 @@ class ResolutionAccountingFinalizer:
                 bool(accepted_statement_id),
                 accounting_replayed,
             )
-            self.internal_requests[request_id] = (signature, finalization)
+            self.internal_requests[request_id] = (signature, deepcopy(finalization))
             while len(self.internal_requests) > self.internal_max_requests:
                 self.internal_requests.pop(next(iter(self.internal_requests)))
             return finalization

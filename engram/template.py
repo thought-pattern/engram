@@ -32,6 +32,7 @@ from engram.constants_language import (
 from engram.graph import graph_is_empty, graph_single, is_write_cypher, projection_timestamp
 from engram.nlp import input_kind
 from engram.sentiment import sentiment_label
+from engram.substitutions import apply_substitutions
 from engram.text import extract_name, first_clause
 
 star_pattern = re_compile(TEMPLATE_STAR_EXPRESSION)
@@ -112,6 +113,7 @@ def template_context(
         "category_count": category_count,
         "vocabulary_count": vocabulary_count,
         "evaluation_time": selected_evaluation_time,
+        "bindings": {},
         "interpolated": False,
         "response_state": {"unknown": False},
         "redirect_fn": redirect_fn,
@@ -247,24 +249,8 @@ def escape_template_text(text: str) -> str:
 
 
 def apply_word_substitution(text: str, substitutions: dict[str, str]) -> str:
-    """Apply a case-preserving word substitution map."""
-    if not substitutions:
-        result = text
-        return result
-    words = text.split()
-    replaced = []
-    for word in words:
-        lower = word.lower()
-        if lower in substitutions:
-            replacement = substitutions.get(lower, "")
-            if word.isupper():
-                replacement = replacement.upper()
-            elif word[0].isupper():
-                replacement = replacement.capitalize()
-            replaced.append(replacement)
-        else:
-            replaced.append(word)
-    result = " ".join(replaced)
+    """Apply a case- and punctuation-preserving word substitution map."""
+    result = apply_substitutions(text, substitutions)
     return result
 
 
@@ -586,14 +572,15 @@ class TemplateProcessor:
             result_str = str(record.get("result", ""))
 
         success_template = query_data.get("on_success", {"text": "{result}"})
-        if isinstance(success_template, dict):
+        if isinstance(context.get("predicates", {}), dict):
             context.get("predicates", {})["_graph_result"] = result_str
-            if "text" in success_template:
-                output = self.substitute_variables(str(success_template.get("text", "")), context, {"result": result_str})
-                return output
+        prior_bindings = dict(context.get("bindings", {})) if isinstance(context.get("bindings", {}), dict) else {}
+        context["bindings"] = {**prior_bindings, "result": result_str}
+        try:
             output = self.process(success_template, context)
-            return output
-        return result_str
+        finally:
+            context["bindings"] = prior_bindings
+        return output
 
     def process_triple_query(self, triple_data: dict, context: dict) -> str:
         """Process triple query shorthand operation."""
@@ -643,7 +630,9 @@ class TemplateProcessor:
         names such as ``result`` to literal values for this rendering. A
         backslash before ``{``, ``}`` or another backslash emits that character.
         """
-        values = bindings or {}
+        context_bindings = context.get("bindings", {}) if isinstance(context.get("bindings", {}), dict) else {}
+        explicit_bindings = bindings if isinstance(bindings, dict) else {}
+        values = {**context_bindings, **explicit_bindings}
         output = []
         position = 0
         while position < len(text):

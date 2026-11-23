@@ -89,6 +89,7 @@ class MCPConversationService:
             raise ValueError("static_pairs must be a list of objects")
         if require_catch_all:
             require_conversation_catch_all(selected_pairs)
+        self.require_catch_all = require_catch_all
         self.static_pairs = deepcopy(selected_pairs)
         self.core = ()
         self.active_user_id = ""
@@ -127,6 +128,21 @@ class MCPConversationService:
                 conversation_settings = config.get("conversation", {})
                 if not conversation_settings.get("seed_files", []):
                     core.engram.load_static_data(deepcopy(self.static_pairs))
+                elif self.require_catch_all:
+                    configured_pairs = [
+                        {
+                            "pattern": stmt.get("pattern", ""),
+                            "topic": stmt.get("topic", ""),
+                            "that": stmt.get("that", ""),
+                            "response": stmt.get("text", ""),
+                            "template": stmt.get("template", {}),
+                        }
+                        for stmt in core.engram.statements
+                    ]
+                    try:
+                        require_conversation_catch_all(configured_pairs)
+                    except ValueError as err:
+                        raise InvalidRequestError(str(err)) from err
                 started = core.start_conversation(
                     user_id=conversation_user_id,
                     initial_bot_text=initial_bot_text,

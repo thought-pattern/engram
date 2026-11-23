@@ -64,10 +64,28 @@ def validate_coordinated_mutation_candidate(value: object, trusted_artifacts: ob
         raise InvalidRequestError("coordinated mutation candidate must be an object")
     if set(value) != COORDINATED_MUTATION_CANDIDATE_FIELDS:
         raise InvalidRequestError("coordinated mutation candidate fields are malformed")
+    before = validate_coordinated_response_state(value.get("before", {}), trusted_artifacts)
+    after = validate_coordinated_response_state(value.get("after", {}), trusted_artifacts)
+    receipt = validate_mutation_receipt(value.get("receipt", {}))
+    before_receipts = before.get("mutation_receipts", {})
+    expected_ledger = (
+        before_receipts.clone()
+        if isinstance(before_receipts, MutationReceiptLedger)
+        else MutationReceiptLedger(state=before_receipts)
+    )
+    expected_ledger.record(receipt)
+    after_receipts = after.get("mutation_receipts", {})
+    actual_snapshot = (
+        after_receipts.snapshot()
+        if isinstance(after_receipts, MutationReceiptLedger)
+        else MutationReceiptLedger(state=after_receipts).snapshot()
+    )
+    if actual_snapshot != expected_ledger.snapshot():
+        raise ConflictError("coordinated mutation receipt ledger does not match candidate receipt")
     result: dict = {
-        "before": validate_coordinated_response_state(value.get("before", {}), trusted_artifacts),
-        "after": validate_coordinated_response_state(value.get("after", {}), trusted_artifacts),
-        "receipt": validate_mutation_receipt(value.get("receipt", {})),
+        "before": before,
+        "after": after,
+        "receipt": receipt,
     }
     return result
 
@@ -135,6 +153,7 @@ def planned_candidate_unchanged(candidate: dict, changed_ids: set, record: dict)
         and candidate.get("receipt", {}) == record.get("receipt", {})
         and receipts.revision == record.get("receipts_revision", 0)
         and receipts.next_sequence == record.get("receipts_next_sequence", 0)
+        and receipts.snapshot() == record.get("receipts_snapshot", {})
         and all(
             (
                 artifacts.get(identifier, {}) == changed_artifacts.get(identifier, {})
@@ -279,7 +298,7 @@ class AtomicMutationCoordinator:
         with self.lock, self.repository.coordinated_mutation():
             before_repository = self.repository.trusted_state()
             before_receipts = self.mutation_receipts.clone()
-            before = {"repository": before_repository, "mutation_receipts": before_receipts}
+            before = {"repository": deepcopy(before_repository), "mutation_receipts": before_receipts}
             before_artifacts = before_repository.get("artifacts", {})
             planned = self.repository.planned_changes(repository_candidate, before_repository)
             if not planned.get("planned", False):
@@ -309,18 +328,20 @@ class AtomicMutationCoordinator:
                 raise ConflictError("mutation receipt affected generations do not match repository changes")
             receipts = before_receipts.clone()
             receipts.record(validated_receipt)
-            after = {"repository": validated_repository_candidate, "mutation_receipts": receipts}
+            isolated_after_repository = deepcopy(validated_repository_candidate)
+            after = {"repository": isolated_after_repository, "mutation_receipts": receipts}
             result = {"before": before, "after": after, "receipt": validated_receipt}
             changed_ids = {change[0] for change in changes}
-            candidate_artifacts = validated_repository_candidate.get("artifacts", {})
+            candidate_artifacts = isolated_after_repository.get("artifacts", {})
             planning_record = {
                 "artifact_ids": set(candidate_artifacts),
-                "unchanged_artifacts": before_artifacts,
+                "unchanged_artifacts": deepcopy(before_artifacts),
                 "changed_artifacts": deepcopy({identifier: candidate_artifacts.get(identifier, {}) for identifier in changed_ids}),
                 "state_generation": candidate_generation,
                 "receipt": deepcopy(validated_receipt),
                 "receipts_revision": receipts.revision,
                 "receipts_next_sequence": receipts.next_sequence,
+                "receipts_snapshot": receipts.snapshot(),
             }
             while len(self.internal_planned) >= MAX_PLANNED_CANDIDATES:
                 del self.internal_planned[next(iter(self.internal_planned))]
@@ -351,16 +372,21 @@ class AtomicMutationCoordinator:
                 validated_candidate = candidate
                 planned_after = candidate.get("after", {})
                 planned_repository = planned_after.get("repository", {})
-                # Publish a fresh top-level map, so the caller's candidate never aliases live state.
+                # Publish isolated artifact copies so mutating a retained candidate never alters committed live state.
                 after_repository = {
                     "state_generation": planned_repository.get("state_generation", 0),
-                    "artifacts": dict(planned_repository.get("artifacts", {})),
+                    "artifacts": {
+                        identifier: (
+                            deepcopy(artifact) if identifier in changed else live_artifacts.get(identifier, deepcopy(artifact))
+                        )
+                        for identifier, artifact in planned_repository.get("artifacts", {}).items()
+                    },
                 }
                 after_receipts = planned_after.get("mutation_receipts", {})
                 after = {"repository": after_repository, "mutation_receipts": after_receipts}
             else:
                 validated_candidate = validate_coordinated_mutation_candidate(candidate, live_artifacts)
-                after = validated_candidate.get("after", {})
+                after = deepcopy(validated_candidate.get("after", {}))
                 after_repository = after.get("repository", {})
                 after_receipts = after.get("mutation_receipts", {})
             if not self.is_current(validated_candidate.get("before", {})):

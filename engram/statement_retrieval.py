@@ -176,13 +176,15 @@ def query_candidates(
                     removed = heapq_heapreplace(scored, ranked)
                     scored_bytes += ranked_bytes - estimate_working_bytes(removed)
                 require_working_memory(retained_bytes + scored_bytes, max_working_memory_bytes)
-    scored.sort(key=lambda value: (value[0], value[1]), reverse=True)
+        scored.sort(key=lambda value: (value[0], value[1]), reverse=True)
+        isolated_matches = [(deepcopy(statement_value), score) for score, _, statement_value, _ in scored]
+        features = {statement_value.get("id", ""): components for _, _, statement_value, components in scored}
     run_cooperative_check(cooperative_check)
     result = {
-        "matches": [(statement_value, score) for score, _, statement_value, _ in scored],
+        "matches": isolated_matches,
         "keywords": keywords,
         "resolved_query": text,
-        "features": {statement_value.get("id", ""): components for _, _, statement_value, components in scored},
+        "features": features,
         "diagnostics": {
             "spelling_correction_applied": normalized != uncorrected,
             "phrase_keywords_enabled": phrase_keywords_enabled,
@@ -256,7 +258,10 @@ def query(
     with engram.statement_lock:
         if record_candidates:
             for statement_value, _ in matches:
-                record_statement_query(statement_value)
+                stored_statement = engram.statement_by_id.get(statement_value.get("id", ""), {})
+                if stored_statement:
+                    record_statement_query(stored_statement)
+                    statement_value["query_count"] = stored_statement.get("query_count", 0)
         # Callers receive isolated statements; the store's own records stay owned here.
         isolated_matches = [(deepcopy(statement_value), score) for statement_value, score in matches]
     result = {"matches": isolated_matches, "keywords": keywords, "resolved_query": discovery.get("resolved_query", "")}

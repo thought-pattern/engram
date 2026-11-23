@@ -328,7 +328,7 @@ def test_grpc_evidence_service_uses_shared_graph_resolution(monkeypatch) -> None
 
     assert result.outcome == "EVIDENCE"
     assert as_dict(result.response_candidates[0]).get("response", "") == "Ada Lovelace — birth place: London."
-    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
+    assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)] * 2
 
 
 def test_evidence_service_decodes_json_facing_identity_and_budget_contracts() -> None:

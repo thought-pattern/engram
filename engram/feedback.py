@@ -86,12 +86,11 @@ def feedback_payload_signature(observations) -> str:
         complete = thaw_native_value(trusted_feedback_observation_to_dict(observation))
         if not isinstance(complete, dict):
             raise InvalidRequestError("feedback observation did not serialize to an object")
+        del complete["observed_at"]
         complete_fingerprint = canonical_fingerprint(complete)
         if complete_fingerprint in seen_observations:
             raise InvalidRequestError("feedback observations must be unique")
         seen_observations.add(complete_fingerprint)
-
-        del complete["observed_at"]
         encoded = canonical_binary_encoding(complete)
         total_bytes += len(encoded)
         if total_bytes > MAX_FEEDBACK_SIGNATURE_BYTES:

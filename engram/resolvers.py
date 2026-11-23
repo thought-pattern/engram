@@ -2,6 +2,7 @@
 
 from hashlib import sha256 as hashlib_sha256
 
+from engram.artifacts import metadata_values_equal
 from engram.constants_artifacts import LifecycleState
 from engram.constants_evidence import EligibilityExclusionReason
 from engram.constants_identity import ExactLookupOutcome
@@ -24,7 +25,7 @@ from engram.errors import (
     InvalidRequestError,
     ResourceNotFoundError,
 )
-from engram.identity import scoped_retrieval_key_from_text
+from engram.identity import retrieval_representation_bindings, scoped_retrieval_key_from_text
 from engram.resolution import (
     accounting_observation,
     candidate as resolution_candidate,
@@ -70,7 +71,10 @@ def artifact_matches_frame(artifact: dict, frame: dict) -> bool:
         result = False
         return result
     metadata = artifact.get("metadata", {})
-    result = all(key in metadata and metadata.get(key, ()) == value for key, value in frame.get("required_metadata", {}).items())
+    result = all(
+        key in metadata and metadata_values_equal(metadata.get(key, ()), value)
+        for key, value in frame.get("required_metadata", {}).items()
+    )
     return result
 
 
@@ -96,6 +100,24 @@ class ExactResolver:
     def available(self, frame: dict) -> bool:
         result = frame.get("eligibility_context", {}).get("artifact_repository_available", False)
         return result
+
+    def can_short_circuit(self, candidate: dict, frame: dict) -> bool:
+        """Return whether an exact candidate is complete and un-excluded for direct answer."""
+        statement_id = candidate.get("statement_id", "")
+        artifact = self.internal_engram.response_repository.find_artifact(statement_id)
+        if not artifact:
+            return False
+        support_complete = artifact.get("metadata", {}).get("support_complete", True)
+        if not (isinstance(support_complete, bool) and support_complete):
+            return False
+        feedback = self.internal_engram.feedback_store
+        if feedback.stale_excluded(statement_id, artifact.get("generation", 0)):
+            return False
+        namespace = frame.get("scope", {}).get("namespace", "")
+        with feedback.internal_lock:
+            suppressed = any(key[0] == statement_id and key[1] == namespace for key in feedback.internal_policy_suppressions)
+        ready = not suppressed
+        return ready
 
     def resolve(
         self,
@@ -128,7 +150,30 @@ class ExactResolver:
                 consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
             )
             return result
-        artifact = self.internal_engram.response_repository.get_artifact(lookup.get("statement_id", ""))
+        lookup_id = lookup.get("statement_id", "")
+        try:
+            artifact = self.internal_engram.response_repository.get_artifact(lookup_id)
+        except ResourceNotFoundError:
+            result = resolver_result(
+                resolver=self.name,
+                state=ResolverState.COMPLETED,
+                reason_code=f"exact_{ExactLookupOutcome.MISS.value}",
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
+            )
+            return result
+        owned_keys = tuple(
+            binding.get("key", {})
+            for binding in retrieval_representation_bindings(artifact.get("retrieval", {}), artifact.get("scope", {}))
+        )
+        content_gen = self.internal_engram.response_repository.content_generation(lookup_id)
+        if content_gen > lookup.get("generation", 0) or key not in owned_keys:
+            result = resolver_result(
+                resolver=self.name,
+                state=ResolverState.COMPLETED,
+                reason_code=f"exact_{ExactLookupOutcome.MISS.value}",
+                consumption=budget_consumption(elapsed_ns=max(0, resolver_clock_ns(self.internal_clock_ns) - started), resolvers=1),
+            )
+            return result
         if not artifact_matches_frame(artifact, frame):
             result = resolver_result(
                 resolver=self.name,
@@ -488,8 +533,12 @@ class SparseResolver:
             return result
         started = resolver_clock_ns(self.internal_clock_ns)
 
+        matched_generations: dict[str, int] = {}
+
         def matches_sparse_frame(artifact: dict) -> bool:
             matched = artifact_matches_frame(artifact, frame)
+            if matched:
+                matched_generations[artifact.get("statement_id", "")] = artifact.get("generation", 0)
             return matched
 
         discovery = self.internal_engram.sparse_candidates(
@@ -534,13 +583,15 @@ class SparseResolver:
         accounting = []
         retained_bytes = discovery.get("working_memory_bytes", 0)
         for match in discovery.get("matches", ()):
+            statement_id = match.get("statement_id", "")
             try:
-                artifact = self.internal_engram.response_repository.get_artifact(match.get("statement_id", ""))
+                artifact = self.internal_engram.response_repository.get_artifact(statement_id)
             except ResourceNotFoundError:
                 continue
-            if not artifact_matches_frame(artifact, frame):
+            scored_gen = matched_generations.get(statement_id, artifact.get("generation", 0))
+            content_gen = self.internal_engram.response_repository.content_generation(statement_id)
+            if content_gen > scored_gen or not artifact_matches_frame(artifact, frame):
                 continue
-            statement_id = artifact.get("statement_id", "")
             field_contributions = match.get("field_contributions", {})
             phrase_fields = match.get("phrase_fields", ())
             proximity_fields = match.get("proximity_fields", ())

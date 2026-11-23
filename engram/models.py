@@ -6,6 +6,7 @@ decoding paths validate external records. Module-level functions implement
 the records' behavior.
 """
 
+from copy import deepcopy
 from datetime import datetime
 from uuid import uuid4
 
@@ -59,7 +60,7 @@ def statement(
         "pattern_aliases": list(pattern_aliases or ()),  # Alternate patterns resolving to this statement
         "that": that,  # Pattern to match bot's previous response
         "topic": topic,  # Topic scope constraint
-        "template": dict(template or ()),  # Structured template (JSON), {} when absent
+        "template": deepcopy(dict(template or ())),  # Structured template (JSON), {} when absent
         "priority": priority,  # Override default priority (higher = preferred)
         "introduced_by_user_id": introduced_by_user_id,
         "source_label": source_label,

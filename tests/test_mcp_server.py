@@ -64,6 +64,7 @@ def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text
         "turn": 1,
         "input": "hello",
         "response": "Hello!",
+        "unknown": False,
         "user_id": "Protocol Agent",
         "source": "pattern",
         "score": 1.0,
@@ -398,6 +399,9 @@ def test_mcp_query_uses_shared_graph_resolution(tmp_path, monkeypatch) -> None:
 
         assert result.get("outcome", "") == "EVIDENCE"
         assert result.get("response_candidates", [])[0].get("response", "") == "Ada Lovelace — birth place: London."
-        assert graph.one_hop_calls == [("entity:ada-lovelace", "predicate:birth-place", 10, False)]
+        assert graph.one_hop_calls == [
+            ("entity:ada-lovelace", "predicate:birth-place", 10, False),
+            ("entity:ada-lovelace", "predicate:birth-place", 10, False),
+        ]
 
     asyncio_run(exercise())

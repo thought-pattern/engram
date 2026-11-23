@@ -29,6 +29,17 @@ def require_session_lock(engram) -> None:
         raise RuntimeError("live session access requires holding session_lock")
 
 
+def require_session_available(engram, session_id: str) -> None:
+    """Verify under ``session_lock`` that ``session_id`` exists or can be opened within ``max_sessions``."""
+    require_session_lock(engram)
+    if (
+        session_id not in engram.sessions
+        and len(engram.sessions) >= engram.config.get("max_sessions", 0)
+        and engram.config.get("session_overflow", SessionOverflow.REJECT) == SessionOverflow.REJECT
+    ):
+        raise SessionLimitExceededError("Maximum sessions reached")
+
+
 def normalize_user_id(user_id: str = "") -> str:
     """Return the caller-owned user label, defaulting missing labels to "0"."""
     if user_id == "":

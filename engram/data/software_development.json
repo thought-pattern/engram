@@ -267,6 +267,7 @@
       "pattern": "WHAT IS * IN SOFTWARE DEVELOPMENT",
       "response": "I can walk the path from a plan to software someone can use and maintain.",
       "template": {
+        "unknown": true,
         "text": "I don't have a separate note on {star1}. Ask about the plan, the requirements, the design, the tests, or the handoff."
       }
     },
@@ -274,6 +275,7 @@
       "pattern": "HOW DO I * IN SOFTWARE DEVELOPMENT",
       "response": "Tie the task to the step that produces it, and write down the result of that step.",
       "template": {
+        "unknown": true,
         "text": "For {star1}, name the step. Needs go in requirements. Shape goes in the design. Proof goes in the tests. What users and maintainers receive goes in the delivery."
       }
     },
@@ -281,6 +283,7 @@
       "pattern": "HOW DO YOU * IN SOFTWARE DEVELOPMENT",
       "response": "Tie the task to the step that produces it, and write down the result of that step.",
       "template": {
+        "unknown": true,
         "text": "For {star1}, name the step. Needs go in requirements. Shape goes in the design. Proof goes in the tests. What users and maintainers receive goes in the delivery."
       }
     },
@@ -288,6 +291,7 @@
       "pattern": "EXPLAIN * IN SOFTWARE DEVELOPMENT",
       "response": "I can explain the plan, the requirements, the design, the tests, or the handoff.",
       "template": {
+        "unknown": true,
         "text": "I can explain {star1} if it is part of the plan, the requirements, the design, the tests, or the handoff. Ask about that step by name."
       }
     }

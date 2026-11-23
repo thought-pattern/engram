@@ -53,6 +53,9 @@ def learn_response(
             raise InvalidRequestError("metadata must be an object")
         metadata = dict(metadata)
         normalized_user_id = normalize_service_user_id(user_id)
+        if normalized_user_id != DEFAULT_USER_ID and request_id not in core.learn_requests:
+            with core.engram.session_lock:
+                sessions.require_session_available(core.engram, normalized_user_id)
         mutation = core.response_mutations.learn_response(
             request,
             response,
@@ -79,14 +82,18 @@ def learn_response(
         learned = result_code != "REJECTED_CAPACITY"
         if learned and not replayed:
             core.engram.eviction_count += len(evicted_statement_ids)
-        if learned and normalized_user_id != DEFAULT_USER_ID:
+        if learned and not replayed and normalized_user_id != DEFAULT_USER_ID:
             with core.engram.session_lock:
                 sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
                 sessions.update_session_context(core.engram, normalized_user_id, response)
+        if not replayed:
+            core.learn_requests[request_id] = {"statement_id": receipt_statement_id}
+            core.enforce_transient_bound()
         if replayed:
             core.regulated_metrics["idempotent_retries"] += 1
         elif learned:
-            core.regulated_metrics["learned_created"] += 1
+            metric_name = "learned_replaced" if superseded_statement_ids else "learned_created"
+            core.regulated_metrics[metric_name] += 1
         action = "rejected_capacity"
         if learned:
             action = "replaced" if superseded_statement_ids else "created"
@@ -124,15 +131,24 @@ def supersede_response(
         require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
         require_any_text(audit_detail, "audit_detail", MAX_FEEDBACK_REASON_BYTES, allow_empty=True)
         current = core.engram.response_repository.get_artifact(statement_id)
+        previous = core.supersede_requests.get(request_id, {})
+        expected_generation = (
+            previous.get("expected_generation", current.get("generation", 0)) if previous else current.get("generation", 0)
+        )
         mutation = core.response_mutations.supersede_response(
             statement_id,
-            current.get("generation", 0),
+            expected_generation,
             replacement,
             reason,
             "SupersedeResponse",
             request_id,
             audit_detail,
         )
+        if not previous:
+            core.supersede_requests[request_id] = {"expected_generation": expected_generation}
+            core.enforce_transient_bound()
+        if mutation.get("replayed", False):
+            core.regulated_metrics["idempotent_retries"] += 1
         result = response_mutation_result_to_dict(mutation)
         return result
 

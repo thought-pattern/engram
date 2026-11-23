@@ -79,41 +79,48 @@ def normalize(text: str) -> str:
     return trimmed
 
 
-def restore_capture_case(captures: list[str], source_text: str) -> list[str]:
-    """Restore wildcard capture casing from the caller's original sentence.
-
-    Pattern matching intentionally normalizes input, but template output and
-    caller-owned labels should not inherit that lowercase representation. This
-    aligns each normalized capture with a contiguous word span in the original
-    sentence and returns the original spellings when possible.
-    """
+def restore_capture_case(captures: list[str], source_text: str, spans: tuple = ()) -> list[str]:
+    """Restore wildcard capture casing and identifier punctuation from ``source_text``."""
     if not captures or not source_text:
         return captures
 
-    # Captures come from pattern.prepare_pattern_text, which breaks hyphens and
-    # underscores inside a whitespace token into separate words and then
-    # normalizes each, so the source is split the same way. Each word keeps
-    # the span from its first to its last alphanumeric character and the
-    # source token it came from, so words split from one token are rejoined
-    # with the marks the caller wrote.
     source_words: list[str] = []
     source_spans: list[tuple[int, int, int]] = []
     for token_index, token in enumerate(re_finditer(r"\S+", source_text)):
         for piece in re_finditer(r"[^-_]+", token.group(0)):
-            word = normalize(piece.group(0))
+            piece_text = piece.group(0)
+            word = normalize(piece_text)
             if not word:
                 continue
-            offsets = [offset for offset, character in enumerate(piece.group(0)) if character.isalnum()]
+            offsets = [
+                offset
+                for offset, character in enumerate(piece_text)
+                if character.isalnum()
+                or (character in "./@~$" and offset + 1 < len(piece_text) and piece_text[offset + 1].isalnum())
+                or (character in "+#" and any(earlier.isalnum() for earlier in piece_text[:offset]))
+            ]
             start = token.start() + piece.start() + offsets[0]
-            source_words.append(word)
+            has_trailing_sharp = piece_text[offsets[-1]] == "#"
+            source_words.append(f"{word}#" if has_trailing_sharp else word)
             source_spans.append((start, token.start() + piece.start() + offsets[-1] + 1, token_index))
     restored: list[str] = []
     search_start = 0
 
-    for capture in captures:
-        capture_words = normalize(capture).split()
+    for idx, capture in enumerate(captures):
+        capture_words = [
+            f"{normalize(part)}#" if part.endswith("#") and normalize(part) else normalize(part)
+            for part in capture.split()
+            if normalize(part)
+        ]
         found = -1
-        if capture_words:
+        if idx < len(spans) and isinstance(spans[idx], tuple) and len(spans[idx]) == 2:
+            span_start, span_end = spans[idx]
+            if span_start == span_end and not capture_words:
+                restored.append("")
+                continue
+            if 0 <= span_start < span_end <= len(source_spans) and source_words[span_start:span_end] == capture_words:
+                found = span_start
+        if found < 0 and capture_words:
             last_start = len(source_words) - len(capture_words)
             for index in range(search_start, last_start + 1):
                 if source_words[index : index + len(capture_words)] == capture_words:

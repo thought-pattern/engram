@@ -258,10 +258,18 @@ class BoltStub:
                 if failed:
                     send(connection, IGNORED)
                     continue
-                for values in pending:
-                    send(connection, RECORD, values)
-                pending = []
-                send(connection, SUCCESS, {"has_more": False, "t_last": 0, "type": "r"})
+                extra = message.fields[0] if message.fields and isinstance(message.fields[0], dict) else {}
+                requested = extra.get("n", -1)
+                if isinstance(requested, bool) or not isinstance(requested, int) or requested == 0:
+                    raise ValueError("Bolt PULL or DISCARD n must be -1 or a positive integer")
+                take = len(pending) if requested < 0 else min(requested, len(pending))
+                batch = pending[:take]
+                pending = pending[take:]
+                if message.tag == PULL:
+                    for values in batch:
+                        send(connection, RECORD, values)
+                summary = {"has_more": True} if pending else {"has_more": False, "t_last": 0, "type": "r"}
+                send(connection, SUCCESS, summary)
             elif message.tag == RESET:
                 failed = False
                 send(connection, SUCCESS, {})

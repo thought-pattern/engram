@@ -8,7 +8,6 @@ from pathlib import Path
 from platform import machine as platform_machine
 from statistics import median as statistics_median
 from time import perf_counter_ns as time_perf_counter_ns
-from tracemalloc import get_traced_memory as tracemalloc_get_traced_memory, start as tracemalloc_start, stop as tracemalloc_stop
 
 from engram.constants_resolution import CostClass, ResolutionOutcome, ResolverState
 from engram.coordination import AtomicMutationCoordinator
@@ -40,7 +39,7 @@ from engram.resolution_sizing import encoded_size
 from engram.resolver_execution import ResolverExecutor
 from engram.resolver_plan import ResolverRegistry
 from engram.responses import AcceptedResponseService
-from scripts.benchmark_metadata import benchmark_source_state, recorded_at
+from scripts.benchmark_metadata import TracedMemoryScope, benchmark_source_state, recorded_at
 
 DEFAULT_OUTPUT = Path("eval/results/evidence/benchmark.json")
 START_NS = 1_000_000_000
@@ -166,11 +165,10 @@ def measure_evidence(samples: int) -> dict:
         ).encode("utf-8")
     ).hexdigest()
 
-    tracemalloc_start()
-    memory_result = canonicalize_proposition_evidence(records)
-    memory_package = build_evidence_package(memory_result, max_records=10)
-    _, peak_bytes = tracemalloc_get_traced_memory()
-    tracemalloc_stop()
+    with TracedMemoryScope() as memory_scope:
+        memory_result = canonicalize_proposition_evidence(records)
+        memory_package = build_evidence_package(memory_result, max_records=10)
+        _, peak_bytes = memory_scope.read()
 
     engine = Engram()
     budget = capture_resolution_budget(lambda: START_NS)

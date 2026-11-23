@@ -55,7 +55,7 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict:
     baseline_hits = 0
     rewritten_hits = 0
     false_direct_answers = 0
-    final_owners: dict[tuple, str] = {}
+    final_owners: dict[tuple, set[tuple]] = {}
     semantic_collisions = 0
     category_counts = Counter()
     for raw_case in cases:
@@ -79,19 +79,25 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict:
         expected_key = scoped_retrieval_key_from_text(selected_scope, expected)
         baseline_key = scoped_retrieval_key_from_text(selected_scope, str(case.get("input", "")))
         rewritten_key = scoped_retrieval_key_from_text(selected_scope, final_text)
+        expected_signature = trusted_scoped_retrieval_key_signature(expected_key)
+        actual_signature = trusted_scoped_retrieval_key_signature(rewritten_key)
         should_rewrite = case.get("should_rewrite", False) is True
         if should_rewrite:
             positive += 1
             category_counts[str(case.get("category", ""))] += 1
             baseline_hits += baseline_key == expected_key
             rewritten_hits += rewritten_key == expected_key
-            signature = trusted_scoped_retrieval_key_signature(expected_key)
-            prior = final_owners.get(signature, "")
-            if prior and prior != case_id:
+            seen_targets = final_owners.setdefault(actual_signature, set())
+            if seen_targets and expected_signature not in seen_targets:
                 semantic_collisions += 1
-            final_owners[signature] = case_id
-        elif rewritten_key != baseline_key:
-            false_direct_answers += 1
+            seen_targets.add(expected_signature)
+        else:
+            seen_targets = final_owners.setdefault(actual_signature, set())
+            if seen_targets and expected_signature not in seen_targets:
+                semantic_collisions += 1
+            seen_targets.add(expected_signature)
+            if rewritten_key != baseline_key:
+                false_direct_answers += 1
         results.append(
             {
                 "case_id": case_id,
@@ -117,6 +123,8 @@ def benchmark(corpus_path: Path, repeats: int = 100) -> dict:
             )
             latencies_ms.append((time_perf_counter_ns() - started) / 1_000_000)
     negatives = len(cases) - positive
+    if positive < 1 or negatives < 1:
+        raise ValueError("rewrite benchmark corpus requires at least one positive case and one negative control")
     baseline_recall = baseline_hits / positive
     rewritten_recall = rewritten_hits / positive
     recall_gain = rewritten_recall - baseline_recall

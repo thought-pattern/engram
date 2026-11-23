@@ -9,7 +9,7 @@ from engram.config import engram_config
 from engram.constants import SessionOverflow
 from engram.constants_artifacts import Tier
 from engram.core import Engram
-from engram.models import record_statement_hit, record_statement_query, session_update_context
+from engram.models import session_update_context
 from engram.sessions import SessionLimitExceededError, SessionNotFoundError
 
 
@@ -315,131 +315,136 @@ def test_eviction_lru_evicts_oldest_when_no_entry_was_reused() -> None:
 
 def test_eviction_lru_preserves_recently_used_entries() -> None:
     """LRU evicts least recently used (oldest last_hit)."""
+    cursor = [0]
+
+    def clock() -> datetime:
+        moment = datetime(2026, 8, 1, 12, 0, tzinfo=UTC) + timedelta(seconds=cursor[0])
+        cursor[0] += 1
+        return moment
 
     config = engram_config(capacity=3)
-    engram = Engram(config=config)
+    engram = Engram(config=config, clock=clock)
 
     id1 = engram.store("First", tier=Tier.DYNAMIC)
     id2 = engram.store("Second", tier=Tier.DYNAMIC)
     id3 = engram.store("Third", tier=Tier.DYNAMIC)
 
-    # Simulate hits on second and third, but not first
-    stmt2 = engram.get_statement(id2)
-    stmt3 = engram.get_statement(id3)
-    if stmt2:
-        record_statement_hit(stmt2, datetime.now(UTC))
-    if stmt3:
-        record_statement_hit(stmt3, datetime.now(UTC))
+    # Record real hits on first and third through Engram, leaving second unused.
+    engram.record_hit([], statement_id=id1)
+    engram.record_hit([], statement_id=id3)
 
-    # Store fourth, should evict first (never hit, so oldest)
+    # Store fourth: must evict second (never hit), preserving first and third.
     engram.store("Fourth", tier=Tier.DYNAMIC)
 
-    assert not engram.get_statement(id1)
-    assert engram.get_statement(id2)
-    assert engram.get_statement(id3)
+    assert engram.get_statement(id1).get("hit_count", 0) == 1
+    assert not engram.get_statement(id2)
+    assert engram.get_statement(id3).get("hit_count", 0) == 1
 
 
 def test_eviction_lru_uses_recency_not_total_hit_count() -> None:
+    cursor = [0]
+
+    def clock() -> datetime:
+        moment = datetime(2026, 8, 1, 12, 0, tzinfo=UTC) + timedelta(seconds=cursor[0])
+        cursor[0] += 1
+        return moment
+
     config = engram_config(capacity=3)
-    engram = Engram(config=config)
+    engram = Engram(config=config, clock=clock)
 
     id1 = engram.store("First", tier=Tier.DYNAMIC)
     id2 = engram.store("Second", tier=Tier.DYNAMIC)
     id3 = engram.store("Third", tier=Tier.DYNAMIC)
 
-    # Give second and third some hits
-    stmt2 = engram.get_statement(id2)
-    stmt3 = engram.get_statement(id3)
-    if stmt2:
-        record_statement_hit(stmt2, datetime.now(UTC))
-        record_statement_hit(stmt2, datetime.now(UTC))
-    if stmt3:
-        record_statement_hit(stmt3, datetime.now(UTC))
+    # Hit second twice first (higher total hit count, older last_hit), then first and third once later.
+    engram.record_hit([], statement_id=id2)
+    engram.record_hit([], statement_id=id2)
+    engram.record_hit([], statement_id=id1)
+    engram.record_hit([], statement_id=id3)
 
-    # First was never used, so it is the LRU victim.
+    # Second has the oldest last_hit despite having more hits, so it is the LRU victim.
     engram.store("Fourth", tier=Tier.DYNAMIC)
 
-    assert not engram.get_statement(id1)
-    assert engram.get_statement(id2)
-    assert engram.get_statement(id3)
+    assert engram.get_statement(id1).get("hit_count", 0) == 1
+    assert not engram.get_statement(id2)
+    assert engram.get_statement(id3).get("hit_count", 0) == 1
 
 
 def test_eviction_lru_ignores_hit_rate_when_ordering_candidates() -> None:
+    cursor = [0]
+
+    def clock() -> datetime:
+        moment = datetime(2026, 8, 1, 12, 0, tzinfo=UTC) + timedelta(seconds=cursor[0])
+        cursor[0] += 1
+        return moment
+
     config = engram_config(capacity=3)
-    engram = Engram(config=config)
+    engram = Engram(config=config, clock=clock)
 
-    id1 = engram.store("First", tier=Tier.DYNAMIC)
-    id2 = engram.store("Second", tier=Tier.DYNAMIC)
-    id3 = engram.store("Third", tier=Tier.DYNAMIC)
+    id1 = engram.store("alpha entry", tier=Tier.DYNAMIC)
+    id2 = engram.store("bravo entry", tier=Tier.DYNAMIC)
+    id3 = engram.store("charlie entry", tier=Tier.DYNAMIC)
 
-    # Simulate query/hit patterns
-    stmt1 = engram.get_statement(id1)
-    stmt2 = engram.get_statement(id2)
-    stmt3 = engram.get_statement(id3)
+    # Bravo gets 8/10 hit rate earliest; alpha gets 1/10 later; charlie gets 5/10 latest.
+    for _ in range(10):
+        engram.query("bravo")
+    for _ in range(8):
+        engram.record_hit(["bravo"], statement_id=id2)
 
-    if stmt1:
-        # 10 queries, 1 hit = 0.1 hit rate
-        for _ in range(10):
-            record_statement_query(stmt1)
-        record_statement_hit(stmt1, datetime.now(UTC))
-    if stmt2:
-        # 10 queries, 5 hits = 0.5 hit rate
-        for _ in range(10):
-            record_statement_query(stmt2)
-        for _ in range(5):
-            record_statement_hit(stmt2, datetime.now(UTC))
-    if stmt3:
-        # 10 queries, 8 hits = 0.8 hit rate
-        for _ in range(10):
-            record_statement_query(stmt3)
-        for _ in range(8):
-            record_statement_hit(stmt3, datetime.now(UTC))
+    for _ in range(10):
+        engram.query("alpha")
+    engram.record_hit(["alpha"], statement_id=id1)
 
-    # First has the oldest last-hit timestamp, so LRU evicts it.
-    engram.store("Fourth", tier=Tier.DYNAMIC)
+    for _ in range(10):
+        engram.query("charlie")
+    for _ in range(5):
+        engram.record_hit(["charlie"], statement_id=id3)
 
-    assert not engram.get_statement(id1)
-    assert engram.get_statement(id2)
-    assert engram.get_statement(id3)
+    # Bravo has the oldest last-hit timestamp despite its 0.8 hit rate, so LRU evicts it.
+    engram.store("delta entry", tier=Tier.DYNAMIC)
+
+    assert engram.get_statement(id1).get("hit_count", 0) == 1
+    assert not engram.get_statement(id2)
+    assert engram.get_statement(id3).get("hit_count", 0) == 5
 
 
 def test_eviction_lru_has_no_hit_rate_protection() -> None:
+    cursor = [0]
+
+    def clock() -> datetime:
+        moment = datetime(2026, 8, 1, 12, 0, tzinfo=UTC) + timedelta(seconds=cursor[0])
+        cursor[0] += 1
+        return moment
+
     config = engram_config(capacity=3)
-    engram = Engram(config=config)
+    engram = Engram(config=config, clock=clock)
 
-    id1 = engram.store("First", tier=Tier.DYNAMIC)
-    id2 = engram.store("Second", tier=Tier.DYNAMIC)
-    id3 = engram.store("Third", tier=Tier.DYNAMIC)
+    id1 = engram.store("alpha entry", tier=Tier.DYNAMIC)
+    id2 = engram.store("bravo entry", tier=Tier.DYNAMIC)
+    id3 = engram.store("charlie entry", tier=Tier.DYNAMIC)
 
-    # Set hit rates: first=0.2 (below threshold), second=0.5, third=0.5
-    stmt1 = engram.get_statement(id1)
-    stmt2 = engram.get_statement(id2)
-    stmt3 = engram.get_statement(id3)
+    # Bravo has 0.5 hit rate at an earlier timestamp; alpha has 0.2 later; charlie has 0.5 latest.
+    for _ in range(10):
+        engram.query("bravo")
+    for _ in range(5):
+        engram.record_hit(["bravo"], statement_id=id2)
 
-    if stmt1:
-        for _ in range(10):
-            record_statement_query(stmt1)
-        for _ in range(2):
-            record_statement_hit(stmt1, datetime.now(UTC))  # 0.2 hit rate
+    for _ in range(10):
+        engram.query("alpha")
+    for _ in range(2):
+        engram.record_hit(["alpha"], statement_id=id1)
 
-    if stmt2:
-        for _ in range(10):
-            record_statement_query(stmt2)
-        for _ in range(5):
-            record_statement_hit(stmt2, datetime.now(UTC))  # 0.5 hit rate
+    for _ in range(10):
+        engram.query("charlie")
+    for _ in range(5):
+        engram.record_hit(["charlie"], statement_id=id3)
 
-    if stmt3:
-        for _ in range(10):
-            record_statement_query(stmt3)
-        for _ in range(5):
-            record_statement_hit(stmt3, datetime.now(UTC))  # 0.5 hit rate
+    # Hit rate does not create durable protection; bravo is least recent and is evicted.
+    engram.store("delta entry", tier=Tier.DYNAMIC)
 
-    # Hit rate does not create durable protection; first is still least recent.
-    engram.store("Fourth", tier=Tier.DYNAMIC)
-
-    assert not engram.get_statement(id1)
-    assert engram.get_statement(id2)
-    assert engram.get_statement(id3)
+    assert engram.get_statement(id1).get("hit_count", 0) == 2
+    assert not engram.get_statement(id2)
+    assert engram.get_statement(id3).get("hit_count", 0) == 5
 
 
 # Tests for session management.

@@ -14,7 +14,7 @@ from engram.constants_artifacts import MAX_SOURCE_LABEL_BYTES
 from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind
 from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES
 from engram.constants_mutations import MAX_REQUEST_ID_BYTES
-from engram.constants_relation import MAX_CONTEXTUAL_TURN, ExpectedObjectType
+from engram.constants_relation import MAX_CONTEXTUAL_TOPIC_BYTES, MAX_CONTEXTUAL_TURN, ExpectedObjectType
 from engram.constants_resolution import ResolutionOutcome, ResolverState
 from engram.contextual import compact_query_frame_from_frame, enrich_query_frame
 from engram.errors import (
@@ -295,6 +295,7 @@ def resolve_request(
             if prior_signature != signature:
                 raise ConflictError("resolution request_id is associated with different input")
             core.ensure_resolution_candidacy(request_id, prior)
+            core.ensure_resolution_context(prior)
             prior_result = prior.get("result", {})
             try:
                 prior_result = validate_resolution_result(prior_result)
@@ -333,7 +334,8 @@ def resolve_request(
             predicate_topic = predicates.get("topic", "")
             if not isinstance(predicate_topic, str):
                 raise LifecycleError("user topic predicate is malformed")
-            topic = active_topic or predicate_topic
+            raw_topic = active_topic or predicate_topic
+            topic = raw_topic if len(raw_topic.encode("utf-8")) <= MAX_CONTEXTUAL_TOPIC_BYTES else ""
         frame = enrich_query_frame(
             frame,
             previous=previous_query_frame,
@@ -351,9 +353,11 @@ def resolve_request(
                 previous=previous_query_frame,
             )
             with core.engram.session_lock:
-                session["previous_query_frame"] = compact
-                session["query_frame_turn"] = current_turn
-                session["last_active"] = core.internal_clock()
+                current_session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
+                if current_session.get("query_frame_turn", 0) < current_turn:
+                    current_session["previous_query_frame"] = compact
+                    current_session["query_frame_turn"] = current_turn
+                current_session["last_active"] = core.internal_clock()
 
         evaluation_time = frame.get("eligibility_context", {}).get("evaluation_time", "")
         negative_started_ns = time_monotonic_ns()
@@ -380,9 +384,16 @@ def resolve_request(
             negative_key_available = False
             negative_hit = False
         if negative_hit:
-            public_result = apply_rollout(validate_resolution_result(negative_result), rollout)
-            public_result = core.cache_resolution(request_id, signature, public_result, frame, (), ())
-            remember_contextual_frame()
+            public_result = apply_rollout(validate_resolution_result(negative_result), rollout, budget_limits=selected_budget)
+            public_result = core.cache_resolution(
+                request_id,
+                signature,
+                public_result,
+                frame,
+                (),
+                (),
+                contextual_callback=remember_contextual_frame,
+            )
             core.record_resolution_telemetry(public_result, replayed=False)
             return public_result
         raw_result, finalization = core.resolution_orchestrator.resolve_with_plan(
@@ -399,7 +410,7 @@ def resolve_request(
                 core.negative_resolutions.admit(negative_key, evaluation_time)
             except Exception as err:
                 LOGGER.warning("negative-resolution admission failed", exc_info=err)
-        result = apply_rollout(raw_result, rollout)
+        result = apply_rollout(raw_result, rollout, budget_limits=selected_budget)
         candidate_statement_ids = finalization.get("candidate_statement_ids", ()) if rollout_mode != RolloutMode.SHADOW else ()
         candidacy_observations = core.feedback_observations(
             frame,
@@ -418,7 +429,7 @@ def resolve_request(
             frame,
             candidate_statement_ids,
             candidacy_observations,
+            contextual_callback=remember_contextual_frame,
         )
-        remember_contextual_frame()
         core.record_resolution_telemetry(public_result, replayed=False)
         return public_result

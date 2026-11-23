@@ -1972,6 +1972,7 @@
       "pattern": "WHAT IS * IN PYTHON",
       "response": "I can talk about that.",
       "template": {
+        "unknown": true,
         "text": "I can talk about {star1} in Python. Ask what it is, or how you use it, and I will be more specific."
       }
     },
@@ -1979,6 +1980,7 @@
       "pattern": "HOW DO I * IN PYTHON",
       "response": "Tell me the smaller step.",
       "template": {
+        "unknown": true,
         "text": "How to {star1} in Python depends on the details. Ask the smaller step and I will walk it."
       }
     },
@@ -1986,6 +1988,7 @@
       "pattern": "HOW DO YOU * IN PYTHON",
       "response": "Tell me the smaller step.",
       "template": {
+        "unknown": true,
         "text": "How to {star1} in Python depends on the details. Ask the smaller step and I will walk it."
       }
     },
@@ -1993,6 +1996,7 @@
       "pattern": "EXPLAIN * IN PYTHON",
       "response": "I can explain that.",
       "template": {
+        "unknown": true,
         "text": "I can explain {star1}. Ask what it is, or for a short example."
       }
     },
@@ -2000,6 +2004,7 @@
       "pattern": "TELL ME ABOUT PYTHON *",
       "response": "What part of that?",
       "template": {
+        "unknown": true,
         "text": "Python {star1}. What part do you want: what it is, or how you use it?"
       }
     }

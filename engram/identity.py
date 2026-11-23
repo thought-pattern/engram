@@ -27,6 +27,7 @@ from engram.constants_identity import (
     IDENTITY_OPERATOR_TOKENS,
     IDENTITY_PUNCTUATION_TRANSLATION,
     IDENTITY_QUALIFIER_FIELDS,
+    IDENTITY_QUOTED_LITERAL_RE,
     IDENTITY_QUOTED_SPAN_RE,
     IDENTITY_RELATION_HINTS,
     IDENTITY_TECHNICAL_PATTERNS,
@@ -137,10 +138,9 @@ def normalize_retrieval_key(text: str) -> str:
     return result
 
 
-def retrieval_form(raw: str) -> str:
-    """The normalized form of text of any size, as a retrieval key compares it: NFKC, casefolded, with contractions
-    expanded, punctuation outside technical tokens spaced out and whitespace collapsed."""
-    normalized = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION).casefold()
+def unquoted_retrieval_form(segment: str) -> str:
+    """Normalize an unquoted text slice with casefolding, contraction expansion, and technical punctuation."""
+    normalized = segment.casefold()
     normalized = IDENTITY_CONTRACTION_RE.sub(expand_contraction, normalized)
     characters = []
     for index, character in enumerate(normalized):
@@ -152,6 +152,41 @@ def retrieval_form(raw: str) -> str:
     collapsed = " ".join("".join(characters).split())
     tokens = [clean_normalized_token(token) for token in collapsed.split()]
     result = " ".join(token for token in tokens if token)
+    return result
+
+
+def retrieval_form(raw: str) -> str:
+    """The normalized form of text of any size, as a retrieval key compares it: NFKC, casefolded outside quoted
+    literals, with contractions expanded, technical operators preserved, and whitespace collapsed."""
+    translated = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION)
+    parts = []
+    cursor = 0
+    for match in IDENTITY_QUOTED_LITERAL_RE.finditer(translated):
+        start, end = match.span()
+        if start > cursor:
+            prefix = unquoted_retrieval_form(translated[cursor:start])
+            if prefix:
+                parts.append(prefix)
+        quoted = match.group(0)
+        quote_char = quoted[0]
+        inner = " ".join(quoted[1:-1].split())
+        if inner:
+            parts.append(f"{quote_char}{inner}{quote_char}")
+        cursor = end
+    if cursor < len(translated):
+        suffix = unquoted_retrieval_form(translated[cursor:])
+        if suffix:
+            parts.append(suffix)
+    result = " ".join(parts)
+    return result
+
+
+def unquoted_normalized_key(request: str) -> str:
+    """Normalize request text with quote delimiters unwrapped for lexical and qualifier token scanning."""
+    raw = identity_raw_text(request, "retrieval text", MAX_RETRIEVAL_REPRESENTATION_BYTES, allow_empty=True)
+    translated = unicodedata_normalize("NFKC", raw).translate(IDENTITY_PUNCTUATION_TRANSLATION)
+    unwrapped = IDENTITY_QUOTED_LITERAL_RE.sub(lambda match: f" {match.group(0)[1:-1]} ", translated)
+    result = unquoted_retrieval_form(unwrapped)
     return result
 
 
@@ -743,12 +778,18 @@ def query_identity_from_dict(value: object) -> dict:
 
 def extract_operator(request: str) -> QueryOperator:
     """Classify a request through a conservative, closed operator vocabulary."""
-    normalized = normalize_retrieval_key(request)
+    normalized = unquoted_normalized_key(request)
     if not normalized:
         result = QueryOperator.UNKNOWN
         return result
     if normalized.startswith("how many ") or normalized == "how many":
         result = QueryOperator.HOW_MANY
+        return result
+    if normalized.startswith("at what time ") or normalized == "at what time":
+        result = QueryOperator.WHEN
+        return result
+    if normalized.startswith("in what place ") or normalized == "in what place":
+        result = QueryOperator.WHERE
         return result
     first = normalized.split()[0]
     direct = {
@@ -769,7 +810,7 @@ def extract_operator(request: str) -> QueryOperator:
     if first == "compare" or " versus " in f" {normalized} " or " vs " in f" {normalized} ":
         result = QueryOperator.COMPARE
         return result
-    if normalized.startswith(("is there ", "are there ")) or normalized.endswith(" exist"):
+    if normalized.startswith(("is there ", "are there ", "was there ", "were there ")) or normalized.endswith(" exist"):
         result = QueryOperator.EXISTS
         return result
     if normalized.startswith(IDENTITY_DIRECT_LOOKUP_LEADS):
@@ -783,7 +824,7 @@ def extract_qualifiers(request: str, operator: QueryOperator) -> tuple[dict, ...
     """Extract explicit identity-bearing qualifiers without lexical filtering."""
     if not isinstance(operator, QueryOperator):
         raise IdentityValidationError("qualifier extraction operator must be a QueryOperator")
-    normalized = normalize_retrieval_key(request)
+    normalized = unquoted_normalized_key(request)
     tokens = normalized.split()
     qualifiers = []
 
@@ -879,7 +920,7 @@ def extract_entities_and_identifiers(request: str) -> tuple[dict, ...]:
 
 def extract_lexical_terms(request: str) -> tuple[str, ...]:
     """Derive bounded retrieval terms separately from semantic identity fields."""
-    normalized = normalize_retrieval_key(request)
+    normalized = unquoted_normalized_key(request)
     stopwords = DEFAULT_STOPWORDS | IDENTITY_OPERATOR_TOKENS | IDENTITY_AUXILIARIES
     # A token too long to be a lexical term (a URL or a hash) stays in the
     # canonical form; it is only left out of the retrieval terms.
@@ -913,7 +954,7 @@ def extract_relation_surface(
         result = relation_reference()
         return result
 
-    normalized = normalize_retrieval_key(request)
+    normalized = unquoted_normalized_key(request)
     tokens = normalized.split()
     if tokens and tokens[0] in IDENTITY_OPERATOR_TOKENS:
         tokens = tokens[1:]
