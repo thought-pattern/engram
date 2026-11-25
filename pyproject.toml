@@ -50,7 +50,7 @@ dev = [
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "ruff",
-    "grpcio-tools==1.85.1",
+    "grpcio-tools==1.85.3",
     "vulture",
 ]
 
