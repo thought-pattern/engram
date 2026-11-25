@@ -8,7 +8,7 @@ from engram.service import EngramCore
 def test_when_and_where_requests_keep_distinct_cached_responses() -> None:
     engram = Engram(
         config=engram_config(
-            learn_user_facts=False,
+            learn_human_facts=False,
             use_lemmatization=False,
             use_spell_correction=False,
             use_stemming=False,

@@ -41,7 +41,7 @@ def statement(
     topic: str = "",
     template=(),
     priority: int = 0,
-    introduced_by_user_id: str = "",
+    introduced_by_human_id: str = "",
     source_label: str = "",
 ) -> dict:
     """Build a Statement dict (atomic unit of storage, a pattern-template pair).
@@ -62,7 +62,7 @@ def statement(
         "topic": topic,  # Topic scope constraint
         "template": deepcopy(dict(template or ())),  # Structured template (JSON), {} when absent
         "priority": priority,  # Override default priority (higher = preferred)
-        "introduced_by_user_id": introduced_by_user_id,
+        "introduced_by_human_id": introduced_by_human_id,
         "source_label": source_label,
         "hit_count": 0,  # Number of times this statement was selected
         "query_count": 0,  # Number of times this statement was a candidate
@@ -111,7 +111,7 @@ def session(
 ) -> dict:
     """Build an independent conversation-context Session dict.
 
-    Stores per-user state including predicates (variables), topic, and
+    Stores per-human state including predicates (variables), topic, and
     conversation history. The caller supplies the ID and creation time.
     """
     sess = {
@@ -138,7 +138,7 @@ def session(
 def session_update_context(
     sess: dict,
     previous_response: str,
-    user_input: str = "",
+    human_input: str = "",
     *,
     moment: datetime,
 ) -> None:
@@ -147,7 +147,7 @@ def session_update_context(
     Args:
         sess: Session dict.
         previous_response: Bot's response text.
-        user_input: User's input text (optional).
+        human_input: Human's input text (optional).
         moment: The caller's time of the turn.
     """
     sess["previous_response"] = previous_response
@@ -169,20 +169,20 @@ def session_update_context(
             that_history.pop()
 
     # Update input history
-    if user_input:
+    if human_input:
         input_history = sess.setdefault("input_history", [])
-        input_history.insert(0, user_input)
+        input_history.insert(0, human_input)
         if len(input_history) > history_size:
             input_history.pop()
 
 
-def session_record_input(sess: dict, user_input: str, moment: datetime) -> bool:
+def session_record_input(sess: dict, human_input: str, moment: datetime) -> bool:
     """Record an input at ``moment`` without changing the previous bot response."""
-    recorded = bool(user_input)
+    recorded = bool(human_input)
     if recorded:
         sess["last_active"] = moment
         input_history = sess.setdefault("input_history", [])
-        input_history.insert(0, user_input)
+        input_history.insert(0, human_input)
         if len(input_history) > sess.get("history_size", 0):
             input_history.pop()
     return recorded
@@ -195,7 +195,7 @@ def session_update_dialogue(
     entities=(),
     fact_admissions=(),
 ) -> None:
-    """Update per-user discourse state independently of response history."""
+    """Update per-human discourse state independently of response history."""
     sess.setdefault("entities", [])
 
     sess["active_topic"] = active_topic

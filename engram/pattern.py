@@ -714,7 +714,7 @@ class PatternMatcher:
         input. Matching follows AIML order: pattern, then that, then topic.
 
         Args:
-            text: User input text.
+            text: Human input text.
             that: Bot's previous response.
             topic: Current topic predicate.
 

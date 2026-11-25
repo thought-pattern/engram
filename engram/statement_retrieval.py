@@ -31,8 +31,8 @@ def query_candidates(
     """Discover lexical candidates without accounting or session mutation.
 
     Candidates are the statements visible to ``owner`` (``visible_to``):
-    shared statements, plus that person's own facts when ``owner`` names a
-    person. Spelling correction draws only on their words. Recency is
+    shared statements, plus that human's own facts when ``owner`` names a
+    human. Spelling correction draws only on their words. Recency is
     scored against one read of the Engram clock for the whole call.
     """
     if not isinstance(owner, str):
@@ -216,8 +216,8 @@ def query(
         record_candidates: Record query accounting for returned matches.
             Regulated proposal retrieval disables this until keyword and
             vector candidates have been merged.
-        owner: The person whose chat is asking. Their own facts are
-            candidates alongside shared statements; no other person's
+        owner: The human whose chat is asking. Their own facts are
+            candidates alongside shared statements; no other human's
             facts ever are. Empty retrieves shared statements only.
 
     Returns:

@@ -13,7 +13,7 @@ from threading import RLock as threading_RLock
 from time import perf_counter as time_perf_counter
 
 from engram import metrics, pipeline, sessions
-from engram.constants import DEFAULT_USER_ID
+from engram.constants import DEFAULT_HUMAN_ID
 from engram.constants_artifacts import MAX_RESPONSE_BYTES, Tier
 from engram.constants_service import MAX_REQUEST_BYTES
 from engram.errors import InvalidRequestError
@@ -35,14 +35,14 @@ def statement_view(statement: dict) -> dict:
         "text": statement.get("text", ""),
         "pattern": statement.get("pattern", ""),
         "pattern_aliases": list(statement.get("pattern_aliases", [])),
-        "introduced_by_user_id": statement.get("introduced_by_user_id", "") or "",
+        "introduced_by_human_id": statement.get("introduced_by_human_id", "") or "",
         "source_label": statement.get("source_label", ""),
     }
     return result
 
 
 def session_view(session: dict) -> dict:
-    """Return a JSON-ready snapshot of one user conversation context."""
+    """Return a JSON-ready snapshot of one human conversation context."""
     result = {
         "session_id": session.get("session_id", ""),
         "previous_response": session.get("previous_response", ""),
@@ -95,7 +95,7 @@ def require_conversation_start(
 class ConversationRuntime:
     """One process-local Engram conversation with observable turn diagnostics.
 
-    Constructing a runtime for ``DEFAULT_USER_ID`` deletes that user's existing
+    Constructing a runtime for ``DEFAULT_HUMAN_ID`` deletes that human's existing
     session so the anonymous conversation starts clean; if construction fails,
     the prior session is restored. Once it succeeds, the facts an earlier
     anonymous conversation taught are forgotten.
@@ -104,18 +104,18 @@ class ConversationRuntime:
     def __init__(
         self,
         engram,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         initial_bot_text: str = "",
         random_seed: int = 0,
         random_seed_present: bool = False,
         clock=(),
     ) -> None:
-        normalized_user_id = sessions.normalize_user_id(user_id)
+        normalized_human_id = sessions.normalize_human_id(human_id)
         require_conversation_start(initial_bot_text, random_seed, random_seed_present, clock)
 
         self.engram = engram
-        self.user_id = normalized_user_id
-        self.session_id = normalized_user_id
+        self.human_id = normalized_human_id
+        self.session_id = normalized_human_id
         self.initial_bot_text = initial_bot_text
         self.random_seed = random_seed
         self.random_seed_present = random_seed_present or bool(random_seed)
@@ -132,7 +132,7 @@ class ConversationRuntime:
 
         with engram.session_lock:
             prior_session = sessions.get_session(engram, self.session_id, create_if_missing=False)
-            if self.user_id == DEFAULT_USER_ID:
+            if self.human_id == DEFAULT_HUMAN_ID:
                 sessions.delete_session(engram, self.session_id)
             try:
                 sessions.get_session(engram, self.session_id, create_if_missing=True)
@@ -140,13 +140,13 @@ class ConversationRuntime:
                     sessions.update_session_context(engram, self.session_id, initial_bot_text)
                 self.metrics_baseline = metrics.get_metrics(engram)
             except BaseException:
-                if self.user_id == DEFAULT_USER_ID:
+                if self.human_id == DEFAULT_HUMAN_ID:
                     sessions.delete_session(engram, self.session_id)
                     if prior_session:
                         sessions.restore_session(engram, prior_session)
                 raise
-        if self.user_id == DEFAULT_USER_ID:
-            engram.forget_person_facts(DEFAULT_USER_ID)
+        if self.human_id == DEFAULT_HUMAN_ID:
+            engram.forget_human_facts(DEFAULT_HUMAN_ID)
 
     def send(self, text: object) -> dict:
         """Submit exactly one message and return the complete observable turn."""
@@ -182,7 +182,7 @@ class ConversationRuntime:
                     self.engram,
                     text,
                     context_id=self.session_id,
-                    user_id=self.user_id,
+                    human_id=self.human_id,
                     evaluation_time=canonical_utc(evaluation_clock),
                 )
             finally:
@@ -200,7 +200,7 @@ class ConversationRuntime:
                     statement_view(statement)
                     for statement in self.engram.statements[first_new:]
                     if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
-                    and statement.get("introduced_by_user_id", "") == self.user_id
+                    and statement.get("introduced_by_human_id", "") == self.human_id
                 ]
             source = result.get("source", "")
             pattern = result.get("pattern", "")
@@ -209,7 +209,7 @@ class ConversationRuntime:
                 "input": text,
                 "response": result.get("response", ""),
                 "unknown": result.get("unknown", False),
-                "user_id": self.user_id,
+                "human_id": self.human_id,
                 "source": source,
                 "score": round(result.get("score", 0.0), 3),
                 "pattern": pattern,
@@ -237,17 +237,18 @@ class ConversationRuntime:
             return event
 
     def inspect(self) -> dict:
-        """Return conversation context, the facts this user taught, and current metrics."""
+        """Return conversation context, the facts this human taught, and current metrics."""
         with self.lock, self.engram.statement_lock:
             learned = [
                 statement_view(statement)
                 for statement in self.engram.statements
-                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC and statement.get("introduced_by_user_id", "") == self.user_id
+                if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC
+                and statement.get("introduced_by_human_id", "") == self.human_id
             ]
             with self.engram.session_lock:
                 current_session = session_view(sessions.get_session(self.engram, self.session_id, create_if_missing=False))
             result = {
-                "user_id": self.user_id,
+                "human_id": self.human_id,
                 "turn_count": self.turn_count,
                 "initial_bot_text": self.initial_bot_text,
                 "session": current_session,
@@ -265,7 +266,7 @@ class ConversationRuntime:
             result = {
                 "started_at": self.started_at,
                 "finished_at": utc_now(),
-                "user_id": self.user_id,
+                "human_id": self.human_id,
                 "initial_bot_text": self.initial_bot_text,
                 "random_seed": self.random_seed,
                 "random_seed_present": self.random_seed_present,

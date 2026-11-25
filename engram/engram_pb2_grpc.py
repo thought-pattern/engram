@@ -12,7 +12,7 @@ from google.protobuf import struct_pb2 as protobuf_struct
 
 class EngramServiceStub:
     """A single Engram process owns one instance of this service and one shared
-    EngramCore. Conversation context is isolated by user_id; learned knowledge
+    EngramCore. Conversation context is isolated by human_id; learned knowledge
     is shared by the core.
     """
 
@@ -36,19 +36,19 @@ class EngramServiceStub:
         )
         self.InspectConversation = channel.unary_unary(
             "/engram.EngramService/InspectConversation",
-            request_serializer=engram_protocol.UserRequest.SerializeToString,
+            request_serializer=engram_protocol.HumanRequest.SerializeToString,
             response_deserializer=protobuf_struct.Struct.FromString,
             **{"_registered_method": True},
         )
         self.FinishConversation = channel.unary_unary(
             "/engram.EngramService/FinishConversation",
-            request_serializer=engram_protocol.UserRequest.SerializeToString,
+            request_serializer=engram_protocol.HumanRequest.SerializeToString,
             response_deserializer=engram_protocol.ConversationReport.FromString,
             **{"_registered_method": True},
         )
         self.StopConversation = channel.unary_unary(
             "/engram.EngramService/StopConversation",
-            request_serializer=engram_protocol.UserRequest.SerializeToString,
+            request_serializer=engram_protocol.HumanRequest.SerializeToString,
             response_deserializer=protobuf_struct.Struct.FromString,
             **{"_registered_method": True},
         )
@@ -110,7 +110,7 @@ class EngramServiceStub:
 
 class EngramServiceServicer:
     """A single Engram process owns one instance of this service and one shared
-    EngramCore. Conversation context is isolated by user_id; learned knowledge
+    EngramCore. Conversation context is isolated by human_id; learned knowledge
     is shared by the core.
     """
 
@@ -213,17 +213,17 @@ def add_EngramServiceServicer_to_server(servicer, server):
         ),
         "InspectConversation": grpc_unary_unary_rpc_method_handler(
             servicer.InspectConversation,
-            request_deserializer=engram_protocol.UserRequest.FromString,
+            request_deserializer=engram_protocol.HumanRequest.FromString,
             response_serializer=protobuf_struct.Struct.SerializeToString,
         ),
         "FinishConversation": grpc_unary_unary_rpc_method_handler(
             servicer.FinishConversation,
-            request_deserializer=engram_protocol.UserRequest.FromString,
+            request_deserializer=engram_protocol.HumanRequest.FromString,
             response_serializer=engram_protocol.ConversationReport.SerializeToString,
         ),
         "StopConversation": grpc_unary_unary_rpc_method_handler(
             servicer.StopConversation,
-            request_deserializer=engram_protocol.UserRequest.FromString,
+            request_deserializer=engram_protocol.HumanRequest.FromString,
             response_serializer=protobuf_struct.Struct.SerializeToString,
         ),
         "AddFact": grpc_unary_unary_rpc_method_handler(

@@ -11,7 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
-from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA
+from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_HUMAN_ID, EMPTY_METADATA
 from engram.constants_identity import QueryOperator
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
 from engram.errors import (
@@ -25,7 +25,7 @@ from engram.errors import (
 from engram.identity import query_identity_from_dict
 from engram.resolution_budget import resolution_budget_from_dict
 from engram.service import EngramCore
-from engram.service_requests import normalize_service_user_id
+from engram.service_requests import normalize_service_human_id
 
 
 def decode_mcp_identity(identity: object) -> object:
@@ -92,7 +92,7 @@ class MCPConversationService:
         self.require_catch_all = require_catch_all
         self.static_pairs = deepcopy(selected_pairs)
         self.core = ()
-        self.active_user_id = ""
+        self.active_human_id = ""
         self.active_conversation_token = ""
         self.lock = threading_RLock()
 
@@ -108,7 +108,7 @@ class MCPConversationService:
 
     def start(
         self,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         initial_bot_text: str = "",
         config_path: str = "",
         random_seed: int = 0,
@@ -120,7 +120,7 @@ class MCPConversationService:
                 raise ConflictError("a conversation is already active; call engram_stop before starting another")
 
             config = load_config(config_path) if config_path else {}
-            conversation_user_id = normalize_service_user_id(user_id)
+            conversation_human_id = normalize_service_human_id(human_id)
             core = EngramCore(config=config)
             try:
                 # Seed files named by the configuration load when the core
@@ -144,7 +144,7 @@ class MCPConversationService:
                     except ValueError as err:
                         raise InvalidRequestError(str(err)) from err
                 started = core.start_conversation(
-                    user_id=conversation_user_id,
+                    human_id=conversation_human_id,
                     initial_bot_text=initial_bot_text,
                     random_seed=random_seed,
                     random_seed_present=random_seed_present,
@@ -153,26 +153,26 @@ class MCPConversationService:
                 core.close()
                 raise
             self.core = core
-            self.active_user_id = conversation_user_id
+            self.active_human_id = conversation_human_id
             self.active_conversation_token = str(started.get("conversation_token", "") or "")
             return started
 
     def send(self, text: str) -> dict:
         """Submit exactly one conversational message."""
         with self.lock:
-            core, user_id = self.require_active()
-            result = core.chat(user_id, text, conversation_token=self.active_conversation_token)
+            core, human_id = self.require_active()
+            result = core.chat(human_id, text, conversation_token=self.active_conversation_token)
             return result
 
     def inspect(self) -> dict:
-        """Inspect user context, learned facts, and metrics."""
+        """Inspect human context, learned facts, and metrics."""
         with self.lock:
-            core, user_id = self.require_active()
-            result = core.inspect_conversation(user_id, conversation_token=self.active_conversation_token)
+            core, human_id = self.require_active()
+            result = core.inspect_conversation(human_id, conversation_token=self.active_conversation_token)
             return result
 
     def add_fact(self, text: str, source_label: str = "") -> dict:
-        """Add one unattributed shared fact without changing user context."""
+        """Add one unattributed shared fact without changing human context."""
         with self.lock:
             core, _ = self.require_active()
             result = core.add_fact(text, source_label=source_label)
@@ -181,18 +181,18 @@ class MCPConversationService:
     def finish(self) -> dict:
         """Return the current report without ending the conversation."""
         with self.lock:
-            core, user_id = self.require_active()
-            result = core.finish_conversation(user_id, conversation_token=self.active_conversation_token)
+            core, human_id = self.require_active()
+            result = core.finish_conversation(human_id, conversation_token=self.active_conversation_token)
             return result
 
     def stop(self) -> dict:
         """Discard process memory and release the MCP-owned core."""
         with self.lock:
-            core, user_id = self.require_active()
-            result = core.stop_conversation(user_id, conversation_token=self.active_conversation_token)
+            core, human_id = self.require_active()
+            result = core.stop_conversation(human_id, conversation_token=self.active_conversation_token)
             core.close()
             self.core = ()
-            self.active_user_id = ""
+            self.active_human_id = ""
             self.active_conversation_token = ""
             return result
 
@@ -200,7 +200,7 @@ class MCPConversationService:
         self,
         request: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         limit: int = DEFAULT_PROPOSE_LIMIT,
@@ -213,7 +213,7 @@ class MCPConversationService:
             result = core.propose(
                 request=request,
                 request_id=request_id,
-                user_id=user_id,
+                human_id=human_id,
                 namespace=namespace,
                 context_fingerprint=context_fingerprint,
                 limit=limit,
@@ -226,7 +226,7 @@ class MCPConversationService:
         self,
         request: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         identity: dict = EMPTY_METADATA,
@@ -244,7 +244,7 @@ class MCPConversationService:
             result = core.resolve_request(
                 request=request,
                 request_id=request_id,
-                user_id=user_id,
+                human_id=human_id,
                 namespace=namespace,
                 context_fingerprint=context_fingerprint,
                 identity=decoded_identity,
@@ -268,7 +268,7 @@ class MCPConversationService:
         request: str,
         response: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
@@ -281,7 +281,7 @@ class MCPConversationService:
                 request=request,
                 response=response,
                 request_id=request_id,
-                user_id=user_id,
+                human_id=human_id,
                 namespace=namespace,
                 context_fingerprint=context_fingerprint,
                 source_label=source_label,
@@ -297,9 +297,9 @@ class MCPConversationService:
             return result
 
     def require_active(self) -> tuple[EngramCore, str]:
-        if not isinstance(self.core, EngramCore) or self.active_user_id == "":
+        if not isinstance(self.core, EngramCore) or self.active_human_id == "":
             raise LifecycleError("no active conversation; call engram_start first")
-        result = self.core, self.active_user_id
+        result = self.core, self.active_human_id
         return result
 
 
@@ -333,7 +333,7 @@ class EngramMCPServer(MCPServer):
 
     def engram_start(
         self,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         initial_bot_text: str = "",
         config_path: str = "",
         random_seed: int = 0,
@@ -341,7 +341,7 @@ class EngramMCPServer(MCPServer):
     ) -> dict:
         """Start one in-memory Engram conversation for subsequent tool calls."""
         result = self.conversation_service.start(
-            user_id=user_id,
+            human_id=human_id,
             initial_bot_text=initial_bot_text,
             config_path=config_path,
             random_seed=random_seed,
@@ -355,7 +355,7 @@ class EngramMCPServer(MCPServer):
         return result
 
     def engram_inspect(self) -> dict:
-        """Inspect the active user context, learned facts, and metrics."""
+        """Inspect the active human context, learned facts, and metrics."""
         result = self.conversation_service.inspect()
         return result
 
@@ -378,7 +378,7 @@ class EngramMCPServer(MCPServer):
         self,
         request: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         identity: dict = EMPTY_METADATA,
@@ -392,7 +392,7 @@ class EngramMCPServer(MCPServer):
         result = self.conversation_service.query(
             request=request,
             request_id=request_id,
-            user_id=user_id,
+            human_id=human_id,
             namespace=namespace,
             context_fingerprint=context_fingerprint,
             identity=identity,
@@ -408,7 +408,7 @@ class EngramMCPServer(MCPServer):
         self,
         request: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         limit: int = DEFAULT_PROPOSE_LIMIT,
@@ -419,7 +419,7 @@ class EngramMCPServer(MCPServer):
         result = self.conversation_service.propose(
             request=request,
             request_id=request_id,
-            user_id=user_id,
+            human_id=human_id,
             namespace=namespace,
             context_fingerprint=context_fingerprint,
             limit=limit,
@@ -443,7 +443,7 @@ class EngramMCPServer(MCPServer):
         request: str,
         response: str,
         request_id: str,
-        user_id: str = DEFAULT_USER_ID,
+        human_id: str = DEFAULT_HUMAN_ID,
         namespace: str = "",
         context_fingerprint: str = "",
         source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
@@ -454,7 +454,7 @@ class EngramMCPServer(MCPServer):
             request=request,
             response=response,
             request_id=request_id,
-            user_id=user_id,
+            human_id=human_id,
             namespace=namespace,
             context_fingerprint=context_fingerprint,
             source_label=source_label,

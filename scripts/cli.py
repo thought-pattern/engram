@@ -24,14 +24,14 @@ class InteractiveChat:
         self.session_id = session_id or "cli"
         self.debug_mode = False
         started = self.core.start_conversation(
-            user_id=self.session_id,
+            human_id=self.session_id,
             initial_bot_text=initial_bot_text,
         )
         self.conversation_token = str(started.get("conversation_token", "") or "")
 
-    def process_input(self, user_input: str) -> str:
+    def process_input(self, human_input: str) -> str:
         """Process one user turn and return Engram's response."""
-        result = self.core.chat(self.session_id, user_input, conversation_token=self.conversation_token)
+        result = self.core.chat(self.session_id, human_input, conversation_token=self.conversation_token)
         if self.debug_mode:
             detail = f"Source: {result.get('source', '')} | Score: {result.get('score', 0.0):.2f}"
             if result.get("pattern", ""):
@@ -104,7 +104,7 @@ def main(argv=()) -> int:
     query_parser = subparsers.add_parser("query", help="run unified process-local and graph resolution once")
     query_parser.add_argument("text")
     query_parser.add_argument("--request-id", default="cli-query")
-    query_parser.add_argument("--user-id", default="0")
+    query_parser.add_argument("--human-id", default="0")
     query_parser.add_argument("--namespace", default="")
     query_parser.add_argument("--context-fingerprint", default="")
     query_parser.add_argument("--accept-exact", action="store_true")
@@ -125,7 +125,7 @@ def main(argv=()) -> int:
                 result = core.resolve_request(
                     args.text,
                     args.request_id,
-                    user_id=args.user_id,
+                    human_id=args.human_id,
                     namespace=args.namespace,
                     context_fingerprint=args.context_fingerprint,
                     accept_exact=args.accept_exact,

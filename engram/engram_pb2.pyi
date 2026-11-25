@@ -31,46 +31,46 @@ REGULATOR_OUTCOME_REJECTED_STALE: int
 REGULATOR_OUTCOME_REJECTED_POLICY: int
 
 class StartConversationRequest(Message):
-    user_id: str
+    human_id: str
     initial_bot_text: str
     random_seed: int
 
     def __init__(
         self,
         *,
-        user_id: str = ...,
+        human_id: str = ...,
         initial_bot_text: str = ...,
         random_seed: int = ...,
     ) -> None: ...
 
 class ChatRequest(Message):
-    user_id: str
+    human_id: str
     text: str
     conversation_token: str
 
     def __init__(
         self,
         *,
-        user_id: str = ...,
+        human_id: str = ...,
         text: str = ...,
         conversation_token: str = ...,
     ) -> None: ...
 
-class UserRequest(Message):
-    user_id: str
+class HumanRequest(Message):
+    human_id: str
     conversation_token: str
 
     def __init__(
         self,
         *,
-        user_id: str = ...,
+        human_id: str = ...,
         conversation_token: str = ...,
     ) -> None: ...
 
 class ConversationReport(Message):
     started_at: str
     finished_at: str
-    user_id: str
+    human_id: str
     initial_bot_text: str
     random_seed: int
     random_seed_present: bool
@@ -85,7 +85,7 @@ class ConversationReport(Message):
         *,
         started_at: str = ...,
         finished_at: str = ...,
-        user_id: str = ...,
+        human_id: str = ...,
         initial_bot_text: str = ...,
         random_seed: int = ...,
         random_seed_present: bool = ...,
@@ -156,27 +156,27 @@ class AddFactRequest(Message):
     ) -> None: ...
 
 class SetPredicateRequest(Message):
-    user_id: str
+    human_id: str
     name: str
     value: str
 
     def __init__(
         self,
         *,
-        user_id: str = ...,
+        human_id: str = ...,
         name: str = ...,
         value: str = ...,
     ) -> None: ...
 
 class GetPredicateRequest(Message):
-    user_id: str
+    human_id: str
     name: str
     default_value: str
 
     def __init__(
         self,
         *,
-        user_id: str = ...,
+        human_id: str = ...,
         name: str = ...,
         default_value: str = ...,
     ) -> None: ...
@@ -193,7 +193,7 @@ class PredicateResponse(Message):
 class ProposeRequest(Message):
     request: str
     request_id: str
-    user_id: str
+    human_id: str
     namespace: str
     context_fingerprint: str
     limit: int
@@ -205,7 +205,7 @@ class ProposeRequest(Message):
         *,
         request: str = ...,
         request_id: str = ...,
-        user_id: str = ...,
+        human_id: str = ...,
         namespace: str = ...,
         context_fingerprint: str = ...,
         limit: int = ...,
@@ -232,7 +232,7 @@ class LearnResponseRequest(Message):
     request: str
     response: str
     request_id: str
-    user_id: str
+    human_id: str
     namespace: str
     context_fingerprint: str
     source_label: str
@@ -244,7 +244,7 @@ class LearnResponseRequest(Message):
         request: str = ...,
         response: str = ...,
         request_id: str = ...,
-        user_id: str = ...,
+        human_id: str = ...,
         namespace: str = ...,
         context_fingerprint: str = ...,
         source_label: str = ...,
@@ -276,7 +276,7 @@ class ResponsesBySupportRequest(Message):
 class ResolveEvidenceRequest(Message):
     request: str
     request_id: str
-    user_id: str
+    human_id: str
     namespace: str
     context_fingerprint: str
     identity: Struct
@@ -291,7 +291,7 @@ class ResolveEvidenceRequest(Message):
         *,
         request: str = ...,
         request_id: str = ...,
-        user_id: str = ...,
+        human_id: str = ...,
         namespace: str = ...,
         context_fingerprint: str = ...,
         identity: object = ...,

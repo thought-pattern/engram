@@ -60,24 +60,24 @@ def test_teaching_belongs_to_its_speaker() -> None:
     engram = Engram()
     engram.load_static_data([LEARN_THAT, {"pattern": "*", "response": "Go on."}])
 
-    engram.pattern_query("Learn that zorblax is blue", user_id="Alice")
-    engram.pattern_query("Learn that zorblax is green", user_id="Carol")
+    engram.pattern_query("Learn that zorblax is blue", human_id="Alice")
+    engram.pattern_query("Learn that zorblax is green", human_id="Carol")
 
-    assert engram.pattern_query("zorblax", user_id="Alice")[2] == "Blue"
-    assert engram.pattern_query("zorblax", user_id="Carol")[2] == "Green"
-    assert engram.pattern_query("zorblax", user_id="Dana")[2] == "Go on."
+    assert engram.pattern_query("zorblax", human_id="Alice")[2] == "Blue"
+    assert engram.pattern_query("zorblax", human_id="Carol")[2] == "Green"
+    assert engram.pattern_query("zorblax", human_id="Dana")[2] == "Go on."
 
 
 def test_restating_a_fact_replaces_only_the_speakers_own() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
-    engram.pattern_query("The sky is blue.", user_id="Alice")
-    engram.pattern_query("The sky is green.", user_id="Carol")
-    engram.pattern_query("The sky is grey.", user_id="Carol")
+    engram.pattern_query("The sky is blue.", human_id="Alice")
+    engram.pattern_query("The sky is green.", human_id="Carol")
+    engram.pattern_query("The sky is grey.", human_id="Carol")
 
-    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "The sky is blue."
-    assert engram.pattern_query("What is the sky?", user_id="Carol")[2] == "The sky is grey."
+    assert engram.pattern_query("What is the sky?", human_id="Alice")[2] == "The sky is blue."
+    assert engram.pattern_query("What is the sky?", human_id="Carol")[2] == "The sky is grey."
     assert sorted(learned_texts(engram, "SKY")) == ["The sky is blue.", "The sky is grey."]
 
 
@@ -85,18 +85,18 @@ def test_a_persons_matcher_goes_with_their_last_fact() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
-    engram.pattern_query("The sky is blue.", user_id="Alice")
-    assert "Alice" in engram.person_matchers
+    engram.pattern_query("The sky is blue.", human_id="Alice")
+    assert "Alice" in engram.human_matchers
 
-    assert engram.forget_person_facts("Alice") == 1
-    assert "Alice" not in engram.person_matchers
-    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "Go on."
+    assert engram.forget_human_facts("Alice") == 1
+    assert "Alice" not in engram.human_matchers
+    assert engram.pattern_query("What is the sky?", human_id="Alice")[2] == "Go on."
 
 
 def test_anonymous_facts_end_with_the_anonymous_conversation() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
-    engram.pattern_query("The sky is green.", user_id="Alice")
+    engram.pattern_query("The sky is green.", human_id="Alice")
     first = ConversationRuntime(engram)
 
     first.send("The sky is blue.")
@@ -104,7 +104,7 @@ def test_anonymous_facts_end_with_the_anonymous_conversation() -> None:
     ConversationRuntime(engram)
 
     assert engram.pattern_query("What is the sky?")[2] == "Go on."
-    assert engram.pattern_query("What is the sky?", user_id="Alice")[2] == "The sky is green."
+    assert engram.pattern_query("What is the sky?", human_id="Alice")[2] == "The sky is green."
 
 
 def test_a_learned_fact_never_replaces_a_hand_stored_statement() -> None:
@@ -239,7 +239,7 @@ def test_a_seeded_turn_uses_its_own_generator_and_replays_exactly(monkeypatch) -
     for _ in range(2):
         engram = Engram()
         engram.load_static_data([{"pattern": "PICK", "response": "", "template": {"random": list("abcdefgh")}}])
-        runtime = ConversationRuntime(engram, user_id="alice", random_seed=7, random_seed_present=True)
+        runtime = ConversationRuntime(engram, human_id="alice", random_seed=7, random_seed_present=True)
         replies.append([runtime.send("pick").get("response", "") for _ in range(6)])
 
     assert replies[0] == replies[1]

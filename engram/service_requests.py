@@ -1,6 +1,6 @@
 """Request validation and identity for the Engram service.
 
-Cache-request admission, request signatures, accounting request ids, service user id
+Cache-request admission, request signatures, accounting request ids, service human id
 normalization and the default cancellation check shared by the service and its
 transports.
 """
@@ -53,11 +53,11 @@ def accounting_request_id(kind: str, external_id: str) -> str:
     return result
 
 
-def normalize_service_user_id(user_id: str) -> str:
-    """Normalize a service user identity and translate boundary errors."""
+def normalize_service_human_id(human_id: str) -> str:
+    """Normalize a service human identity and translate boundary errors."""
     try:
-        result = sessions.normalize_user_id(user_id)
-        require_any_text(result, "user_id", MAX_CALLER_ID_BYTES, blank_is_empty=True)
+        result = sessions.normalize_human_id(human_id)
+        require_any_text(result, "human_id", MAX_CALLER_ID_BYTES, blank_is_empty=True)
         return result
     except ValueError as err:
         raise InvalidRequestError(str(err)) from err

@@ -32,7 +32,7 @@ GRAPH_FACT_VALID_AT_EVALUATION = (
 )
 # The words a fact's predicate reads as: a generic predicate's fact carries the source's own
 # predicate wording as predicate_surface, and the generic Predicate's label ("generic relation")
-# says nothing of it; every other fact reads as its Predicate's label (D-1256).
+# says nothing of it; every other fact reads as its Predicate's label.
 GRAPH_FACT_PREDICATE_TEXT = (
     "CASE WHEN coalesce(proposition.predicate_surface, '') <> '' THEN proposition.predicate_surface "
     "ELSE coalesce(predicate.label, predicate.canonical_id) END"
@@ -75,7 +75,7 @@ GRAPH_KEYWORD_FACTS_QUERY = (
 )
 # The similarity of a vector index row. A cosine distance cannot fall below 0, but the index's single-precision
 # arithmetic returns one a float32 epsilon below 0 for a query equal to a stored embedding, and the similarity read
-# from it would exceed 1 (D-1257); the distance is read as 0 there.
+# from it would exceed 1; the distance is read as 0 there.
 VECTOR_SIMILARITY = "1.0 - CASE WHEN distance < 0.0 THEN 0.0 ELSE distance END"
 # The ANN fact read: the vector procedure call is why graph.execute exempts it from
 # the write-clause check, which matches CALL. The index returns the $window nearest
@@ -240,7 +240,7 @@ CANONICAL_PREDICATE_MATCH_QUERY = (
 # A Proposition carries a nonempty predicate_surface, the source's own predicate wording,
 # exactly when its Predicate is a generic one (generic_relation, generic_event), which is
 # retrieval-only and never proof evidence. A Predicate vertex holds its catalog identifier,
-# not the generic symbol, so the surface is what tells a generic fact (D-1212).
+# not the generic symbol, so the surface is what tells a generic fact.
 PROPOSITION_PROJECTION_RETURN = (
     "RETURN DISTINCT c.id AS proposition_id, "
     "subject.canonical_id AS subject_entity_id, "

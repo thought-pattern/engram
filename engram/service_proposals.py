@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict, metadata_values_equal
-from engram.constants import DEFAULT_PROPOSE_LIMIT, DEFAULT_USER_ID, EMPTY_METADATA, REGULATOR_OUTCOMES
+from engram.constants import DEFAULT_PROPOSE_LIMIT, DEFAULT_HUMAN_ID, EMPTY_METADATA, REGULATOR_OUTCOMES
 from engram.constants_artifacts import MAX_ARTIFACT_ID_BYTES, MAX_SOURCE_LABEL_BYTES, LifecycleState, Tier
 from engram.constants_evidence import EligibilityExclusionReason
 from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES, FeedbackObservationKind, FeedbackOutcome, LifecycleHandoffStatus
@@ -27,7 +27,7 @@ from engram.identity import scope_key, scoped_retrieval_key_from_text
 from engram.service_feedback import feedback_mutation_request_id, feedback_target
 from engram.service_requests import (
     accounting_request_id,
-    normalize_service_user_id,
+    normalize_service_human_id,
     require_cache_request,
     service_request_signature,
 )
@@ -50,7 +50,7 @@ def artifact_candidate_result(artifact: dict, score: float) -> dict:
         "hit_count": statistics.get("hit_count", 0),
         "query_count": statistics.get("query_count", 0),
         "source_label": provenance.get("source_label", ""),
-        "introduced_by_user_id": provenance.get("caller_id", ""),
+        "introduced_by_human_id": provenance.get("caller_id", ""),
         "metadata": cached_response_artifact_to_dict(artifact).get("metadata", {}),
     }
     return result
@@ -88,7 +88,7 @@ def propose(
     core,
     request: str,
     request_id: str,
-    user_id: str = DEFAULT_USER_ID,
+    human_id: str = DEFAULT_HUMAN_ID,
     namespace: str = "",
     context_fingerprint: str = "",
     limit: int = DEFAULT_PROPOSE_LIMIT,
@@ -108,10 +108,10 @@ def propose(
         if not isinstance(required_metadata, dict):
             raise InvalidRequestError("required_metadata must be an object")
         required_metadata = dict(required_metadata)
-        normalized_user_id = normalize_service_user_id(user_id)
+        normalized_human_id = normalize_service_human_id(human_id)
         signature = service_request_signature(
             request=request,
-            user_id=normalized_user_id,
+            human_id=normalized_human_id,
             namespace=namespace,
             context_fingerprint=context_fingerprint,
             limit=limit,
@@ -267,7 +267,7 @@ def propose(
             proposal = {
                 "proposal_id": proposal_id,
                 "request_id": request_id,
-                "user_id": normalized_user_id,
+                "human_id": normalized_human_id,
                 "namespace": namespace,
                 "context_fingerprint": context_fingerprint,
                 "resolved_request": feedback_frame.get("resolved_text", ""),
@@ -450,10 +450,10 @@ def complete_proposal_resolution(core, proposal_id: str, record: dict) -> dict:
         current_artifact = core.current_proposal_candidate(record, statement_id)
         core.response_mutations.record_response_hit(statement_id, accounting_request_id("response-hit", proposal_id))
         proposal = record.get("proposal", {})
-        if proposal.get("user_id", "") != DEFAULT_USER_ID:
+        if proposal.get("human_id", "") != DEFAULT_HUMAN_ID:
             with core.engram.session_lock:
-                sessions.get_session(core.engram, proposal.get("user_id", ""), create_if_missing=True)
-                sessions.update_session_context(core.engram, proposal.get("user_id", ""), current_artifact.get("response", ""))
+                sessions.get_session(core.engram, proposal.get("human_id", ""), create_if_missing=True)
+                sessions.update_session_context(core.engram, proposal.get("human_id", ""), current_artifact.get("response", ""))
         core.regulated_metrics["accepted"] += 1
     else:
         rejections = core.regulated_metrics.get("rejections", Counter())

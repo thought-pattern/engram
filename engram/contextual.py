@@ -78,7 +78,7 @@ def compact_query_frame(
     temporal_query_value: object = (),
     topic: object = "",
 ) -> dict:
-    """Build the only query interpretation retained in user context."""
+    """Build the only query interpretation retained in human context."""
     if not isinstance(operator, QueryOperator):
         raise InvalidRequestError("compact query frame operator must be a QueryOperator")
     if not isinstance(expected_object_type, ExpectedObjectType):

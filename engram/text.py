@@ -538,7 +538,7 @@ def first_clause(text: str) -> str:
 
 
 def extract_name(text: str) -> str:
-    """Extract the person name from a self-introduction capture.
+    """Extract the human's name from a self-introduction capture.
 
     "still jason by the way" -> "jason"; "mary jane" -> "mary jane". This is a
     heuristic, not NER (captures arrive lowercased, which starves NER of its

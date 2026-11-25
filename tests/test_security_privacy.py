@@ -79,7 +79,7 @@ def test_shared_service_rejects_oversized_mutation_and_predicate_fields() -> Non
 
 def test_conversation_and_mcp_share_the_request_bound() -> None:
     service = MCPConversationService()
-    service.start(user_id="Sarah")
+    service.start(human_id="Sarah")
 
     with pytest_raises(InvalidRequestError, match="text exceeds"):
         service.send("x" * (MAX_REQUEST_BYTES + 1))
@@ -196,8 +196,8 @@ def test_database_failures_stay_out_of_user_results_and_are_logged(caplog) -> No
         assert engine.current_proposition_projection("proposition:paris") == ()
         assert engine.structured_proposition_projections("France", row_limit=10) == []
         resolved = core.resolve_request("What is the capital of France?", "database-failure")
-        started = core.start_conversation(user_id="alice")
-        started_user_id = started.get("user_id", "")
+        started = core.start_conversation(human_id="alice")
+        started_user_id = started.get("human_id", "")
         assert started_user_id
         turn = core.chat(started_user_id, "What is the capital of France?")
 

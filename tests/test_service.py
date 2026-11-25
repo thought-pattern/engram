@@ -94,7 +94,7 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
             core.resolve_request,
             "Ada",
             "blocking-graph",
-            user_id="graph-user",
+            human_id="graph-user",
             configured_resolvers=("structured_graph",),
         )
         assert entered.wait(timeout=5)
@@ -104,21 +104,21 @@ def test_optional_graph_execution_does_not_hold_the_core_lock() -> None:
             core.resolve_request,
             "ordinary local request",
             "local-during-graph",
-            user_id="local-user",
+            human_id="local-user",
             configured_resolvers=("exact",),
         )
         same_user_future = executor.submit(
             core.resolve_request,
             "same user local request",
             "same-user-during-graph",
-            user_id="graph-user",
+            human_id="graph-user",
             configured_resolvers=("exact",),
         )
         conflicting_retry_future = executor.submit(
             core.resolve_request,
             "different input for the same request ID",
             "blocking-graph",
-            user_id="other-user",
+            human_id="other-user",
             configured_resolvers=("exact",),
         )
         try:
@@ -185,7 +185,7 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
     graph_config["enabled"] = True
     engine.pattern_matcher.clear()
     core = EngramCore(engine)
-    core.start_conversation(user_id="graph-user")
+    core.start_conversation(human_id="graph-user")
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         graph_future = executor.submit(core.chat, "graph-user", "What do you know about Ada Lovelace?")
@@ -196,14 +196,14 @@ def test_conversation_graph_execution_does_not_hold_the_core_lock() -> None:
             core.resolve_request,
             "ordinary local request",
             "local-during-conversation-graph",
-            user_id="local-user",
+            human_id="local-user",
             configured_resolvers=("exact",),
         )
         same_user_future = executor.submit(
             core.resolve_request,
             "same user local request",
             "same-user-during-conversation-graph",
-            user_id="graph-user",
+            human_id="graph-user",
             configured_resolvers=("exact",),
         )
         try:
@@ -269,10 +269,10 @@ def test_stopping_one_conversation_leaves_other_users_active() -> None:
 
     stopped = core.stop_conversation("Alice")
 
-    assert stopped.get("user_id", "") == "Alice"
+    assert stopped.get("human_id", "") == "Alice"
     with pytest_raises(ValueError, match="Alice"):
         core.get_conversation("Alice")
-    assert core.chat("Carol", "Hello").get("user_id", "") == "Carol"
+    assert core.chat("Carol", "Hello").get("human_id", "") == "Carol"
 
 
 def test_stopping_the_anonymous_conversation_forgets_its_facts() -> None:
@@ -282,7 +282,7 @@ def test_stopping_the_anonymous_conversation_forgets_its_facts() -> None:
     token = core.start_conversation("").get("conversation_token", "")
 
     taught = core.chat("0", "The sky is blue.", conversation_token=token)
-    assert [fact.get("introduced_by_user_id", "") for fact in taught.get("learned_statements", [])] == ["0"]
+    assert [fact.get("introduced_by_human_id", "") for fact in taught.get("learned_statements", [])] == ["0"]
     core.stop_conversation("0", conversation_token=token)
     token = core.start_conversation("").get("conversation_token", "")
 
@@ -313,7 +313,7 @@ def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     runtime = core.get_conversation("")
     token = started.get("conversation_token", "")
 
-    assert started.get("user_id", "") == "0"
+    assert started.get("human_id", "") == "0"
     assert token and token != first_token
     assert runtime.session_id == "0"
     assert core.inspect_conversation("", conversation_token=token).get("session", {}).get("previous_response", "") == ""
@@ -329,7 +329,7 @@ def test_unknown_user_conversations_use_zero_and_fresh_context() -> None:
     with pytest_raises(InvalidRequestError):
         core.start_conversation("", initial_bot_text="x" * (MAX_RESPONSE_BYTES + 1))
     assert core.get_predicate("0", "preserved", "missing") == "value"
-    assert core.inspect_conversation(named_id).get("user_id", "") == named_id
+    assert core.inspect_conversation(named_id).get("human_id", "") == named_id
     core.stop_conversation(named_id)
     core.start_conversation(named_id)
     assert core.inspect_conversation(named_id).get("session", {}).get("previous_response", "") == "Named context."
@@ -405,13 +405,13 @@ def test_regulated_cache_does_not_require_a_chat_conversation() -> None:
         "When are you open?",
         "Support is open from nine to five.",
         "learn-1",
-        user_id="Alice",
+        human_id="Alice",
         namespace="support",
     )
     proposal = core.propose(
         "When are you open?",
         "proposal-1",
-        user_id="Carol",
+        human_id="Carol",
         namespace="support",
     )
 
@@ -518,7 +518,7 @@ def test_learn_response_is_dynamic_active_artifact_wrapper_with_user_context() -
         "What is cached?",
         "Exact café response ☕.",
         "learn-artifact",
-        user_id="Alice",
+        human_id="Alice",
         namespace="support",
         context_fingerprint="tier:pro",
         source_label="actor:test",
@@ -544,7 +544,7 @@ def test_restart_discards_receipts_responses_and_conversations() -> None:
     first_engram = Engram()
     first_engram.load_static_data([{"pattern": "HELLO", "response": "Hello from static data."}])
     first = EngramCore(first_engram)
-    created = first.learn_response("What is cached?", "Process-local response.", "learn-restart", user_id="Alice")
+    created = first.learn_response("What is cached?", "Process-local response.", "learn-restart", human_id="Alice")
     first.engram.store("Process-local statement.", tier=Tier.DYNAMIC)
     first.start_conversation("Alice")
 
@@ -561,7 +561,7 @@ def test_restart_discards_receipts_responses_and_conversations() -> None:
     assert restarted.engram.sessions == {}
     assert restarted.proposals == {}
     assert restarted.proposal_requests == {}
-    recreated = restarted.learn_response("What is cached?", "Process-local response.", "learn-restart", user_id="Alice")
+    recreated = restarted.learn_response("What is cached?", "Process-local response.", "learn-restart", human_id="Alice")
     created_id = created.get("statement_id", "")
     assert created_id
     assert recreated.get("statement_id", "") == created_id
@@ -770,7 +770,7 @@ def test_cache_requests_within_the_limit_resolve_and_chat_accepts_more() -> None
         assert resolved.get("outcome", ResolutionOutcome.MISS) == ResolutionOutcome.MISS
     assert core.learn_response(long_url, "It returns the report.", request_id="learn-long-url").get("statement_id", "")
 
-    core.start_conversation(user_id="alice")
+    core.start_conversation(human_id="alice")
     long_message = " ".join(f"word{index}" for index in range(1_000))
     assert MAX_CACHE_REQUEST_BYTES < len(long_message.encode("utf-8")) <= MAX_REQUEST_BYTES
     assert core.chat("alice", long_message).get("turn", 0) == 1

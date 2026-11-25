@@ -42,7 +42,7 @@ MCP_TURN_EVENT_FIELDS = {
     "input",
     "response",
     "unknown",
-    "user_id",
+    "human_id",
     "source",
     "score",
     "pattern",
@@ -142,7 +142,7 @@ def evaluate_turn(result: dict, expected_turn: int, expected_input: str, expecte
         "exact_fields": set(result) == MCP_TURN_EVENT_FIELDS,
         "turn_sequence": result.get("turn", 0) == expected_turn,
         "input_continuity": result.get("input", "") == expected_input,
-        "user_continuity": result.get("user_id", "") == expected_user_id,
+        "user_continuity": result.get("human_id", "") == expected_user_id,
         "response_nonempty": isinstance(response, str) and bool(response),
         "unknown_boolean": isinstance(result.get("unknown", ""), bool),
         "source_nonempty": isinstance(source, str) and bool(source),
@@ -230,7 +230,7 @@ def run_length_encode_passes(evaluations: list[dict]) -> list[dict]:
 async def internal_run(
     turns: int,
     gate: str = "EGR-315 MCP long-conversation conformance",
-    user_id: str = "Section 3 MCP Conformance",
+    human_id: str = "Section 3 MCP Conformance",
     profile: str = "standard",
     config_path: str = "",
     memgraph_probe_every: int = 0,
@@ -254,7 +254,7 @@ async def internal_run(
             await client.call_tool(
                 "engram_start",
                 {
-                    "user_id": user_id,
+                    "human_id": human_id,
                     "initial_bot_text": ".",
                     "config_path": config_path,
                     "random_seed": 315,
@@ -280,7 +280,7 @@ async def internal_run(
             result = tool_json(await client.call_tool("engram_send", {"text": message}))
             latency_ms = (time_perf_counter_ns() - call_started) / 1_000_000
             latencies_ms.append(latency_ms)
-            evaluation = evaluate_turn(result, expected_turn, message, user_id, latency_ms)
+            evaluation = evaluate_turn(result, expected_turn, message, human_id, latency_ms)
             response = result.get("response", "")
             # A requested graph probe is enforced here for every profile; a
             # profile's own check applies to its other turns.
@@ -295,8 +295,8 @@ async def internal_run(
             elif profile == "preference-continuity":
                 response_text = response.casefold() if isinstance(response, str) else ""
                 profile_check = "preference_continuity"
-                # An absent user_id never matches, even for an empty requested user.
-                user_matches = "user_id" in result and result.get("user_id", "") == user_id
+                # An absent human_id never matches, even for an empty requested user.
+                user_matches = "human_id" in result and result.get("human_id", "") == human_id
                 profile_passed = user_matches and preference_turn_satisfied(message, response_text)
             if profile_check:
                 evaluation["profile_check"] = profile_check
@@ -428,7 +428,7 @@ async def internal_run(
             "last_evaluation": evaluations[-1] if evaluations else {},
         },
         "inspect": {
-            "user_id": inspected.get("user_id", ""),
+            "human_id": inspected.get("human_id", ""),
             "turn_count": inspected.get("turn_count", 0),
             "history_size": inspected.get("session", {}).get("history_size", 0),
             "telemetry": inspected.get("core_status", {}).get("telemetry", {}),
@@ -477,7 +477,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
     parser.add_argument("--turns", type=int, default=MCP_CONFORMANCE_MINIMUM_TURNS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--gate", default="EGR-315 MCP long-conversation conformance")
-    parser.add_argument("--user-id", default="Section 3 MCP Conformance")
+    parser.add_argument("--human-id", default="Section 3 MCP Conformance")
     parser.add_argument(
         "--profile",
         choices=("standard", "context-recall", "preference-continuity"),
@@ -534,7 +534,7 @@ def main(argv: tuple[str, ...] = ()) -> int:
             internal_run(
                 args.turns,
                 args.gate,
-                args.user_id,
+                args.human_id,
                 args.profile,
                 selected_config,
                 args.memgraph_probe_every,

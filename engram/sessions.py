@@ -10,7 +10,7 @@ and ``service``.
 
 from datetime import datetime, timedelta
 
-from engram.constants import DEFAULT_USER_ID, EARLIEST_UTC, SessionOverflow
+from engram.constants import DEFAULT_HUMAN_ID, EARLIEST_UTC, SessionOverflow
 from engram.errors import InvalidRequestError, ResourceExhaustedError, ResourceNotFoundError
 from engram.models import session, session_update_context
 
@@ -40,13 +40,13 @@ def require_session_available(engram, session_id: str) -> None:
         raise SessionLimitExceededError("Maximum sessions reached")
 
 
-def normalize_user_id(user_id: str = "") -> str:
-    """Return the caller-owned user label, defaulting missing labels to "0"."""
-    if user_id == "":
-        return DEFAULT_USER_ID
-    if not isinstance(user_id, str):
-        raise InvalidRequestError("user_id must be a string")
-    return user_id
+def normalize_human_id(human_id: str = "") -> str:
+    """Return the caller-owned human label, defaulting missing labels to "0"."""
+    if human_id == "":
+        return DEFAULT_HUMAN_ID
+    if not isinstance(human_id, str):
+        raise InvalidRequestError("human_id must be a string")
+    return human_id
 
 
 def start_session(engram, session_id: str = "", metadata=()) -> str:

@@ -3,7 +3,7 @@
 `EngramHealth` counts every Engram RPC by call and outcome as `HealthInterceptor` sees it arrive and answer, keeps the
 calls in progress, the latest finished calls, the errors by kind and a sample of recent activity every
 HEALTH_SAMPLE_SECONDS. Only call names, outcomes, times and counts are kept, never request or conversation content,
-user names or IDs; the standard gRPC health checks are not counted. Every figure covers the running process only. A
+human names or IDs; the standard gRPC health checks are not counted. Every figure covers the running process only. A
 counted call that waits for one of the gRPC server's threads is in the queue from its arrival at the server until a
 thread starts it: `CountedExecutor` is the server's thread pool and holds the wait in `EngramHealth`.
 

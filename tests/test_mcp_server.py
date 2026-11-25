@@ -65,7 +65,7 @@ def test_long_conversation_evaluator_checks_complete_turn_without_retaining_text
         "input": "hello",
         "response": "Hello!",
         "unknown": False,
-        "user_id": "Protocol Agent",
+        "human_id": "Protocol Agent",
         "source": "pattern",
         "score": 1.0,
         "pattern": "HELLO",
@@ -103,9 +103,9 @@ def test_service_requires_an_explicit_lifecycle() -> None:
     with pytest_raises(LifecycleError, match="engram_start"):
         service.inspect()
 
-    service.start(user_id="Alice")
+    service.start(human_id="Alice")
     with pytest_raises(ConflictError, match="already active"):
-        service.start(user_id="Carol")
+        service.start(human_id="Carol")
 
     service.stop()
     with pytest_raises(LifecycleError, match="engram_start"):
@@ -115,7 +115,7 @@ def test_service_requires_an_explicit_lifecycle() -> None:
 def test_default_service_loads_a_conversational_corpus() -> None:
     service = MCPConversationService()
 
-    started = service.start(user_id="Mira", random_seed=17)
+    started = service.start(human_id="Mira", random_seed=17)
     turn = service.send("Hello")
     stopped = service.stop()
 
@@ -128,42 +128,42 @@ def test_default_service_loads_a_conversational_corpus() -> None:
 def test_empty_mcp_user_uses_unknown_user_zero_for_complete_lifecycle() -> None:
     service = MCPConversationService()
 
-    started = service.start(user_id="")
+    started = service.start(human_id="")
     turn = service.send("Hello")
     inspected = service.inspect()
     fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
     finished = service.finish()
     stopped = service.stop()
 
-    assert started.get("user_id", "") == "0"
-    assert turn.get("user_id", "") == "0"
-    assert inspected.get("user_id", "") == "0"
+    assert started.get("human_id", "") == "0"
+    assert turn.get("human_id", "") == "0"
+    assert inspected.get("human_id", "") == "0"
     assert fact.get("source_label", "") == "research"
-    assert finished.get("user_id", "") == "0"
-    assert stopped.get("user_id", "") == "0"
-    assert service.active_user_id == ""
+    assert finished.get("human_id", "") == "0"
+    assert stopped.get("human_id", "") == "0"
+    assert service.active_human_id == ""
     assert service.core == ()
 
 
 def test_stop_discards_responses_conversations_and_receipts() -> None:
     service = MCPConversationService()
-    service.start(user_id="Alice")
+    service.start(human_id="Alice")
     learned = service.learn_response(
         "When is support open?",
         "Nine to five.",
         "learn-1",
-        user_id="Alice",
+        human_id="Alice",
         namespace="support",
     )
     assert "idempotent" in learned
     assert learned.get("idempotent", False) is False
 
     service.stop()
-    service.start(user_id="Alice")
+    service.start(human_id="Alice")
     proposal = service.propose(
         "When is support open?",
         "proposal-after-restart",
-        user_id="Alice",
+        human_id="Alice",
         namespace="support",
     )
 
@@ -177,7 +177,7 @@ def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monk
     monkeypatch.chdir(tmp_path)
     service = MCPConversationService()
 
-    service.start(user_id="Alice")
+    service.start(human_id="Alice")
     service.send("Hello")
     report = service.finish()
     service.stop()
@@ -188,7 +188,7 @@ def test_finish_returns_an_in_memory_report_without_writing_files(tmp_path, monk
 
 def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> None:
     service = MCPConversationService()
-    service.start(user_id="Regulator")
+    service.start(human_id="Regulator")
     learned = service.learn_response(
         "When is support open?",
         "Nine to five.",
@@ -224,7 +224,7 @@ def test_regulator_learn_propose_resolve_and_retire_share_one_process_core() -> 
 
 def test_add_fact_is_shared_but_does_not_change_user_context() -> None:
     service = MCPConversationService()
-    service.start(user_id="Alice", initial_bot_text="Initial context.")
+    service.start(human_id="Alice", initial_bot_text="Initial context.")
     before = service.inspect().get("session", {})
 
     fact = service.add_fact("Tokyo is the capital of Japan.", source_label="research")
@@ -264,13 +264,13 @@ def test_mcp_protocol_exposes_no_disk_memory_parameters() -> None:
                 "initial_bot_text",
                 "random_seed",
                 "random_seed_present",
-                "user_id",
+                "human_id",
             ]
             assert finish_schema.get("properties", {}) == {}
             started = tool_json(
                 await client.call_tool(
                     "engram_start",
-                    {"user_id": "Protocol Agent", "initial_bot_text": "."},
+                    {"human_id": "Protocol Agent", "initial_bot_text": "."},
                 )
             )
             learned = tool_json(
@@ -338,7 +338,7 @@ def test_stdio_mcp_conversation_learns_recalls_finishes_and_stops() -> None:
                 await client.call_tool(
                     "engram_start",
                     {
-                        "user_id": "Mira",
+                        "human_id": "Mira",
                         "initial_bot_text": ".",
                         "random_seed": 17,
                         "random_seed_present": True,
@@ -382,7 +382,7 @@ def test_mcp_query_uses_shared_graph_resolution(tmp_path, monkeypatch) -> None:
             tool_json(
                 await client.call_tool(
                     "engram_start",
-                    {"user_id": "MCP Graph", "config_path": str(config)},
+                    {"human_id": "MCP Graph", "config_path": str(config)},
                 )
             )
             result = tool_json(

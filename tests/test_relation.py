@@ -564,7 +564,7 @@ def test_core_keeps_unique_graph_phrase_as_evidence_not_an_unsupported_answer() 
     result = core.resolve_request(
         "Where was Ada Lovelace born?",
         "relation-core-1",
-        user_id="sarah",
+        human_id="sarah",
         namespace="tenant-a",
         configured_resolvers=("structured_graph",),
     )
@@ -587,7 +587,7 @@ def test_fusion_suppresses_relation_phrase_if_current_proposition_changes_after_
     result = core.resolve_request(
         "Where was Ada Lovelace born?",
         "relation-toctou-1",
-        user_id="sarah",
+        human_id="sarah",
         namespace="tenant-a",
         configured_resolvers=("structured_graph",),
     )

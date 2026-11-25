@@ -499,7 +499,7 @@ def engram_config(
     stopwords=DEFAULT_STOPWORDS,
     expand_contractions: bool = True,
     retrieval_rewrites_enabled: bool = False,
-    learn_user_facts: bool = True,
+    learn_human_facts: bool = True,
     srai_depth_limit: int = DEFAULT_SRAI_DEPTH_LIMIT,
     use_stemming: bool = True,
     use_lemmatization: bool = True,
@@ -546,7 +546,7 @@ def engram_config(
     flags = {
         "expand_contractions": expand_contractions,
         "retrieval_rewrites_enabled": retrieval_rewrites_enabled,
-        "learn_user_facts": learn_user_facts,
+        "learn_human_facts": learn_human_facts,
         "use_stemming": use_stemming,
         "use_lemmatization": use_lemmatization,
         "use_synonyms": use_synonyms,

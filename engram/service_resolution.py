@@ -9,7 +9,7 @@ from logging import getLogger as logging_getLogger
 from time import monotonic_ns as time_monotonic_ns
 
 from engram import sessions
-from engram.constants import DEFAULT_USER_ID, EMPTY_MAPPING, EMPTY_METADATA, RolloutMode
+from engram.constants import DEFAULT_HUMAN_ID, EMPTY_MAPPING, EMPTY_METADATA, RolloutMode
 from engram.constants_artifacts import MAX_SOURCE_LABEL_BYTES
 from engram.constants_feedback import FeedbackObservationKind, FeedbackOutcome, FeedbackReferenceKind
 from engram.constants_identity import MAX_CONTEXT_FINGERPRINT_BYTES, MAX_NAMESPACE_BYTES
@@ -43,7 +43,7 @@ from engram.rewrite import RewriteEngine, apply_rewrites_to_frame
 from engram.rollout import apply_rollout, select_rollout
 from engram.service_requests import (
     no_cancellation_check,
-    normalize_service_user_id,
+    normalize_service_human_id,
     require_cache_request,
     service_request_signature,
 )
@@ -217,13 +217,13 @@ def resolve_request(
     request: str,
     request_id: str,
     *,
-    user_id: str = DEFAULT_USER_ID,
+    human_id: str = DEFAULT_HUMAN_ID,
     namespace: str = "",
     context_fingerprint: str = "",
-    identity: dict[str, object] = EMPTY_MAPPING,
+    identity: object = EMPTY_MAPPING,
     required_metadata: dict = EMPTY_METADATA,
     required_source_label: str = "",
-    budget: dict[str, object] = EMPTY_MAPPING,
+    budget: object = EMPTY_MAPPING,
     configured_resolvers: tuple[str, ...] = (),
     accept_exact: bool = False,
     cancellation_check: object = (),
@@ -231,7 +231,7 @@ def resolve_request(
     """Run one transport-neutral bounded resolution pipeline."""
     require_cache_request(request)
     require_any_text(request_id, "request_id", MAX_REQUEST_ID_BYTES, blank_is_empty=True)
-    normalized_user_id = normalize_service_user_id(user_id)
+    normalized_human_id = normalize_service_human_id(human_id)
     if cancellation_check != () and not callable(cancellation_check):
         raise InvalidRequestError("cancellation_check must be callable")
     selected_cancellation_check = cancellation_check if callable(cancellation_check) else no_cancellation_check
@@ -239,7 +239,7 @@ def resolve_request(
     def check_cancellation() -> None:
         selected_cancellation_check()
 
-    with core.resolution_slot(request_id, normalized_user_id, check_cancellation), core.lock:
+    with core.resolution_slot(request_id, normalized_human_id, check_cancellation), core.lock:
         core.require_running()
         require_any_text(namespace, "namespace", MAX_NAMESPACE_BYTES, allow_empty=True)
         require_any_text(context_fingerprint, "context_fingerprint", MAX_CONTEXT_FINGERPRINT_BYTES, allow_empty=True)
@@ -277,7 +277,7 @@ def resolve_request(
         signature_budget.pop("started_ns", 0)
         signature = service_request_signature(
             request=request,
-            user_id=normalized_user_id,
+            human_id=normalized_human_id,
             namespace=namespace,
             context_fingerprint=context_fingerprint,
             identity=query_identity_to_dict(selected_identity) if selected_identity else {},
@@ -314,26 +314,26 @@ def resolve_request(
             budget=selected_budget,
         )
         with core.engram.session_lock:
-            session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
+            session = sessions.get_session(core.engram, normalized_human_id, create_if_missing=True)
             prior_turn = session.get("query_frame_turn", 0)
             if isinstance(prior_turn, bool) or not isinstance(prior_turn, int) or not 0 <= prior_turn <= MAX_CONTEXTUAL_TURN:
-                raise LifecycleError("user contextual query-frame turn is malformed")
+                raise LifecycleError("human contextual query-frame turn is malformed")
             if prior_turn == MAX_CONTEXTUAL_TURN:
                 prior_turn = 0
                 session["previous_query_frame"] = {}
             current_turn = prior_turn + 1
             previous_query_frame = session.get("previous_query_frame", {})
             if not isinstance(previous_query_frame, dict):
-                raise LifecycleError("user previous query frame is malformed")
+                raise LifecycleError("human previous query frame is malformed")
             active_topic = session.get("active_topic", "")
             if not isinstance(active_topic, str):
-                raise LifecycleError("user contextual topic is malformed")
+                raise LifecycleError("human contextual topic is malformed")
             predicates = session.get("predicates", {})
             if not isinstance(predicates, dict):
-                raise LifecycleError("user predicates are malformed")
+                raise LifecycleError("human predicates are malformed")
             predicate_topic = predicates.get("topic", "")
             if not isinstance(predicate_topic, str):
-                raise LifecycleError("user topic predicate is malformed")
+                raise LifecycleError("human topic predicate is malformed")
             raw_topic = active_topic or predicate_topic
             topic = raw_topic if len(raw_topic.encode("utf-8")) <= MAX_CONTEXTUAL_TOPIC_BYTES else ""
         frame = enrich_query_frame(
@@ -353,7 +353,7 @@ def resolve_request(
                 previous=previous_query_frame,
             )
             with core.engram.session_lock:
-                current_session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
+                current_session = sessions.get_session(core.engram, normalized_human_id, create_if_missing=True)
                 if current_session.get("query_frame_turn", 0) < current_turn:
                     current_session["previous_query_frame"] = compact
                     current_session["query_frame_turn"] = current_turn

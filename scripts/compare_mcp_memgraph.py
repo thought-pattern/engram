@@ -79,7 +79,7 @@ def relation_probe(config_path: str) -> dict:
             lambda: core.resolve_request(
                 "What was Elias Thorne classified as?",
                 "live-memgraph-relation-probe",
-                user_id="Graph Comparison",
+                human_id="Graph Comparison",
                 configured_resolvers=("structured_graph",),
             )
         )
@@ -150,7 +150,7 @@ async def internal_conversation(config_path: str) -> dict:
             await client.call_tool(
                 "engram_start",
                 {
-                    "user_id": "Graph Comparison",
+                    "human_id": "Graph Comparison",
                     "initial_bot_text": ".",
                     "config_path": config_path,
                     "random_seed": 808,
@@ -200,7 +200,7 @@ async def compare(config_path: str) -> dict:
         "created_at": datetime.now(UTC).isoformat(),
         "transport": "official MCP Client against repository MCPServer",
         "seed_enabled": False,
-        "user_id": "Graph Comparison",
+        "human_id": "Graph Comparison",
         "disabled": disabled,
         "enabled": enabled,
         "section8_relation_probe": relation_probe(config_path),

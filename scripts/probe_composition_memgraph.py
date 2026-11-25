@@ -116,7 +116,7 @@ def run(config_path: str) -> dict[str, object]:
                 lambda index=index, prompt=prompt: core.resolve_request(
                     prompt,
                     f"live-composition-{index}",
-                    user_id="Sarah",
+                    human_id="Sarah",
                     configured_resolvers=("structured_graph",),
                 )
             )

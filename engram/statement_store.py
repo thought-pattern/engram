@@ -1,6 +1,6 @@
 """The Engram statement store.
 
-Storing statements with their keyword index and pattern registrations, per-person
+Storing statements with their keyword index and pattern registrations, per-human
 matchers, store-order positions, hit statistics, and removal and least-recently-used
 eviction of DYNAMIC statements. Each function that takes ``engram`` is bound on
 ``engram.core.Engram`` as the method of the same name.
@@ -34,11 +34,11 @@ def lru_entry(stmt: dict, sequence: int) -> tuple:
 def visible_to(stmt: dict, owner: str) -> bool:
     """Return whether a statement may answer ``owner``'s chat.
 
-    Shared statements (no introduced_by_user_id) answer everyone. A fact a
-    person taught answers only that person; an empty owner sees shared
+    Shared statements (no introduced_by_human_id) answer everyone. A fact a
+    human taught answers only that human; an empty owner sees shared
     statements alone.
     """
-    statement_owner = stmt.get("introduced_by_user_id", "")
+    statement_owner = stmt.get("introduced_by_human_id", "")
     result = not statement_owner or statement_owner == owner
     return result
 
@@ -69,7 +69,7 @@ def store(
     template=(),
     priority: int = 0,
     keyword_source: str = "",
-    introduced_by_user_id: str = "",
+    introduced_by_human_id: str = "",
     source_label: str = "",
     replace_learned: bool = False,
 ) -> str:
@@ -89,10 +89,10 @@ def store(
             keyword score; preferred among equal pattern matches).
         keyword_source: Optional text to index the conversational statement
             under instead of its pattern or rendered text.
-        introduced_by_user_id: The person who taught the statement in chat.
-            A taught statement belongs to that person and answers only
+        introduced_by_human_id: The human who taught the statement in chat.
+            A taught statement belongs to that human and answers only
             their chat (``visible_to``); empty stores a shared statement.
-        source_label: Optional non-user source label.
+        source_label: Optional non-human source label.
         replace_learned: When True, a DYNAMIC statement replaces the DYNAMIC
             statements of the same owner already filed under the same
             pattern, that, and topic, so re-teaching changes the answer.
@@ -101,8 +101,8 @@ def store(
     Returns:
         Assigned statement ID.
     """
-    if not isinstance(introduced_by_user_id, str):
-        raise ValueError("introduced_by_user_id must be a string")
+    if not isinstance(introduced_by_human_id, str):
+        raise ValueError("introduced_by_human_id must be a string")
     if not isinstance(source_label, str):
         raise ValueError("source_label must be a string")
     if not pattern_aliases:
@@ -139,7 +139,7 @@ def store(
         topic=topic or "",
         template=template,
         priority=priority,
-        introduced_by_user_id=introduced_by_user_id,
+        introduced_by_human_id=introduced_by_human_id,
         source_label=source_label,
     )
     stmt_id = stmt.get("id", "")
@@ -148,7 +148,7 @@ def store(
             raise ValueError(f"duplicate statement id: {stmt_id}")
 
         if replace_learned and pattern and tier == Tier.DYNAMIC:
-            for replaced_id in engram.replaceable_statement_ids(pattern, that or "", topic or "", introduced_by_user_id):
+            for replaced_id in engram.replaceable_statement_ids(pattern, that or "", topic or "", introduced_by_human_id):
                 engram.evict_statement(replaced_id)
 
         # Capacity is made before anything is registered, so a refusal leaves no partial statement.
@@ -160,7 +160,7 @@ def store(
         # Register the pattern under the same lock that guards matching,
         # so a concurrent pattern_query never sees a half-updated matcher.
         if pattern:
-            matcher = engram.owned_matcher(introduced_by_user_id)
+            matcher = engram.owned_matcher(introduced_by_human_id)
             for registered_pattern in [pattern, *aliases]:
                 matcher.add_pattern(registered_pattern, text, that=that or "", topic=topic or "")
 
@@ -189,7 +189,7 @@ def store(
 def replaceable_statement_ids(engram, pattern: str, that: str, topic: str, owner: str) -> list[str]:
     """Return ``owner``'s learned (DYNAMIC) statements filed under exactly this pattern, that, and topic.
 
-    An empty owner means the shared statements; one person's teaching never replaces another's.
+    An empty owner means the shared statements; one human's teaching never replaces another's.
     """
     with engram.statement_lock:
         result = []
@@ -198,7 +198,7 @@ def replaceable_statement_ids(engram, pattern: str, that: str, topic: str, owner
             existing = engram.statement_by_id.get(statement_id, {})
             if (
                 existing.get("tier", "") == Tier.DYNAMIC
-                and existing.get("introduced_by_user_id", "") == owner
+                and existing.get("introduced_by_human_id", "") == owner
                 and existing.get("pattern", "") == pattern
                 and existing.get("that", "") == that
                 and existing.get("topic", "") == topic
@@ -208,24 +208,24 @@ def replaceable_statement_ids(engram, pattern: str, that: str, topic: str, owner
 
 
 def owned_matcher(engram, owner: str) -> PatternMatcher:
-    """Return the matcher that files ``owner``'s categories, creating a person's on first use.
+    """Return the matcher that files ``owner``'s categories, creating a human's on first use.
 
-    Shared statements (empty owner) live in ``pattern_matcher``. A person's
+    Shared statements (empty owner) live in ``pattern_matcher``. A human's
     matcher takes the shared word sets, bot properties, and fallback
     settings. The caller holds statement_lock.
     """
     if not owner:
         result = engram.pattern_matcher
         return result
-    if owner not in engram.person_matchers:
-        engram.person_matchers[owner] = PatternMatcher(
+    if owner not in engram.human_matchers:
+        engram.human_matchers[owner] = PatternMatcher(
             sets=engram.pattern_matcher.word_sets(),
             bot_properties=engram.pattern_matcher.bot_properties(),
             use_stemming=engram.config.get("use_stemming", False),
             use_lemmatization=engram.config.get("use_lemmatization", False),
             use_spacy_lemmatization=engram.config.get("use_spacy_lemmatization", False),
         )
-    result = engram.person_matchers.get(owner, engram.pattern_matcher)
+    result = engram.human_matchers.get(owner, engram.pattern_matcher)
     return result
 
 
@@ -278,16 +278,16 @@ def retire_statement(engram, statement_id: str) -> bool:
         return result
 
 
-def forget_person_facts(engram, owner: str) -> int:
+def forget_human_facts(engram, owner: str) -> int:
     """Remove every statement ``owner`` taught in chat; return how many went.
 
     Shared statements are untouched. The anonymous conversation uses this
     so what an anonymous speaker said ends with their conversation.
     """
     if not isinstance(owner, str) or not owner:
-        raise ValueError("owner must name a person")
+        raise ValueError("owner must name a human")
     with engram.mutation_lock, engram.statement_lock:
-        owned = [stmt.get("id", "") for stmt in engram.statements if stmt.get("introduced_by_user_id", "") == owner]
+        owned = [stmt.get("id", "") for stmt in engram.statements if stmt.get("introduced_by_human_id", "") == owner]
         for statement_id in owned:
             engram.evict_statement(statement_id)
     result = len(owned)
@@ -346,7 +346,7 @@ def detach_statement(engram, stmt: dict) -> None:
 
     The caller holds ``mutation_lock`` and ``statement_lock``. store() registered one
     entry per pattern in the owner's matcher, so exactly one goes; a surviving
-    statement carrying the same pattern keeps its own entry. A person's matcher goes
+    statement carrying the same pattern keeps its own entry. A human's matcher goes
     with their last category.
     """
     engram.require_store_locks()
@@ -360,12 +360,12 @@ def detach_statement(engram, stmt: dict) -> None:
                     del engram.keywords[keyword]
     registered_patterns = [pattern for pattern in [stmt.get("pattern", ""), *stmt.get("pattern_aliases", [])] if pattern]
     if registered_patterns:
-        owner = stmt.get("introduced_by_user_id", "")
+        owner = stmt.get("introduced_by_human_id", "")
         matcher = engram.owned_matcher(owner)
         for pattern in registered_patterns:
             matcher.remove_pattern(pattern, that=stmt.get("that", ""), topic=stmt.get("topic", ""))
         if owner and not matcher:
-            del engram.person_matchers[owner]
+            del engram.human_matchers[owner]
     for pattern in registered_patterns:
         carriers = engram.pattern_statements.get(pattern, [])
         if stmt_id in carriers:

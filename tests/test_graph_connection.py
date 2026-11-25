@@ -142,7 +142,7 @@ def test_the_core_asks_the_graph_to_reconnect_once_a_turn_is_over() -> None:
         engram = Engram(config=engram_config(graph=graph_config(enabled=True)))
     core = TurnRecordingCore(engram)
     try:
-        core.start_conversation(user_id="user-1")
+        core.start_conversation(human_id="user-1")
         assert graph.reconnect_requests == 0
 
         core.chat("user-1", "Hello there")

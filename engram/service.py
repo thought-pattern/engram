@@ -1,6 +1,6 @@
 """Transport-neutral application facade for Engram interfaces.
 
-``EngramCore`` owns the shared engine, user-bound conversation runtimes,
+``EngramCore`` owns the shared engine, human-bound conversation runtimes,
 and regulated in-memory response-cache transactions. Interfaces
 such as MCP and the CLI translate their inputs and outputs at the boundary;
 this module contains no transport-specific types or behavior.
@@ -178,7 +178,7 @@ class EngramCore:
         self.lock = threading_RLock()
         self.resolution_condition = threading_Condition(self.lock)
         self.active_resolution_request_ids: set[str] = set()
-        self.active_resolution_user_ids: set[str] = set()
+        self.active_resolution_human_ids: set[str] = set()
         self.active_graph_operations = 0
         self.internal_state = CoreState.RUNNING
         graph_client = self.engram.graph_client
@@ -237,31 +237,31 @@ class EngramCore:
         )
 
     @contextlib_contextmanager
-    def resolution_slot(self, request_id: str, user_id: str, cancellation_check: object = no_cancellation_check):
-        """Serialize retry identity and per-user context while permitting unrelated work.
+    def resolution_slot(self, request_id: str, human_id: str, cancellation_check: object = no_cancellation_check):
+        """Serialize retry identity and per-human context while permitting unrelated work.
 
         A slot spans one turn: a chat exchange or a resolution request. When
         it ends, a graph connection lost during the turn starts reconnecting.
-        A request queued behind another holder of its request ID or user checks
+        A request queued behind another holder of its request ID or human checks
         its caller's cancellation between bounded waits, so a cancelled caller
         leaves the queue without waiting for that holder to finish.
         """
         if not callable(cancellation_check):
             raise InvalidRequestError("cancellation_check must be callable")
         with self.resolution_condition:
-            while request_id in self.active_resolution_request_ids or user_id in self.active_resolution_user_ids:
+            while request_id in self.active_resolution_request_ids or human_id in self.active_resolution_human_ids:
                 self.require_running()
                 cancellation_check()
                 self.resolution_condition.wait(RESOLUTION_SLOT_CANCELLATION_POLL_SECONDS)
             self.require_running()
             self.active_resolution_request_ids.add(request_id)
-            self.active_resolution_user_ids.add(user_id)
+            self.active_resolution_human_ids.add(human_id)
         try:
             yield
         finally:
             with self.resolution_condition:
                 self.active_resolution_request_ids.discard(request_id)
-                self.active_resolution_user_ids.discard(user_id)
+                self.active_resolution_human_ids.discard(human_id)
                 self.resolution_condition.notify_all()
             self.reconnect_graph_after_turn()
 
@@ -333,7 +333,7 @@ class EngramCore:
         self.close()
 
     def status(self) -> dict:
-        """Return transport-neutral process lifecycle readiness without waiting for the core lock (D-1349).
+        """Return transport-neutral process lifecycle readiness without waiting for the core lock.
 
         When the lock is free the component readiness and the regulated-cache counts are read under it and kept. While
         another call holds it, as a chat turn does across its graph read, the status answers at once with the lifecycle,
@@ -412,7 +412,7 @@ class EngramCore:
         """Return fixed-cardinality process metrics without request-scoped values, without waiting for the core lock.
 
         When the lock is free the regulated-cache counts are read under it and kept; while another call holds it they
-        are the counts last read under it (D-1349).
+        are the counts last read under it.
         """
         if not self.lock.acquire(blocking=False):
             result = self.published_telemetry()

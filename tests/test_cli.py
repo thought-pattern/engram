@@ -37,7 +37,7 @@ def test_interactive_chat_uses_only_the_owned_core() -> None:
         "When is support open?",
         "Support is open from nine to five.",
         "learn-cli",
-        user_id="regulator",
+        human_id="regulator",
     )
     chat = InteractiveChat(core, session_id="cli-test")
 
@@ -53,7 +53,7 @@ def test_interactive_chat_uses_only_the_owned_core() -> None:
 
 def test_new_cli_core_does_not_inherit_prior_process_memory() -> None:
     first = EngramCore()
-    first.learn_response("Question?", "Answer.", "learn-1", user_id="regulator")
+    first.learn_response("Question?", "Answer.", "learn-1", human_id="regulator")
     restarted = EngramCore()
 
     assert first.engram.response_repository.snapshot().get("artifacts", {})

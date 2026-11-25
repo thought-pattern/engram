@@ -328,7 +328,7 @@ DEFAULT_CONTRACTIONS: dict[str, str] = {
 }
 
 # Person substitution (first person <-> second person)
-# Used for transforming user input when echoing back
+# Used for transforming human input when echoing back
 DEFAULT_PERSON: dict[str, str] = {
     "i": "you",
     "me": "you",

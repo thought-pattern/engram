@@ -80,7 +80,7 @@ def test_spacy_lemmatization_matcher_uses_spacy_lemmas():
 
 def test_spacy_fact_learning_learns_relational_fact():
 
-    config = engram_config(use_spacy_facts=True, learn_user_facts=True)
+    config = engram_config(use_spacy_facts=True, learn_human_facts=True)
     engram = Engram(config=config)
     engram.store("Tell me more.", pattern="*")
 

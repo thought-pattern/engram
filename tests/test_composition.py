@@ -801,7 +801,7 @@ def test_structured_resolver_compiles_revalidates_and_publishes_two_hop_evidence
     core_result = EngramCore(engine).resolve_request(
         FOUNDER_BIRTHPLACE_REQUEST,
         "composition-core-1",
-        user_id="Sarah",
+        human_id="Sarah",
         namespace="public",
         configured_resolvers=("structured_graph",),
     )

@@ -230,13 +230,13 @@ def test_core_resolves_utility_without_learning_or_accounting() -> None:
         result = core.resolve_request(
             "calculate 2 + 3 * 4",
             "utility-integration",
-            user_id="Sarah",
+            human_id="Sarah",
             configured_resolvers=("utility",),
         )
         filtered = core.resolve_request(
             "calculate 2 + 3 * 4",
             "utility-filtered",
-            user_id="Sarah",
+            human_id="Sarah",
             required_source_label="knowledge-source",
             configured_resolvers=("utility",),
         )

@@ -40,8 +40,8 @@ def test_statement_hit_records_the_callers_moment() -> None:
 def test_statement_unattributed_statement_defaults() -> None:
     stmt = statement("Shared fact", statement_id="stmt_shared", created_at=NOW)
 
-    assert {"introduced_by_user_id", "source_label", "pattern_aliases"} <= stmt.keys()
-    assert stmt.get("introduced_by_user_id", "") == ""
+    assert {"introduced_by_human_id", "source_label", "pattern_aliases"} <= stmt.keys()
+    assert stmt.get("introduced_by_human_id", "") == ""
     assert stmt.get("source_label", "") == ""
     assert stmt.get("pattern_aliases", []) == []
 

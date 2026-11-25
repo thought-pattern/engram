@@ -15,7 +15,7 @@ Key features:
 - **Optional semantic retrieval and reranking** - Offline local request embeddings and a bounded transparent shortlist scorer
 - **Hit-rate tracking** - Learning signal that improves retrieval over time
 - **Two-tier statements** - STATIC (provided at startup) and DYNAMIC (process-local and evictable)
-- **User-aware chat** - Isolated conversation contexts with shared, attributed facts
+- **Human-aware chat** - Isolated conversation contexts with shared, attributed facts
 - **Process memory** - Accepted responses, conversations, and receipts have one in-memory owner
 - **Multiple interfaces** - Python API, CLI, MCP tools, and a single-instance gRPC service over one shared core
 
@@ -29,7 +29,7 @@ gRPC --------/
 ```
 
 `EngramCore` in `engram/service.py` is the transport-neutral application
-facade. It owns the shared `Engram` instance, per-user conversation runtimes,
+facade. It owns the shared `Engram` instance, per human conversation runtimes,
 the sole accepted-response artifact collection, and regulated-cache proposal
 state. Python callers and the MCP and gRPC adapters invoke that core. The lower-level
 `Engram`, `pipeline`, and `sessions` Python APIs remain available. When graph
@@ -126,7 +126,7 @@ print(stmt["text"])  # "Paris is the capital of France"
 engram.record_hit(result["keywords"], statement_id=stmt["id"])
 ```
 
-## User-aware chatbot and shared facts
+## Human-aware chatbot and shared facts
 
 `pipeline.chat` is the in-process chatbot entry point. The caller owns the
 user label: it is an arbitrary, case-sensitive string that Engram preserves
@@ -138,16 +138,16 @@ from engram import pipeline
 # A catch-all supplies the chatbot's default conversational behavior.
 engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
-pipeline.chat(engram, "Sushi is good.", user_id="Alice")
-print(pipeline.chat(engram, "What's good?", user_id="Alice")["response"])  # "Sushi is good."
-print(pipeline.chat(engram, "What's good?", user_id="Carol")["response"])  # "Go on."
+pipeline.chat(engram, "Sushi is good.", human_id="Alice")
+print(pipeline.chat(engram, "What's good?", human_id="Alice")["response"])  # "Sushi is good."
+print(pipeline.chat(engram, "What's good?", human_id="Carol")["response"])  # "Go on."
 ```
 
 Alice and Carol have separate histories, predicates, active topics, referenced
 entities, dialogue-act histories, and pronoun context. A fact a person states in
-chat, or teaches through a `learn` template, belongs to that person
-(`introduced_by_user_id`) and is relayed back only to that person, only in their
-chat. It is filed in the person's own matcher, which only their chat consults,
+chat, or teaches through a `learn` template, belongs to that human
+(`introduced_by_human_id`) and is relayed back only to that human, only in their
+chat. It is filed in the human's own matcher, which only their chat consults,
 before the shared categories at each matching stage; keyword retrieval, the
 `llm_fn` context, spelling correction, the turn's `learned_statements`, and
 `inspect` see only the speaker's own facts beside shared statements. Proposal and
@@ -171,7 +171,7 @@ statement_id = engram.add_fact(
 ```
 
 `add_fact` ingests one fact, optionally records an opaque source label, and
-leaves user context unchanged. External facts are shared and answer every
+leaves human context unchanged. External facts are shared and answer every
 conversation. The API accepts one fact per call and has no batch-ingestion
 operation.
 
@@ -220,7 +220,7 @@ config = engram_config(
     semantic=semantic_config(enabled=False),  # Requires an explicitly provisioned artifact when enabled
     reranker=reranker_config(enabled=False),  # Optional bounded shortlist scorer
     utility=utility_config(enabled=False),  # Optional deterministic operations
-    learn_user_facts=True,       # Learn facts a person states, for that person only
+    learn_human_facts=True,       # Learn facts a person states, for that human only
     use_stemming=True,           # Porter-stemmed fallback matching
     use_lemmatization=True,      # WordNet-lemmatized fallback matching (precise)
     use_synonyms=True,           # WordNet synonym expansion on keyword queries
@@ -339,7 +339,7 @@ retirement is its own call. Every dynamic response, conversation and receipt
 lives in process memory and goes away when the core stops.
 
 One core retains multiple isolated user conversations, each person's own facts, and shared knowledge.
-Named conversation identifiers retain their exact spelling and user context.
+Named conversation identifiers retain their exact spelling and human context.
 Omitted or empty labels use the reserved unknown user `"0"` across the core,
 gRPC and MCP. Unknown conversations start with fresh session context and delete
 that session on stop; failed initialization restores the prior session. There
@@ -356,14 +356,14 @@ feedback, lifecycle, and error behavior.
 
 | Method                                                           | Description                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_user_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; a non-empty `introduced_by_user_id` makes it that person's own; `replace_learned` retires the same owner's DYNAMIC statements on the same pattern, that, and topic |
+| `store(text, tier, statement_id, pattern, pattern_aliases, that, topic, template, priority, keyword_source, introduced_by_human_id, source_label, replace_learned)` | Add a statement with optional matcher aliases, context constraints, identity, and provenance; a non-empty `introduced_by_human_id` makes it that human's own; `replace_learned` retires the same owner's DYNAMIC statements on the same pattern, that, and topic |
 | `query(text, context_id, limit, statement_filter, record_candidates, owner)` | Keyword retrieval in an optional conversation context with optional filtering and candidacy accounting; candidates are shared statements plus `owner`'s own facts |
-| `pattern_query(text, context_id, user_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, the speaker's own facts tried first, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
+| `pattern_query(text, context_id, human_id, include_graph, evaluation_time)` | AIML-style match (pattern, then that, then topic) with separate turn context, the speaker's own facts tried first, and optional timestamped graph fallback; accepts up to 16,384 bytes; returns `(statement, captured, response)` or `()` |
 | `record_hit(keywords, statement_id)`                             | Update hit statistics after a successful retrieval; the optional `statement_id` credits the answering statement      |
 | `retire_statement(statement_id)`                                 | Remove a statement and its pattern by id                                                                             |
-| `learn_fact(fact, introduced_by_user_id, source_label, tier)`    | Learn an extracted fact for the person who stated it (shared when empty); replaces the fact that owner already taught for its subject |
+| `learn_fact(fact, introduced_by_human_id, source_label, tier)`    | Learn an extracted fact for the human who stated it (shared when empty); replaces the fact that owner already taught for its subject |
 | `forget_person_facts(owner)`                                     | Remove every statement one person taught in chat                                                                     |
-| `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve user context                                                  |
+| `add_fact(text, source_label, tier)`                             | Add one globally shared, unattributed fact and preserve human context                                                  |
 | `get_statement(statement_id)`                                    | Fetch a statement dict by id (`{}` if absent)                                                                        |
 | `load_corpus(statements, tier)`                                  | Bulk-add statements                                                                                                  |
 | `load_static_data(pairs)`                                       | Load one provided structured STATIC corpus into a fresh Engram                                                       |
@@ -381,16 +381,16 @@ feedback, lifecycle, and error behavior.
 
 ### Pipeline (`from engram import pipeline`)
 
-`pipeline.chat(engram, text, user_id, llm_fn, high_confidence, context_limit)`
+`pipeline.chat(engram, text, human_id, llm_fn, high_confidence, context_limit)`
 is the user-aware entry point. It defaults to user `"0"` and returns the
-normalized `user_id` in its result. The lower-level
-`pipeline.respond(engram, text, context_id, llm_fn, high_confidence, context_limit, user_id)`
+normalized `human_id` in its result. The lower-level
+`pipeline.respond(engram, text, context_id, llm_fn, high_confidence, context_limit, human_id)`
 packages the tiered strategy: scripted pattern match first, then a
 high-confidence conversational statement, then the caller's LLM with retrieved
 context. Generated responses are recorded only in the conversation session and
 are never copied into matcher statements. Returns a dict with `response`,
 `source` (`pattern` / `statement` / `llm` / `none`), `score`, `matches`, and
-`keywords`. User-aware results also expose the selected `dialogue_act`,
+`keywords`. Human-aware results also expose the selected `dialogue_act`,
 `active_topic`, recent canonical `entities`, and `fact_admissions`. Each fact
 admission records whether an inferred conversational fact was stored and, when
 it was rejected, a stable reason such as `hedged`, `transient`, or
@@ -476,7 +476,7 @@ corpus, or `--no-static-data` for an intentionally empty cache-only process.
 Conversational corpora must contain a `*` catch-all. A configuration that names
 `conversation.seed_files` loads those files instead of the adapter's corpus.
 
-MCP owns one active conversation. An omitted or empty `user_id` starts that
+MCP owns one active conversation. An omitted or empty `human_id` starts that
 conversation as the unknown user `"0"`; send, inspect, finish, and stop all use
 and report the same canonical identifier.
 
@@ -490,10 +490,10 @@ tool schemas, process-memory ownership, and retry behavior.
 ### gRPC Service Interface
 
 The gRPC server exposes the same shared core, isolated user conversations, and
-regulated-cache workflow. An omitted or empty `user_id` across Start, Chat,
+regulated-cache workflow. An omitted or empty `human_id` across Start, Chat,
 Inspect, Finish, and Stop means exactly `"0"`. Starting unknown user "0" creates
 fresh context; stopping removes both its conversation and session. Finish only
-reports, and named-user context remains reusable:
+reports, and named-human context remains reusable:
 
 ```bash
 engram-grpc --bind 127.0.0.1:50051 --config-path config.yml
@@ -577,7 +577,7 @@ taught about it. With spaCy,
 
 Copulas retain their surface form, prepositions become relations, and action
 verbs use their lemma. NER supplies `subject_type` and `obj_type` when available.
-`learn_user_facts` controls conversational learning; `use_spacy_facts` selects
+`learn_human_facts` controls conversational learning; `use_spacy_facts` selects
 the relational extractor. Both extractor APIs return their actual fact records.
 
 ### Optional spaCy matching/retrieval enhancements

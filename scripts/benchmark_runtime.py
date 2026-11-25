@@ -39,7 +39,7 @@ def benchmark_engram_config(capacity: int) -> dict:
     """
     config = engram_config(
         capacity=capacity,
-        learn_user_facts=False,
+        learn_human_facts=False,
         polish_responses=False,
         use_lemmatization=False,
         use_spell_correction=False,

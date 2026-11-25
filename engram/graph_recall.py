@@ -502,7 +502,7 @@ def graph_lookup(engram, text: str, *, evaluation_time: str = "") -> str:
     information. Returns a natural language response if found.
 
     Args:
-        text: User input text.
+        text: Human input text.
         evaluation_time: Optional canonical UTC evaluation timestamp. The
             shared runtime supplies this so every interface evaluates
             temporal graph assertions against the same request clock.

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from pathlib import Path
 
-DEFAULT_USER_ID = "0"
+DEFAULT_HUMAN_ID = "0"
 # Service-boundary defaults shared by EngramCore, the gRPC servicer and the MCP tools.
 DEFAULT_PROPOSE_LIMIT = 1
 DEFAULT_LEARNED_SOURCE_LABEL = "unknown"

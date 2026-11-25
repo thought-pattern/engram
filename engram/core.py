@@ -58,7 +58,7 @@ from engram.statement_store import (
     detach_statement,
     evict_least_recent_dynamic,
     evict_statement,
-    forget_person_facts,
+    forget_human_facts,
     get_statement,
     internal_extract_keywords,
     owned_matcher,
@@ -165,11 +165,11 @@ class Engram:
         # Registered pattern or alias -> ids of the statements carrying it, in
         # store order, so matching and eviction never scan every statement.
         self.pattern_statements: dict[str, list[str]] = {}
-        # A fact a person teaches in chat belongs to that person (its
-        # introduced_by_user_id) and is filed in that person's own matcher, which
-        # only that person's chat consults. Shared statements stay in
-        # pattern_matcher. A person's matcher goes when their last category does.
-        self.person_matchers: dict[str, PatternMatcher] = {}
+        # A fact a human teaches in chat belongs to that human (its
+        # introduced_by_human_id) and is filed in that human's own matcher, which
+        # only that human's chat consults. Shared statements stay in
+        # pattern_matcher. A human's matcher goes when their last category does.
+        self.human_matchers: dict[str, PatternMatcher] = {}
 
         # The pattern matcher owns the word sets and bot properties; load_conversation_tables
         # publishes the configured ones. The persona name is applied before patterns are
@@ -427,7 +427,7 @@ class Engram:
     statement_position = statement_position
     get_statement = get_statement
     retire_statement = retire_statement
-    forget_person_facts = forget_person_facts
+    forget_human_facts = forget_human_facts
     require_store_locks = require_store_locks
     evict_statement = evict_statement
     detach_statement = detach_statement

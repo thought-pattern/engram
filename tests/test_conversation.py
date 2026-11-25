@@ -12,7 +12,7 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn() -> None:
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
     runtime = ConversationRuntime(
         engram,
-        user_id="Codex",
+        human_id="Codex",
         initial_bot_text=".",
     )
 
@@ -28,7 +28,7 @@ def test_runtime_records_initial_bot_text_and_one_observable_turn() -> None:
 
 
 def test_runtime_rejects_empty_or_batch_input() -> None:
-    runtime = ConversationRuntime(Engram(), user_id="0")
+    runtime = ConversationRuntime(Engram(), human_id="0")
 
     with pytest_raises(ValueError, match="one non-empty string"):
         runtime.send("")
@@ -39,7 +39,7 @@ def test_runtime_rejects_empty_or_batch_input() -> None:
 def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
-    runtime = ConversationRuntime(engram, user_id="Alice")
+    runtime = ConversationRuntime(engram, human_id="Alice")
 
     teaching = runtime.send("Sushi is good.")
     recall = runtime.send("What's good?")
@@ -47,7 +47,7 @@ def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
 
     learned_statements = teaching.get("learned_statements", [])
     assert learned_statements
-    assert all(statement.get("introduced_by_user_id", "") == "Alice" for statement in learned_statements)
+    assert all(statement.get("introduced_by_human_id", "") == "Alice" for statement in learned_statements)
     assert recall.get("response", "") == "Sushi is good."
     assert snapshot.get("turn_count", 0) == 2
     assert snapshot.get("learned_unique_texts", []) == ["Sushi is good."]
@@ -56,10 +56,10 @@ def test_runtime_exposes_learned_fact_provenance_and_recall() -> None:
 def test_runtime_returns_report_without_writing_files() -> None:
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
-    runtime = ConversationRuntime(engram, user_id="agent", initial_bot_text=".")
+    runtime = ConversationRuntime(engram, human_id="agent", initial_bot_text=".")
     runtime.send("hello")
 
     report = runtime.report()
 
     assert report.get("summary", {}).get("exchanges", 0) == 1
-    assert report.get("user_id", "") == "agent"
+    assert report.get("human_id", "") == "agent"

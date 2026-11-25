@@ -1,7 +1,7 @@
 """Fact learning for an Engram.
 
 Extracted facts become one DYNAMIC or STATIC statement with subject and question
-patterns, owned by the person who stated them or shared. Each function that takes
+patterns, owned by the human who stated them or shared. Each function that takes
 ``engram`` is bound on ``engram.core.Engram`` as the method of the same name.
 """
 
@@ -21,7 +21,7 @@ logger = logging_getLogger("engram.core")
 def learn_fact_with_id(
     engram,
     fact: dict,
-    introduced_by_user_id: str = "",
+    introduced_by_human_id: str = "",
     source_label: str = "",
     tier: Tier = Tier.DYNAMIC,
 ) -> tuple[bool, str]:
@@ -31,12 +31,12 @@ def learn_fact_with_id(
     is returned; when learning is declined (protected seed/hand-stored pattern or
     overlong subject), ``(False, "")`` is returned.
     """
-    if not isinstance(introduced_by_user_id, str):
-        raise ValueError("introduced_by_user_id must be a string")
+    if not isinstance(introduced_by_human_id, str):
+        raise ValueError("introduced_by_human_id must be a string")
     if not isinstance(source_label, str):
         raise ValueError("source_label must be a string")
 
-    owner = introduced_by_user_id
+    owner = introduced_by_human_id
     subject_pattern = fact_subject_upper(fact)
     if pattern_word_count(subject_pattern) > MAX_PATTERN_WORDS:
         logger.info("Not learning a fact whose subject is longer than %d words", MAX_PATTERN_WORDS)
@@ -52,7 +52,7 @@ def learn_fact_with_id(
             if statement_id in engram.statement_by_id
         ]
         for existing in carriers:
-            if existing.get("introduced_by_user_id", "") != owner or existing.get("pattern", "") != subject_pattern:
+            if existing.get("introduced_by_human_id", "") != owner or existing.get("pattern", "") != subject_pattern:
                 continue
             if existing.get("text", "") == fact.get("original", ""):
                 unchanged = (False, existing.get("id", ""))
@@ -89,7 +89,7 @@ def learn_fact_with_id(
             pattern_aliases=aliases,
             tier=tier,
             keyword_source=fact.get("original", ""),
-            introduced_by_user_id=introduced_by_user_id,
+            introduced_by_human_id=introduced_by_human_id,
             source_label=source_label,
             replace_learned=True,
         )
@@ -98,12 +98,12 @@ def learn_fact_with_id(
     return outcome
 
 
-def learn_fact(engram, fact: dict, introduced_by_user_id: str = "", source_label: str = "", tier: Tier = Tier.DYNAMIC) -> bool:
+def learn_fact(engram, fact: dict, introduced_by_human_id: str = "", source_label: str = "", tier: Tier = Tier.DYNAMIC) -> bool:
     """Learn a fact extracted from natural language."""
     learned, _ = learn_fact_with_id(
         engram,
         fact,
-        introduced_by_user_id=introduced_by_user_id,
+        introduced_by_human_id=introduced_by_human_id,
         source_label=source_label,
         tier=tier,
     )
@@ -127,20 +127,20 @@ def store_unpatterned_shared_fact(engram, fact_text: str, source_label: str, tie
         for stmt in engram.statements:
             if (
                 not stmt.get("pattern", "")
-                and not stmt.get("introduced_by_user_id", "")
+                and not stmt.get("introduced_by_human_id", "")
                 and " ".join(stmt.get("text", "").split()) == collapsed_target
             ):
                 existing_id = stmt.get("id", "")
                 return existing_id
-        stored_id = engram.store(text=fact_text, tier=tier, introduced_by_user_id="", source_label=source_label)
+        stored_id = engram.store(text=fact_text, tier=tier, introduced_by_human_id="", source_label=source_label)
     return stored_id
 
 
 def add_fact(engram, text: str, source_label: object = "", tier: Tier = Tier.DYNAMIC) -> str:
-    """Add shared knowledge without assigning it to a conversational user.
+    """Add shared knowledge without assigning it to a conversational human.
 
     The fact is indexed and, when extraction succeeds, receives the usual
-    subject and question patterns. It never creates or updates user
+    subject and question patterns. It never creates or updates human
     context. The returned id identifies the primary stored statement.
     """
     if not isinstance(text, str) or not text.strip():
@@ -178,7 +178,7 @@ def add_fact(engram, text: str, source_label: object = "", tier: Tier = Tier.DYN
             _, stmt_id = learn_fact_with_id(
                 engram,
                 fact,
-                introduced_by_user_id="",
+                introduced_by_human_id="",
                 source_label=source_label,
                 tier=tier,
             )

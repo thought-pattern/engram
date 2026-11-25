@@ -1,7 +1,7 @@
 """Conversations for the Engram service.
 
-Starting, owning, releasing and finishing per-user conversation runtimes, chat and
-inspection turns, shared fact intake, and per-user predicates. Each function that takes
+Starting, owning, releasing and finishing per-human conversation runtimes, chat and
+inspection turns, shared fact intake, and per-human predicates. Each function that takes
 ``core`` is bound on ``engram.service.EngramCore`` as the method of the same name.
 """
 
@@ -9,41 +9,41 @@ from time import monotonic as time_monotonic
 from uuid import uuid4
 
 from engram import sessions
-from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, DEFAULT_USER_ID, SessionOverflow
+from engram.constants import ANONYMOUS_CONVERSATION_LEASE_SECONDS, DEFAULT_HUMAN_ID, SessionOverflow
 from engram.constants_artifacts import MAX_METADATA_KEY_BYTES, MAX_METADATA_STRING_BYTES, MAX_RESPONSE_BYTES, MAX_SOURCE_LABEL_BYTES
 from engram.constants_relation import MAX_CONTEXTUAL_TOPIC_BYTES
 from engram.conversation import ConversationRuntime, require_conversation_start, statement_view
 from engram.errors import ConflictError, ConversationOwnershipError, LifecycleError, ResourceNotFoundError
-from engram.service_requests import normalize_service_user_id
+from engram.service_requests import normalize_service_human_id
 from engram.validation import require_any_text
 
 
 def start_conversation(
     core,
-    user_id: str = DEFAULT_USER_ID,
+    human_id: str = DEFAULT_HUMAN_ID,
     initial_bot_text: str = "",
     random_seed: int = 0,
     random_seed_present: bool = False,
 ) -> dict:
-    """Create one observable conversation for a user context."""
+    """Create one observable conversation for a human context."""
     with core.lock:
         core.require_running()
-        conversation_id = normalize_service_user_id(user_id)
+        conversation_id = normalize_service_human_id(human_id)
         # Request validation raises InvalidRequestError with its own message, and runs
         # before an expired lease is released or a runtime is evicted to make room: a
         # rejected start removes nothing.
         require_conversation_start(initial_bot_text, random_seed, random_seed_present, core.internal_clock)
-        if conversation_id == DEFAULT_USER_ID and conversation_id in core.conversations:
+        if conversation_id == DEFAULT_HUMAN_ID and conversation_id in core.conversations:
             idle = time_monotonic() - core.conversation_activity.get(conversation_id, time_monotonic())
             if idle >= ANONYMOUS_CONVERSATION_LEASE_SECONDS:
                 core.release_conversation(core.conversations.get(conversation_id, ()))
         if conversation_id in core.conversations:
-            raise ConflictError(f"conversation already active for user_id: {conversation_id}")
+            raise ConflictError(f"conversation already active for human_id: {conversation_id}")
         core.make_conversation_room()
         # Anything raised from here on is an internal failure, logged at the transport.
         runtime = ConversationRuntime(
             core.engram,
-            user_id=conversation_id,
+            human_id=conversation_id,
             initial_bot_text=initial_bot_text,
             random_seed=random_seed,
             random_seed_present=random_seed_present,
@@ -54,27 +54,27 @@ def start_conversation(
         snapshot = runtime.inspect()
         result = {
             "started": True,
-            "user_id": snapshot.get("user_id", ""),
+            "human_id": snapshot.get("human_id", ""),
             "initial_bot_text": snapshot.get("initial_bot_text", ""),
             "turn_count": snapshot.get("turn_count", 0),
             "statement_count": snapshot.get("metrics", {}).get("statement_count", 0),
             "memory_only": True,
         }
-        if conversation_id == DEFAULT_USER_ID:
+        if conversation_id == DEFAULT_HUMAN_ID:
             token = uuid4().hex
             core.conversation_tokens[conversation_id] = token
             result["conversation_token"] = token
         return result
 
 
-def owned_conversation(core, user_id: str, conversation_token: str) -> ConversationRuntime:
+def owned_conversation(core, human_id: str, conversation_token: str) -> ConversationRuntime:
     """Return an active runtime, requiring the anonymous owner's token and renewing its lease."""
-    runtime = core.get_conversation(user_id)
-    if runtime.user_id == DEFAULT_USER_ID:
-        expected = core.conversation_tokens.get(runtime.user_id, "")
+    runtime = core.get_conversation(human_id)
+    if runtime.human_id == DEFAULT_HUMAN_ID:
+        expected = core.conversation_tokens.get(runtime.human_id, "")
         if not expected or not isinstance(conversation_token, str) or conversation_token != expected:
             raise ConversationOwnershipError("anonymous conversation requires the token issued when it started")
-    core.conversation_activity[runtime.user_id] = time_monotonic()
+    core.conversation_activity[runtime.human_id] = time_monotonic()
     with core.engram.session_lock:
         active_session = sessions.get_session(core.engram, runtime.session_id, create_if_missing=False)
         if active_session:
@@ -86,12 +86,12 @@ def release_conversation(core, runtime: object) -> None:
     """Remove one runtime and its anonymous session, taught facts, ownership token, and lease."""
     if not isinstance(runtime, ConversationRuntime):
         raise LifecycleError("active conversation runtime is malformed")
-    core.conversations.pop(runtime.user_id, {})
-    core.conversation_tokens.pop(runtime.user_id, "")
-    core.conversation_activity.pop(runtime.user_id, 0.0)
-    if runtime.user_id == DEFAULT_USER_ID:
+    core.conversations.pop(runtime.human_id, {})
+    core.conversation_tokens.pop(runtime.human_id, "")
+    core.conversation_activity.pop(runtime.human_id, 0.0)
+    if runtime.human_id == DEFAULT_HUMAN_ID:
         sessions.delete_session(core.engram, runtime.session_id)
-        core.engram.forget_person_facts(DEFAULT_USER_ID)
+        core.engram.forget_human_facts(DEFAULT_HUMAN_ID)
 
 
 def make_conversation_room(core) -> None:
@@ -107,40 +107,40 @@ def make_conversation_room(core) -> None:
     with core.engram.session_lock:
         stale = [
             runtime
-            for user_id, runtime in core.conversations.items()
-            if runtime.session_id not in core.engram.sessions and user_id not in core.active_resolution_user_ids
+            for human_id, runtime in core.conversations.items()
+            if runtime.session_id not in core.engram.sessions and human_id not in core.active_resolution_human_ids
         ]
     for runtime in stale:
         core.release_conversation(runtime)
     if len(core.conversations) >= core.engram.config.get("max_sessions", 1):
         overflow = core.engram.config.get("session_overflow", SessionOverflow.REJECT)
-        idle = [runtime for user_id, runtime in core.conversations.items() if user_id not in core.active_resolution_user_ids]
+        idle = [runtime for human_id, runtime in core.conversations.items() if human_id not in core.active_resolution_human_ids]
         if overflow == SessionOverflow.REJECT or not idle:
             raise sessions.SessionLimitExceededError("maximum active conversations reached")
         if overflow == SessionOverflow.EXPIRE_OLDEST:
             selected = min(idle, key=lambda runtime: runtime.started_at)
         else:
-            selected = min(idle, key=lambda runtime: core.conversation_activity.get(runtime.user_id, 0.0))
+            selected = min(idle, key=lambda runtime: core.conversation_activity.get(runtime.human_id, 0.0))
         core.release_conversation(selected)
         sessions.delete_session(core.engram, selected.session_id)
 
 
-def get_conversation(core, user_id: str) -> ConversationRuntime:
-    """Return an active user runtime or raise a lifecycle error."""
+def get_conversation(core, human_id: str) -> ConversationRuntime:
+    """Return an active human runtime or raise a lifecycle error."""
     with core.lock:
         core.require_running()
-        conversation_id = normalize_service_user_id(user_id)
+        conversation_id = normalize_service_human_id(human_id)
         if conversation_id not in core.conversations:
-            raise ResourceNotFoundError(f"no active conversation for user_id: {conversation_id}")
+            raise ResourceNotFoundError(f"no active conversation for human_id: {conversation_id}")
         result = core.conversations.get(conversation_id, ())
         if not isinstance(result, ConversationRuntime):
             raise LifecycleError("active conversation runtime is malformed")
         return result
 
 
-def chat(core, user_id: str, text: str, conversation_token: str = "") -> dict:
-    """Submit one chatbot turn to an active user conversation."""
-    conversation_id = normalize_service_user_id(user_id)
+def chat(core, human_id: str, text: str, conversation_token: str = "") -> dict:
+    """Submit one chatbot turn to an active human conversation."""
+    conversation_id = normalize_service_human_id(human_id)
     operation_id = f"chat:{uuid4().hex}"
     with core.resolution_slot(operation_id, conversation_id), core.lock:
         core.require_running()
@@ -149,18 +149,18 @@ def chat(core, user_id: str, text: str, conversation_token: str = "") -> dict:
         return result
 
 
-def inspect_conversation(core, user_id: str, conversation_token: str = "") -> dict:
+def inspect_conversation(core, human_id: str, conversation_token: str = "") -> dict:
     """Inspect one conversation and shared regulated-cache metrics."""
     with core.lock:
         core.require_running()
-        snapshot = core.owned_conversation(user_id, conversation_token).inspect()
+        snapshot = core.owned_conversation(human_id, conversation_token).inspect()
         snapshot["regulated_cache"] = core.regulated_cache_metrics()
         snapshot["core_status"] = core.status()
         return snapshot
 
 
 def add_fact(core, text: str, source_label: str = "") -> dict:
-    """Add one unattributed shared fact without changing user context."""
+    """Add one unattributed shared fact without changing human context."""
     with core.lock:
         core.require_running()
         require_any_text(text, "text", MAX_RESPONSE_BYTES, blank_is_empty=True)
@@ -170,53 +170,53 @@ def add_fact(core, text: str, source_label: str = "") -> dict:
         return result
 
 
-def finish_conversation(core, user_id: str, conversation_token: str = "") -> dict:
+def finish_conversation(core, human_id: str, conversation_token: str = "") -> dict:
     """Return a report without ending or persisting the conversation."""
     with core.lock:
         core.require_running()
-        runtime = core.owned_conversation(user_id, conversation_token)
+        runtime = core.owned_conversation(human_id, conversation_token)
         result = runtime.report()
         return result
 
 
-def stop_conversation(core, user_id: str, conversation_token: str = "") -> dict:
+def stop_conversation(core, human_id: str, conversation_token: str = "") -> dict:
     """End one conversation while leaving the shared core available."""
     with core.lock:
         core.require_running()
-        runtime = core.owned_conversation(user_id, conversation_token)
+        runtime = core.owned_conversation(human_id, conversation_token)
         report = runtime.report()
         core.release_conversation(runtime)
         result = {
             "stopped": True,
-            "user_id": report.get("user_id", ""),
+            "human_id": report.get("human_id", ""),
             "summary": report.get("summary", {}),
         }
         return result
 
 
-def set_predicate(core, user_id: str, name: str, value: str) -> None:
-    """Set one caller-owned predicate on a user context."""
+def set_predicate(core, human_id: str, name: str, value: str) -> None:
+    """Set one caller-owned predicate on a human context."""
     with core.lock:
         core.require_running()
         require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
         max_bytes = MAX_CONTEXTUAL_TOPIC_BYTES if name == "topic" else MAX_METADATA_STRING_BYTES
         require_any_text(value, "value", max_bytes, allow_empty=True)
-        normalized_user_id = normalize_service_user_id(user_id)
+        normalized_human_id = normalize_service_human_id(human_id)
         with core.engram.session_lock:
-            session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
+            session = sessions.get_session(core.engram, normalized_human_id, create_if_missing=True)
             predicates = session.get("predicates", {})
             predicates[name] = value
             session["predicates"] = predicates
 
 
-def get_predicate(core, user_id: str, name: str, default=""):
-    """Read one caller-owned predicate from a user context."""
+def get_predicate(core, human_id: str, name: str, default=""):
+    """Read one caller-owned predicate from a human context."""
     with core.lock:
         core.require_running()
         require_any_text(name, "name", MAX_METADATA_KEY_BYTES, blank_is_empty=True)
         require_any_text(default, "default", MAX_METADATA_STRING_BYTES, allow_empty=True)
-        normalized_user_id = normalize_service_user_id(user_id)
+        normalized_human_id = normalize_service_human_id(human_id)
         with core.engram.session_lock:
-            session = sessions.get_session(core.engram, normalized_user_id, create_if_missing=False)
+            session = sessions.get_session(core.engram, normalized_human_id, create_if_missing=False)
             result = session.get("predicates", {}).get(name, default) if session else default
             return result

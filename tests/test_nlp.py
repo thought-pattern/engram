@@ -95,7 +95,7 @@ def test_fact_extractor_query_patterns_are():
 def test_fact_learning_integration_learn_and_retrieve_fact():
     """Test that learned facts can be retrieved."""
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     # Add catch-all pattern for learning to work
     engram.store("default", pattern="*", tier=Tier.STATIC)
 
@@ -117,7 +117,7 @@ def test_fact_learning_integration_learn_and_retrieve_fact():
 def test_fact_learning_integration_learn_and_retrieve_with_article():
     """Test facts with articles."""
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     # Add catch-all pattern for learning to work
     engram.store("default", pattern="*", tier=Tier.STATIC)
 

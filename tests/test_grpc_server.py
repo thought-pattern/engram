@@ -96,28 +96,28 @@ def internal_trailing_metadata(error) -> dict[str, str]:
 
 def test_conversation_fact_predicate_report_and_health_protocol() -> None:
     with running_server(GrpcCore()) as (_, channel, stub):
-        alice = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice", random_seed=7)))
-        carol = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Carol")))
-        first = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Sushi is good.")))
-        recalled = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Carol", text="What's good?")))
-        own_recall = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="What's good?")))
+        alice = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice", random_seed=7)))
+        carol = as_dict(stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Carol")))
+        first = as_dict(stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text="Sushi is good.")))
+        recalled = as_dict(stub.Chat(engram_pb2.ChatRequest(human_id="Carol", text="What's good?")))
+        own_recall = as_dict(stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text="What's good?")))
 
-        predicate = stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="Alice", name="mood", value="curious"))
-        read_predicate = stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="Alice", name="mood"))
+        predicate = stub.SetPredicate(engram_pb2.SetPredicateRequest(human_id="Alice", name="mood", value="curious"))
+        read_predicate = stub.GetPredicate(engram_pb2.GetPredicateRequest(human_id="Alice", name="mood"))
         fact = as_dict(stub.AddFact(engram_pb2.AddFactRequest(text="Tokyo is the capital of Japan.", source_label="research")))
-        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="Carol")))
-        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="Alice")))
+        inspected = as_dict(stub.InspectConversation(engram_pb2.HumanRequest(human_id="Carol")))
+        report = as_dict(stub.FinishConversation(engram_pb2.HumanRequest(human_id="Alice")))
         status = as_dict(stub.GetStatus(empty_pb2.Empty()))
 
-        assert alice.get("user_id", "") == "Alice"
-        assert carol.get("user_id", "") == "Carol"
+        assert alice.get("human_id", "") == "Alice"
+        assert carol.get("human_id", "") == "Carol"
         assert first.get("turn", 0) == 1
         assert recalled.get("response", "") != "Sushi is good."
         assert own_recall.get("response", "") == "Sushi is good."
         assert predicate.value == "curious"
         assert read_predicate.value == "curious"
-        assert "introduced_by_user_id" in fact
-        assert fact.get("introduced_by_user_id", "") == ""
+        assert "introduced_by_human_id" in fact
+        assert fact.get("introduced_by_human_id", "") == ""
         assert fact.get("source_label", "") == "research"
         assert inspected.get("session", {}).get("previous_response", "") == recalled.get("response", "")
         assert inspected.get("learned_dynamic", []) == []
@@ -127,7 +127,7 @@ def test_conversation_fact_predicate_report_and_health_protocol() -> None:
         assert status.get("healthy", False) is True
         assert health_status(channel) == health_pb2.HealthCheckResponse.SERVING
 
-        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="Alice")))
+        stopped = as_dict(stub.StopConversation(engram_pb2.HumanRequest(human_id="Alice")))
         assert stopped.get("stopped", False) is True
         assert as_dict(stub.GetStatus(empty_pb2.Empty())).get("active_conversations", 0) == 1
 
@@ -141,10 +141,10 @@ def test_every_call_ends_by_letting_a_lost_graph_connection_reconnect() -> None:
             super().reconnect_graph_after_turn()
 
     with running_server(ReconnectRecordingCore()) as (_, _, stub):
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         stub.AddFact(engram_pb2.AddFactRequest(text="Tokyo is the capital of Japan."))
         # A chat turn ends its resolution slot, then its call.
-        stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Hello"))
+        stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text="Hello"))
 
     assert calls == [0, 0, 0, 0]
 
@@ -156,22 +156,22 @@ def test_unknown_user_wire_lifecycle_uses_explicit_zero() -> None:
             stub.StartConversation(engram_pb2.StartConversationRequest(initial_bot_text="Unknown context."), timeout=5)
         )
         token = started.get("conversation_token", "")
-        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(user_id="", text="Hello", conversation_token=token), timeout=5))
-        stub.SetPredicate(engram_pb2.SetPredicateRequest(user_id="", name="mood", value="curious"), timeout=5)
-        assert stub.GetPredicate(engram_pb2.GetPredicateRequest(user_id="0", name="mood"), timeout=5).value == "curious"
-        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
-        report = as_dict(stub.FinishConversation(engram_pb2.UserRequest(user_id="", conversation_token=token), timeout=5))
-        assert core.get_conversation("0").user_id == "0"
+        turn = as_dict(stub.Chat(engram_pb2.ChatRequest(human_id="", text="Hello", conversation_token=token), timeout=5))
+        stub.SetPredicate(engram_pb2.SetPredicateRequest(human_id="", name="mood", value="curious"), timeout=5)
+        assert stub.GetPredicate(engram_pb2.GetPredicateRequest(human_id="0", name="mood"), timeout=5).value == "curious"
+        inspected = as_dict(stub.InspectConversation(engram_pb2.HumanRequest(human_id="0", conversation_token=token), timeout=5))
+        report = as_dict(stub.FinishConversation(engram_pb2.HumanRequest(human_id="", conversation_token=token), timeout=5))
+        assert core.get_conversation("0").human_id == "0"
         with pytest_raises(grpc_RpcError) as unowned:
-            stub.StopConversation(engram_pb2.UserRequest(user_id="0"), timeout=5)
+            stub.StopConversation(engram_pb2.HumanRequest(human_id="0"), timeout=5)
         assert unowned.value.code() == grpc_StatusCode.PERMISSION_DENIED
-        stopped = as_dict(stub.StopConversation(engram_pb2.UserRequest(user_id="0", conversation_token=token), timeout=5))
+        stopped = as_dict(stub.StopConversation(engram_pb2.HumanRequest(human_id="0", conversation_token=token), timeout=5))
 
-        assert started.get("user_id", "") == "0"
-        assert turn.get("user_id", "") == "0"
-        assert inspected.get("user_id", "") == "0"
-        assert report.get("user_id", "") == "0"
-        assert stopped.get("user_id", "") == "0"
+        assert started.get("human_id", "") == "0"
+        assert turn.get("human_id", "") == "0"
+        assert inspected.get("human_id", "") == "0"
+        assert report.get("human_id", "") == "0"
+        assert stopped.get("human_id", "") == "0"
         assert turn.get("context_changes", {}).get("previous_response", {}).get("before", "") == "Unknown context."
         assert inspected.get("session", {}).get("previous_response", "") == turn.get("response", "")
         assert "0" not in core.engram.sessions
@@ -186,7 +186,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                     request="When are you open?",
                     response="Nine to five.",
                     request_id="learn-1",
-                    user_id="Alice",
+                    human_id="Alice",
                     namespace="support",
                     metadata=to_metadata_map({"actor_model": "actor-7"}),
                 )
@@ -197,7 +197,7 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
                 engram_pb2.ProposeRequest(
                     request="When are you open?",
                     request_id="proposal-1",
-                    user_id="Carol",
+                    human_id="Carol",
                     namespace="support",
                     required_metadata=to_metadata_map({"actor_model": "actor-7"}),
                 )
@@ -239,12 +239,12 @@ def test_regulated_cache_protocol_and_error_mapping() -> None:
         assert internal_trailing_metadata(invalid.value).get("engram-error-type", "") == "InvalidRequestError"
 
         with pytest_raises(grpc_RpcError) as missing:
-            stub.Chat(engram_pb2.ChatRequest(user_id="Missing", text="hello"))
+            stub.Chat(engram_pb2.ChatRequest(human_id="Missing", text="hello"))
         assert missing.value.code() == grpc_StatusCode.NOT_FOUND
 
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         with pytest_raises(grpc_RpcError) as conflict:
-            stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+            stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         assert conflict.value.code() == grpc_StatusCode.ABORTED
 
         core.close()
@@ -264,7 +264,7 @@ def test_learn_response_restores_integral_support_revisions_from_struct() -> Non
                     request="Which response has durable support?",
                     response="This response has durable support.",
                     request_id="learn-struct-support-integers",
-                    user_id="",
+                    human_id="",
                     metadata=to_metadata_map({"support": [ASSERTION_REFERENCE_A]}),
                 )
             )
@@ -290,7 +290,7 @@ def test_evidence_service_delegates_unified_resolution_to_the_shared_core() -> N
             engram_pb2.ResolveEvidenceRequest(
                 request="What is served through unified resolution?",
                 request_id="resolve-evidence",
-                user_id="Alice",
+                human_id="Alice",
                 configured_resolvers=("exact",),
                 accept_exact=True,
             )
@@ -397,9 +397,9 @@ def test_session_limit_is_resource_exhausted() -> None:
             super().__init__(Engram(config=engram_config(max_sessions=1, session_overflow=SessionOverflow.REJECT)))
 
     with running_server(LimitedCore()) as (_, _, stub):
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         with pytest_raises(grpc_RpcError) as failure:
-            stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Bob"))
+            stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Bob"))
 
     # The core's conversation registry refuses the second start before any session is created.
     assert failure.value.code() == grpc_StatusCode.RESOURCE_EXHAUSTED
@@ -413,12 +413,12 @@ def test_chat_validation_is_invalid_argument_but_an_internal_value_error_is_inte
         raise ValueError(secret)
 
     with caplog.at_level(ERROR, logger="engram.grpc_server"), running_server(GrpcCore()) as (_, _, stub):
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         with pytest_raises(grpc_RpcError) as invalid:
-            stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text=" "))
+            stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text=" "))
         monkeypatch.setattr("engram.conversation.pipeline.respond", fail)
         with pytest_raises(grpc_RpcError) as internal:
-            stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="Hello"))
+            stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text="Hello"))
 
     assert invalid.value.code() == grpc_StatusCode.INVALID_ARGUMENT
     assert invalid.value.details() == "text must be one non-empty string"
@@ -510,7 +510,7 @@ def test_concurrent_proposal_resolution_has_one_result_and_consistent_cross_adap
         python_view = core.inspect_conversation("0", conversation_token=mcp.active_conversation_token).get("session", {})
         mcp_view = mcp.inspect().get("session", {})
         grpc_view = as_dict(
-            stub.InspectConversation(engram_pb2.UserRequest(user_id="0", conversation_token=mcp.active_conversation_token))
+            stub.InspectConversation(engram_pb2.HumanRequest(human_id="0", conversation_token=mcp.active_conversation_token))
         ).get("session", {})
 
         assert all("idempotent" in result for result in results)
@@ -552,8 +552,8 @@ def test_grpc_restart_begins_with_empty_process_memory() -> None:
 
     restarted_core = GrpcCore()
     with running_server(restarted_core) as (_, _, restarted_stub):
-        started = as_dict(restarted_stub.StartConversation(engram_pb2.StartConversationRequest(user_id="static-after-restart")))
-        static_turn = as_dict(restarted_stub.Chat(engram_pb2.ChatRequest(user_id="static-after-restart", text="hello")))
+        started = as_dict(restarted_stub.StartConversation(engram_pb2.StartConversationRequest(human_id="static-after-restart")))
+        static_turn = as_dict(restarted_stub.Chat(engram_pb2.ChatRequest(human_id="static-after-restart", text="hello")))
         assert started.get("statement_count", 0) == 2
         assert static_turn.get("response", "") == "Hello!"
         proposal = as_dict(
@@ -582,22 +582,22 @@ def test_deadline_does_not_proposition_to_roll_back_started_core_work() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
+    def delayed_chat(human_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text, conversation_token=conversation_token)
+        result = original_chat(human_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat
     with running_server(core) as (_, _, stub):
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
         with pytest_raises(grpc_RpcError) as deadline:
-            stub.Chat(engram_pb2.ChatRequest(user_id="Alice", text="hello"), timeout=0.05)
+            stub.Chat(engram_pb2.ChatRequest(human_id="Alice", text="hello"), timeout=0.05)
         assert deadline.value.code() == grpc_StatusCode.DEADLINE_EXCEEDED
         assert entered.is_set()
 
         release.set()
-        inspected = as_dict(stub.InspectConversation(engram_pb2.UserRequest(user_id="Alice"), timeout=5))
+        inspected = as_dict(stub.InspectConversation(engram_pb2.HumanRequest(human_id="Alice"), timeout=5))
         assert inspected.get("turn_count", 0) == 1
         assert inspected.get("latest_turn", {}).get("response", "") == "Hello!"
 
@@ -608,18 +608,18 @@ def test_graceful_shutdown_drains_an_in_flight_rpc() -> None:
     release = threading_Event()
     original_chat = core.chat
 
-    def delayed_chat(user_id: str, text: str, conversation_token: str = "") -> dict:
+    def delayed_chat(human_id: str, text: str, conversation_token: str = "") -> dict:
         entered.set()
         assert release.wait(timeout=5)
-        result = original_chat(user_id, text, conversation_token=conversation_token)
+        result = original_chat(human_id, text, conversation_token=conversation_token)
         return result
 
     core.chat = delayed_chat
     server = EngramGrpcServer(core, bind_address="127.0.0.1:0")
     channel = grpc_insecure_channel(server.start())
     stub = EngramServiceStub(channel)
-    stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Alice"))
-    chat_future = stub.Chat.future(engram_pb2.ChatRequest(user_id="Alice", text="hello"), timeout=5)
+    stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Alice"))
+    chat_future = stub.Chat.future(engram_pb2.ChatRequest(human_id="Alice", text="hello"), timeout=5)
     assert entered.wait(timeout=5)
 
     with ThreadPoolExecutor(max_workers=1) as executor:

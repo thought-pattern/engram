@@ -146,9 +146,9 @@ def test_user_aware_chat_missing_user_uses_default_context() -> None:
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
 
-    result = pipeline.chat(engram, "hello", user_id="")
+    result = pipeline.chat(engram, "hello", human_id="")
 
-    assert result.get("user_id", "") == "0"
+    assert result.get("human_id", "") == "0"
     assert "0" in engram.sessions
 
 
@@ -156,18 +156,18 @@ def test_user_aware_chat_context_and_learned_facts_are_isolated() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
-    alice = pipeline.chat(engram, "Sushi is good.", user_id="Alice")
-    carol = pipeline.chat(engram, "What's good?", user_id="Carol")
-    carol_keywords = pipeline.chat(engram, "sushi good", user_id="Carol")
-    alice_again = pipeline.chat(engram, "What's good?", user_id="Alice")
+    alice = pipeline.chat(engram, "Sushi is good.", human_id="Alice")
+    carol = pipeline.chat(engram, "What's good?", human_id="Carol")
+    carol_keywords = pipeline.chat(engram, "sushi good", human_id="Carol")
+    alice_again = pipeline.chat(engram, "What's good?", human_id="Alice")
 
     assert alice.get("source", "") == "pattern"
     assert carol.get("response", "") == "Go on."
     assert "Sushi" not in carol_keywords.get("response", "")
-    assert all(match.get("introduced_by_user_id", "") != "Alice" for match, _ in carol_keywords.get("matches", []))
+    assert all(match.get("introduced_by_human_id", "") != "Alice" for match, _ in carol_keywords.get("matches", []))
     assert alice_again.get("response", "") == "Sushi is good."
     learned_ids = engram.pattern_statements.get("SUSHI", [])
-    assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["Alice"]
+    assert [engram.get_statement(learned_id).get("introduced_by_human_id", "") for learned_id in learned_ids] == ["Alice"]
     assert engram.sessions.get("Alice", {}).get("input_history", []) == ["What's good?", "Sushi is good."]
     assert engram.sessions.get("Carol", {}).get("input_history", []) == ["sushi good", "What's good?"]
 
@@ -176,8 +176,8 @@ def test_user_aware_chat_user_labels_are_case_sensitive_and_caller_owned() -> No
     engram = Engram()
     engram.store("Hello!", pattern="HELLO", tier=Tier.STATIC)
 
-    pipeline.chat(engram, "hello", user_id="Alice")
-    pipeline.chat(engram, "hello", user_id="alice")
+    pipeline.chat(engram, "hello", human_id="Alice")
+    pipeline.chat(engram, "hello", human_id="alice")
 
     assert "Alice" in engram.sessions
     assert "alice" in engram.sessions
@@ -280,7 +280,7 @@ def test_conversational_composition_chat_says_every_matched_sentence() -> None:
     engram.store("First reply.", pattern="FIRST", tier=Tier.STATIC)
     engram.store("Second reply.", pattern="SECOND", tier=Tier.STATIC)
 
-    result = pipeline.chat(engram, "First. Second.", user_id="speaker")
+    result = pipeline.chat(engram, "First. Second.", human_id="speaker")
 
     assert result.get("response", "") == "First reply. Second reply."
     assert result.get("pattern", "") == "SECOND"
@@ -301,11 +301,11 @@ def test_conversational_composition_repetition_feedback_keeps_the_category() -> 
     engram = Engram()
     engram.store("Why do you say that?", pattern="*", tier=Tier.STATIC)
 
-    pipeline.chat(engram, "Limited time creates urgency.", user_id="speaker")
+    pipeline.chat(engram, "Limited time creates urgency.", human_id="speaker")
     result = pipeline.chat(
         engram,
         "I just explained why. You're asking the same question.",
-        user_id="speaker",
+        human_id="speaker",
     )
 
     assert result.get("response", "") == "Why do you say that? Why do you say that?"

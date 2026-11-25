@@ -1,6 +1,6 @@
 # Copyright 2025-2026 Thought Pattern AI, LLC
 # SPDX-License-Identifier: Apache-2.0
-"""Count the vector index's similarities above 1 on a configured graph, read-only (D-1257).
+"""Count the vector index's similarities above 1 on a configured graph, read-only.
 
 The fixed vector statements read a similarity from the cosine distance `vector_search.search` returns. For a query whose
 embedding equals or nearly equals a stored one, that distance can fall a float32 epsilon below 0 from single-precision
@@ -9,8 +9,7 @@ distance as 0 (`VECTOR_SIMILARITY`). The probe takes the stored embeddings of `-
 evenly by identifier as query vectors and prints counts only, all read through the fixed statements: the index metric,
 the index rows of each query's `--window` nearest whose similarity exceeds 1, the projection rows above 1 and how many of
 those are the query's own Proposition, the largest excess, and the queries whose projection read the codec refuses, both
-as the first window alone (the read before D-1211) and widened. Before D-1257 the first two counts are nonzero and the
-refusals follow; after it all are 0. Nothing is written.
+with the first window and with widening. The corrected projection must carry no similarity above 1. Nothing is written.
 
 `PYTHONPATH=component/engram/engram python3 component/engram/engram/scripts/probe_vector_similarity.py --config config.yml`
 """

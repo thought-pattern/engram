@@ -624,7 +624,7 @@ def nearest_passing_rows(connection, statement: str, parameters: dict, limit: in
     The index answers with the window's nearest Propositions of every shape and the statement's filters drop those
     that do not pass, so the window starts at ``limit`` and doubles until ``limit`` rows pass or fewer of the window's
     index rows than the window reach the similarity floor, when the index holds no further candidate. The rows are
-    then the nearest passing ones, as if the filters applied before the nearest were taken (D-1211).
+    then the nearest passing ones, as if the filters applied before the nearest were taken.
     """
     reach_parameters = {
         "index_name": parameters.get("index_name", ""),

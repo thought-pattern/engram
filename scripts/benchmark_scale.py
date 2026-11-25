@@ -56,7 +56,7 @@ SCALE_ARTIFACT_PROVENANCE = {"source_label": "scale:benchmark", "caller_id": "en
 RECEIPTS = [10_000]
 
 
-def scale_engram_config(capacity: int, learn_user_facts: bool, sparse_enabled: bool) -> dict:
+def scale_engram_config(capacity: int, learn_human_facts: bool, sparse_enabled: bool) -> dict:
     """Build one scale engine configuration.
 
     Every scale engine disables polishing and lexical expansion so that only the measured
@@ -64,7 +64,7 @@ def scale_engram_config(capacity: int, learn_user_facts: bool, sparse_enabled: b
     """
     config = engram_config(
         capacity=capacity,
-        learn_user_facts=learn_user_facts,
+        learn_human_facts=learn_human_facts,
         sparse=sparse_config(enabled=sparse_enabled),
         polish_responses=False,
         use_lemmatization=False,
@@ -229,8 +229,8 @@ def pattern_scenarios(size: int, iterations: int) -> dict:
     # Two engines at capacity, each a catch-all plus size pattern statements: STATIC statements
     # to retire, and DYNAMIC ones with fact learning so a learning chat turn must evict.
     engines = []
-    for tier, learn_user_facts in ((Tier.STATIC, False), (Tier.DYNAMIC, True)):
-        engine = Engram(config=scale_engram_config(size + 1, learn_user_facts, False))
+    for tier, learn_human_facts in ((Tier.STATIC, False), (Tier.DYNAMIC, True)):
+        engine = Engram(config=scale_engram_config(size + 1, learn_human_facts, False))
         engine.store("Go on.", pattern="*", tier=Tier.STATIC)
         stored_ids = [engine.store(f"Scale reply {index}.", pattern=f"SCALE PATTERN {index} *", tier=tier) for index in range(size)]
         engines.append((engine, stored_ids))

@@ -27,7 +27,7 @@ session_overflow: lru # reject | expire_oldest | lru
 # --- Input processing ---
 expand_contractions: true
 retrieval_rewrites_enabled: false # Retrieval-only Section 11 rules; does not execute AIML templates
-learn_user_facts: true # Learn shared facts with per-user attribution
+learn_human_facts: true # Learn shared facts with per human attribution
 srai_depth_limit: 100
 
 # --- Eviction ---

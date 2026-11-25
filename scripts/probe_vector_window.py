@@ -1,26 +1,23 @@
-"""Show Engram's vector reads returning the nearest passing facts (D-1211) and marking generic facts (D-1212), read-only.
+"""Show Engram's vector reads returning the nearest passing facts and marking generic facts, read-only.
 
 Engram's two vector reads (`MemGraphConnection.vector_search_propositions` and
 `vector_search_proposition_projections`) ask the index for a window of nearest Propositions and filter them after;
 `nearest_passing_rows` widens the window until the asked number pass or the index holds no further row at the
 similarity floor. A generic predicate's fact (generic_relation, generic_event) carries a nonempty `predicate_surface`,
 and the projection reads `predicate_canonical` false for it, so the evidence decision refuses it as retrieval-only.
-Engram's fact recall phrases a generic fact with that surface, not the generic Predicate's label (D-1256).
+Engram's fact recall phrases a generic fact with that surface.
 
 Two modes, both printing counts only:
 
 - With no `--config`: a stand-in index with no graph. 400 Propositions in falling similarity, every fourth of a shape the
-  reads keep, the last 100 below the floor. Each read asks for 5, 50 and 100 facts; the first window alone (the read
-  before D-1211) and the widened read are counted, with the index reads each made. Recall wording: three stand-in facts,
-  two generic with their own surface and one curated, phrased as the fact-recall return reads them before D-1256 (the
-  Predicate's label) and now.
-- With `--config` naming a Tapestry config.yml: its `memgraph` section opens a read-only Engram connection to that graph.
+  reads keep, the last 100 below the floor. Each read asks for 5, 50 and 100 facts. The probe counts rows and index reads
+  for both the first window and the widened read. The wording control runs two generic facts and a curated one through
+  both the predicate-label-only expression and the current recall expression.
+- With `--config` naming a configuration file: its `memgraph` section opens a read-only Engram connection to that graph.
   The query vectors are the stored embeddings of `--queries` active Propositions spread evenly by identifier. For each
-  query and each asked count the probe reports, for both reads, the rows the first window alone returns (the read before
-  D-1211) and the rows the widened read returns, and among each the generic facts (nonempty `predicate_surface`); for
-  the projection read it also counts generic rows marked `predicate_canonical` true (0 after D-1212; before it every
-  row was marked true). It also counts, among the widened facts, the generic ones the recall return words with the
-  generic Predicate's label (0 after D-1256; before it every generic fact was). Nothing is written.
+  query and each asked count the probe reports the first-window and widened rows, including generic facts with a
+  nonempty `predicate_surface`. It counts generic projection rows marked canonical and widened facts recalled with a
+  generic Predicate's label. Both counts should be zero. Nothing is written.
 
 `PYTHONPATH=component/engram/engram python3 component/engram/engram/scripts/probe_vector_window.py [--config config.yml]`
 """
@@ -117,7 +114,7 @@ def recall_predicate(fact: dict, statement: str) -> str:
 
 
 def wording_report() -> dict:
-    """Phrase the stand-in facts as the recall return read them before D-1256 (the Predicate's label) and now."""
+    """Phrase the stand-in facts with the predicate label alone and with the current recall expression."""
     before_statement = "coalesce(predicate.label, predicate.canonical_id) AS predicate"
     report = {"facts": len(WORDING_FACTS), "generic": sum(1 for fact in WORDING_FACTS if fact.get("predicate_surface", ""))}
     for name, statement in (("before", before_statement), ("now", GRAPH_FACT_RETURN)):

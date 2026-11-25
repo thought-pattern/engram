@@ -23,7 +23,7 @@ Usage:
 from math import isfinite as math_isfinite
 
 from engram import sessions as sessions_mod
-from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_USER_ID
+from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_HUMAN_ID
 from engram.constants_artifacts import MAX_RESPONSE_BYTES
 from engram.constants_language import QUESTION_WORDS
 from engram.pattern import PatternMatcher
@@ -123,7 +123,7 @@ def respond(
     llm_fn=(),
     high_confidence: object = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
     context_limit: object = DEFAULT_PIPELINE_CONTEXT_LIMIT,
-    user_id: str = "",
+    human_id: str = "",
     evaluation_time: str = "",
 ) -> dict:
     """Answer text through the conversational strategy: pattern, statement, then LLM.
@@ -144,7 +144,7 @@ def respond(
 
     Args:
         engram: Engram instance.
-        text: User input text.
+        text: Human input text.
         context_id: Optional conversation context for turn state.
         llm_fn: Optional callable (text, context_statements) -> response str.
             Its response must be text of at most MAX_RESPONSE_BYTES.
@@ -152,8 +152,8 @@ def respond(
             answers without the LLM (a finite number from 0.0 to 1.0).
         context_limit: Maximum retrieved statements passed to llm_fn (a
             non-negative integer).
-        user_id: The speaker; empty means the anonymous user "0". Facts the
-            turn teaches belong to the speaker, and no other person's facts
+        human_id: The speaker; empty means the anonymous human "0". Facts the
+            turn teaches belong to the speaker, and no other human's facts
             answer or reach llm_fn.
         evaluation_time: Optional canonical UTC timestamp used by graph
             recall for this turn.
@@ -165,7 +165,7 @@ def respond(
         and no llm_fn). matches and keywords carry the keyword retrieval
         outcome so a "none" caller can still inspect what was found; pattern
         and captured carry the pattern-match outcome for debugging ("" / []
-        off the pattern path). user_id is the turn's context, and
+        off the pattern path). human_id is the turn's context, and
         dialogue_act, active_topic, entities and fact_admissions carry that
         session's latest discourse state ("" / [] without a session).
     """
@@ -181,7 +181,7 @@ def respond(
 
     # Tier 1: a matched category, including a pure wildcard, or graph recall.
     # The configured fallback text is not a category answer.
-    speaker = sessions_mod.normalize_user_id(user_id)
+    speaker = sessions_mod.normalize_human_id(human_id)
     with engram.statement_lock:
         turn_start_sequence = engram.next_statement_sequence
     current_that = ""
@@ -198,7 +198,7 @@ def respond(
     pattern_result = engram.pattern_query(
         text,
         context_id=context_id,
-        user_id=user_id,
+        human_id=human_id,
         include_graph=graph_enabled,
         include_fallback=False,
         evaluation_time=evaluation_time,
@@ -221,7 +221,7 @@ def respond(
                 "keywords": [],
                 "pattern": matched_pattern,
                 "captured": list(captured),
-                "user_id": context_id,
+                "human_id": context_id,
                 "dialogue_act": "",
                 "active_topic": "",
                 "entities": [],
@@ -289,7 +289,7 @@ def respond(
                     "keywords": list(keywords),
                     "pattern": "",
                     "captured": [],
-                    "user_id": context_id,
+                    "human_id": context_id,
                     "dialogue_act": "",
                     "active_topic": "",
                     "entities": [],
@@ -313,7 +313,7 @@ def respond(
                 "keywords": list(keywords),
                 "pattern": "",
                 "captured": [],
-                "user_id": context_id,
+                "human_id": context_id,
                 "dialogue_act": "",
                 "active_topic": "",
                 "entities": [],
@@ -333,7 +333,7 @@ def respond(
         "keywords": list(keywords),
         "pattern": "",
         "captured": [],
-        "user_id": context_id,
+        "human_id": context_id,
         "dialogue_act": "",
         "active_topic": "",
         "entities": [],
@@ -346,22 +346,22 @@ def respond(
 def chat(
     engram,
     text: str,
-    user_id: str = DEFAULT_USER_ID,
+    human_id: str = DEFAULT_HUMAN_ID,
     llm_fn=(),
     high_confidence: float = DEFAULT_PIPELINE_HIGH_CONFIDENCE,
     context_limit: int = DEFAULT_PIPELINE_CONTEXT_LIMIT,
     evaluation_time: str = "",
 ) -> dict:
-    """Run the chatbot for one caller-owned user context."""
-    normalized_user_id = sessions_mod.normalize_user_id(user_id)
+    """Run the chatbot for one caller-owned human context."""
+    normalized_human_id = sessions_mod.normalize_human_id(human_id)
     result = respond(
         engram,
         text,
-        context_id=normalized_user_id,
+        context_id=normalized_human_id,
         llm_fn=llm_fn,
         high_confidence=high_confidence,
         context_limit=context_limit,
-        user_id=normalized_user_id,
+        human_id=normalized_human_id,
         evaluation_time=evaluation_time,
     )
     return result

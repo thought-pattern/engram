@@ -87,14 +87,14 @@ def test_concurrent_user_chat_contexts_are_isolated() -> None:
 
     def worker(n: int) -> None:
         try:
-            user_id = f"user-{n}"
+            human_id = f"user-{n}"
             for i in range(ITERATIONS):
                 result = pipeline.chat(
                     engram,
-                    f"hello {user_id} item {i}",
-                    user_id=user_id,
+                    f"hello {human_id} item {i}",
+                    human_id=human_id,
                 )
-                assert result.get("user_id", "") == user_id
+                assert result.get("human_id", "") == human_id
         except Exception as err:
             errors.append(err)
 
@@ -166,7 +166,7 @@ def test_concurrent_turns_store_one_copy_of_the_same_fact() -> None:
 
     def worker() -> None:
         try:
-            pipeline.chat(engram, "Sushi is good.", user_id="Robin")
+            pipeline.chat(engram, "Sushi is good.", human_id="Robin")
         except Exception as err:
             errors.append(err)
 
@@ -180,4 +180,4 @@ def test_concurrent_turns_store_one_copy_of_the_same_fact() -> None:
     assert all("tier" in statement for statement in engram.statements)
     learned = [statement for statement in engram.statements if statement.get("tier", Tier.STATIC) == Tier.DYNAMIC]
     assert len(learned) == 1
-    assert engram.pattern_query("What's good?", user_id="Robin")[2] == "Sushi is good."
+    assert engram.pattern_query("What's good?", human_id="Robin")[2] == "Sushi is good."

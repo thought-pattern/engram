@@ -8,7 +8,7 @@ of graph records supports. Each function that takes ``core`` is bound on
 from copy import deepcopy
 
 from engram import sessions
-from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_USER_ID, EMPTY_METADATA
+from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_HUMAN_ID, EMPTY_METADATA
 from engram.constants_artifacts import (
     MAX_ARTIFACT_ID_BYTES,
     MAX_RESPONSE_BYTES,
@@ -22,7 +22,7 @@ from engram.constants_mutations import MAX_REQUEST_ID_BYTES
 from engram.errors import ConflictError, InvalidRequestError, LifecycleError, ResourceNotFoundError
 from engram.mutations import mutation_receipt_to_dict
 from engram.responses import response_mutation_result_to_dict
-from engram.service_requests import normalize_service_user_id, require_cache_request
+from engram.service_requests import normalize_service_human_id, require_cache_request
 from engram.text import normalize
 from engram.validation import require_any_text
 
@@ -32,7 +32,7 @@ def learn_response(
     request: str,
     response: str,
     request_id: str,
-    user_id: str = DEFAULT_USER_ID,
+    human_id: str = DEFAULT_HUMAN_ID,
     namespace: str = "",
     context_fingerprint: str = "",
     source_label: str = DEFAULT_LEARNED_SOURCE_LABEL,
@@ -52,15 +52,15 @@ def learn_response(
         if not isinstance(metadata, dict):
             raise InvalidRequestError("metadata must be an object")
         metadata = dict(metadata)
-        normalized_user_id = normalize_service_user_id(user_id)
-        if normalized_user_id != DEFAULT_USER_ID and request_id not in core.learn_requests:
+        normalized_human_id = normalize_service_human_id(human_id)
+        if normalized_human_id != DEFAULT_HUMAN_ID and request_id not in core.learn_requests:
             with core.engram.session_lock:
-                sessions.require_session_available(core.engram, normalized_user_id)
+                sessions.require_session_available(core.engram, normalized_human_id)
         mutation = core.response_mutations.learn_response(
             request,
             response,
             request_id,
-            normalized_user_id,
+            normalized_human_id,
             namespace,
             context_fingerprint,
             source_label,
@@ -82,10 +82,10 @@ def learn_response(
         learned = result_code != "REJECTED_CAPACITY"
         if learned and not replayed:
             core.engram.eviction_count += len(evicted_statement_ids)
-        if learned and not replayed and normalized_user_id != DEFAULT_USER_ID:
+        if learned and not replayed and normalized_human_id != DEFAULT_HUMAN_ID:
             with core.engram.session_lock:
-                sessions.get_session(core.engram, normalized_user_id, create_if_missing=True)
-                sessions.update_session_context(core.engram, normalized_user_id, response)
+                sessions.get_session(core.engram, normalized_human_id, create_if_missing=True)
+                sessions.update_session_context(core.engram, normalized_human_id, response)
         if not replayed:
             core.learn_requests[request_id] = {"statement_id": receipt_statement_id}
             core.enforce_transient_bound()
@@ -102,7 +102,7 @@ def learn_response(
             "statement_id": receipt_statement_id,
             "action": action,
             "request_id": request_id,
-            "user_id": normalized_user_id,
+            "human_id": normalized_human_id,
             "namespace": namespace,
             "context_fingerprint": context_fingerprint,
             "source_label": source_label,

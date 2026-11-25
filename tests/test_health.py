@@ -78,10 +78,10 @@ def test_page_serves_the_status_snapshot_and_counts_calls_without_conversation_c
         assert fetch(port, "/health/live")[0] == 200 and fetch(port, "/health/ready")[0] == 200
         assert fetch(port, "/missing")[0] == 404
         before = loads(fetch(port, "/api/health")[2])
-        stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Dorothea"))
-        stub.Chat(engram_pb2.ChatRequest(user_id="Dorothea", text="my secret word is marmalade"))
+        stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Dorothea"))
+        stub.Chat(engram_pb2.ChatRequest(human_id="Dorothea", text="my secret word is marmalade"))
         with pytest_raises(grpc_RpcError) as missing:
-            stub.Chat(engram_pb2.ChatRequest(user_id="Bartholomew", text="hello"))
+            stub.Chat(engram_pb2.ChatRequest(human_id="Bartholomew", text="hello"))
         assert missing.value.code() == grpc_StatusCode.NOT_FOUND
         status = json_format.MessageToDict(stub.GetStatus(empty_pb2.Empty()), preserving_proto_field_name=True)
         status_code, _, raw = fetch(port, "/api/health")
@@ -109,7 +109,7 @@ def test_a_port_in_use_is_reported_while_engram_keeps_serving():
         occupant.listen()
         port = occupant.getsockname()[1]
         with running(static_core(), port) as (server, stub):
-            stub.StartConversation(engram_pb2.StartConversationRequest(user_id="Dorothea"))
+            stub.StartConversation(engram_pb2.StartConversationRequest(human_id="Dorothea"))
             status = json_format.MessageToDict(stub.GetStatus(empty_pb2.Empty()), preserving_proto_field_name=True)
             assert server.health_page.listener is False
     http = status.get("health", {}).get("http", {})

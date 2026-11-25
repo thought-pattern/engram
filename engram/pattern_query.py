@@ -54,8 +54,8 @@ logger = logging_getLogger("engram.core")
 def match_for(engram, owner: str, text: str, that: str = "", topic: str = "", *, include_spans: bool = False) -> tuple:
     """Match one sentence in ``owner``'s chat; return (owner of the match, match) or ()."""
     scoped = [("", engram.pattern_matcher)]
-    if owner in engram.person_matchers:
-        scoped.insert(0, (owner, engram.person_matchers.get(owner, engram.pattern_matcher)))
+    if owner in engram.human_matchers:
+        scoped.insert(0, (owner, engram.human_matchers.get(owner, engram.pattern_matcher)))
     found = match_first(tuple(matcher for _, matcher in scoped), text, that=that, topic=topic, include_spans=include_spans)
     if len(found) != 2:
         result = ()
@@ -75,7 +75,7 @@ def statement_for_match(engram, matched_pattern: str, matched_topic: str, matche
     priority wins, ties going to the earliest stored. The caller holds
     statement_lock.
     """
-    matcher = engram.person_matchers.get(owner, engram.pattern_matcher) if owner else engram.pattern_matcher
+    matcher = engram.human_matchers.get(owner, engram.pattern_matcher) if owner else engram.pattern_matcher
     target_key = PatternMatcher.path_key({"pattern": matched_pattern, "that": matched_that, "topic": matched_topic})
     path_entries = matcher.path_entries(matched_pattern, that=matched_that, topic=matched_topic)
     candidate_patterns: list[str] = []
@@ -93,7 +93,7 @@ def statement_for_match(engram, matched_pattern: str, matched_topic: str, matche
                 continue
             seen_ids.add(statement_id)
             stmt = engram.statement_by_id.get(statement_id, {})
-            if not stmt or stmt.get("introduced_by_user_id", "") != owner:
+            if not stmt or stmt.get("introduced_by_human_id", "") != owner:
                 continue
             stmt_patterns = [stmt.get("pattern", ""), *stmt.get("pattern_aliases", ())]
             same_path = any(
@@ -129,7 +129,7 @@ def pattern_query(
     engram,
     text: str,
     context_id: str = "",
-    user_id: str = "",
+    human_id: str = "",
     *,
     include_graph: bool = True,
     include_fallback: bool = True,
@@ -141,9 +141,9 @@ def pattern_query(
     and responses are combined.
 
     Args:
-        text: User input text (may contain multiple sentences).
+        text: Human input text (may contain multiple sentences).
         context_id: Optional conversation context used for turn state.
-        user_id: The speaker; empty means the anonymous user "0". Facts
+        human_id: The speaker; empty means the anonymous human "0". Facts
             the turn teaches belong to the speaker, and only the speaker's
             own facts and shared categories can answer.
         include_graph: Whether a no-pattern result may fall back to graph
@@ -162,7 +162,7 @@ def pattern_query(
     with engram.count_lock:
         engram.query_count += 1
 
-    speaker = sessions_mod.normalize_user_id(user_id)
+    speaker = sessions_mod.normalize_human_id(human_id)
 
     processed_text = text
     if engram.config.get("expand_contractions", False):
@@ -206,7 +206,7 @@ def pattern_query(
         # hedged, and conversation-meta assertions can shape the current
         # turn without becoming shared durable knowledge.
         extracted_facts = []
-        if engram.config.get("learn_user_facts", False) and len(sentence.split()) <= MAX_FACT_SENTENCE_WORDS:
+        if engram.config.get("learn_human_facts", False) and len(sentence.split()) <= MAX_FACT_SENTENCE_WORDS:
             if engram.config.get("use_spacy_facts", False):
                 extracted_facts = extract_facts(sentence)
             else:
@@ -268,12 +268,12 @@ def pattern_query(
                 include_spans=True,
             )
 
-        # Fact admission belongs to the observed user turn, not to the
+        # Fact admission belongs to the observed human turn, not to the
         # availability of a scripted response. Match first so a newly
         # learned fact cannot answer the sentence that introduced it,
         # then persist every admitted fact regardless of match outcome.
         for fact in admitted_facts:
-            engram.learn_fact(fact, introduced_by_user_id=speaker)
+            engram.learn_fact(fact, introduced_by_human_id=speaker)
 
         sentence_candidate: dict = {}
         if scoped_match:
@@ -304,7 +304,7 @@ def pattern_query(
                         render_info=render_info,
                     )
                     authored_text = selected.get("text", "") if not selected.get("template", {}) else ""
-                    learned_capture = bool(selected.get("introduced_by_user_id", "")) and bool(selected.get("template", {}))
+                    learned_capture = bool(selected.get("introduced_by_human_id", "")) and bool(selected.get("template", {}))
                     interpolated = render_info.get("interpolated", False) or learned_capture
                     if (
                         engram.config.get("polish_responses", False)
@@ -442,11 +442,11 @@ def process_statement_template(
     Args:
         stmt: The matched statement.
         captured: Wildcard captures from pattern matching.
-        input_text: Original user input.
+        input_text: Original human input.
         session: Optional session for context.
         thatstars: Wildcard captures from that pattern.
         topicstars: Wildcard captures from topic pattern.
-        speaker: The person whose turn this is. A redirect matches in
+        speaker: The human whose turn this is. A redirect matches in
             their chat's scope, and a category the template teaches
             (``<learn>``) belongs to them.
         response_state: This rendered candidate's native unknown marker, shared with redirects.
@@ -576,7 +576,7 @@ def process_statement_template(
                 that=learn_data.get("that", ""),
                 topic=learn_data.get("topic", ""),
                 tier=Tier.DYNAMIC,
-                introduced_by_user_id=speaker,
+                introduced_by_human_id=speaker,
                 replace_learned=True,
             )
 

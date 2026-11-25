@@ -242,7 +242,7 @@ def run(manifest_path: Path) -> dict:
                 result = core.resolve_request(
                     turn.get("text", ""),
                     request_id,
-                    user_id=f"benchmark:{case_id}",
+                    human_id=f"benchmark:{case_id}",
                     namespace="benchmark",
                     configured_resolvers=("structured_graph",),
                 )

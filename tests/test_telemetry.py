@@ -14,12 +14,12 @@ def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resour
     request = "Does Sarah like private sushi?"
     namespace = "private-customer-namespace"
     core = EngramCore()
-    learned = core.learn_response(request, "Sarah likes sushi.", "telemetry-learn", user_id="Sarah", namespace=namespace)
+    learned = core.learn_response(request, "Sarah likes sushi.", "telemetry-learn", human_id="Sarah", namespace=namespace)
 
     answer = core.resolve_request(
         request,
         "telemetry-answer",
-        user_id="Sarah",
+        human_id="Sarah",
         namespace=namespace,
         configured_resolvers=("exact",),
         accept_exact=True,
@@ -27,7 +27,7 @@ def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resour
     replay = core.resolve_request(
         request,
         "telemetry-answer",
-        user_id="Sarah",
+        human_id="Sarah",
         namespace=namespace,
         configured_resolvers=("exact",),
         accept_exact=True,
@@ -35,7 +35,7 @@ def test_resolution_telemetry_aggregates_fixed_outcomes_contributions_and_resour
     miss = core.resolve_request(
         "Does Sarah like private dogs?",
         "telemetry-miss",
-        user_id="Sarah",
+        human_id="Sarah",
         namespace=namespace,
         configured_resolvers=("exact",),
     )

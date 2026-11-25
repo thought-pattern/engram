@@ -52,9 +52,9 @@ The MCP host starts and stops the process. `engram_start` creates a conversation
 
 The MCP adapter exposes one active `ConversationRuntime` at a time.
 `EngramCore` can own multiple user runtimes, and the gRPC interface
-uses that capability for concurrent user contexts. Run separate MCP processes
+uses that capability for concurrent human contexts. Run separate MCP processes
 for concurrent tool lifecycles. User context is keyed by the caller-owned
-`user_id`. MCP canonicalizes an omitted or empty label to the unknown user
+`human_id`. MCP canonicalizes an omitted or empty label to the unknown user
 `"0"` before starting the core conversation and retains `"0"` for every
 subsequent tool in that lifecycle.
 
@@ -122,13 +122,13 @@ Startup runs the same transport-neutral component preflight as Python and gRPC. 
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
-| `user_id` | `"0"` | Arbitrary caller-owned, case-sensitive user label. Empty values normalize to `"0"`. |
+| `human_id` | `"0"` | Arbitrary caller-owned, case-sensitive user label. Empty values normalize to `"0"`. |
 | `initial_bot_text` | `""` | Engram utterance immediately before the first user turn; establishes `<that>`-style context. |
 | `config_path` | `""` | Optional YAML configuration path. |
 | `random_seed` | `0` | Deterministic per-turn random seed value. Nonzero values enable seeding automatically. |
 | `random_seed_present` | `false` | Explicitly enables the seed, preserving seed `0` as a meaningful value. |
 
-The result includes `started`, normalized `user_id`, `initial_bot_text`,
+The result includes `started`, normalized `human_id`, `initial_bot_text`,
 `turn_count`, `statement_count`, and `memory_only`.
 
 ### `engram_send`
@@ -148,7 +148,7 @@ The returned turn event includes:
 
 The call mutates conversation state and learns, for this user only, the facts whose
 admission decision is `admitted`, regardless of whether a scripted pattern matched that turn, when
-`learn_user_facts` is enabled. Cache proposals use `engram_propose`.
+`learn_human_facts` is enabled. Cache proposals use `engram_propose`.
 When graph access is enabled, graph-eligible turns consult it before accepting a
 scripted factual response. The shared runtime clock supplies the graph evaluation
 time. Graph misses and failures preserve normal local fallback.
@@ -195,7 +195,7 @@ All other tools require an active conversation established by `engram_start`.
 
 Runs the same transport-neutral unified resolution pipeline exposed by Python
 `EngramCore.resolve_request`, CLI `query`, and gRPC `ResolveEvidence`. The required
-arguments are `request` and idempotent `request_id`. Optional `user_id`, namespace,
+arguments are `request` and idempotent `request_id`. Optional `human_id`, namespace,
 context fingerprint, authoritative identity, metadata/source requirements, budget,
 resolver selection, and `accept_exact` fields have the same contracts documented in
 [the Python API](python-api.md).
@@ -229,7 +229,7 @@ Example call sequence, shown as tool names and JSON arguments:
 
 ```text
 engram_start {
-  "user_id": "Robin",
+  "human_id": "Robin",
   "initial_bot_text": ".",
   "random_seed": 42
 }
@@ -305,7 +305,7 @@ Input:
 {
   "request": "What are the support hours?",
   "request_id": "req-123",
-  "user_id": "Robin",
+  "human_id": "Robin",
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "required_metadata": {
@@ -329,7 +329,7 @@ Output:
 {
   "proposal_id": "proposal-456",
   "request_id": "req-123",
-  "user_id": "Robin",
+  "human_id": "Robin",
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "resolved_request": "What are the support hours?",
@@ -344,7 +344,7 @@ Output:
       "hit_count": 3,
       "query_count": 5,
       "source_label": "support-answers",
-      "introduced_by_user_id": "",
+      "introduced_by_human_id": "",
       "metadata": {
         "actor_model": "model-7",
         "regulator_model": "model-3",
@@ -399,7 +399,7 @@ of `IDK` are rejected. `source_label` defaults to `unknown`.
   "request": "What are the support hours?",
   "response": "Support is available from 09:00 to 17:00 UTC.",
   "request_id": "req-123",
-  "user_id": "Robin",
+  "human_id": "Robin",
   "namespace": "support",
   "context_fingerprint": "account-tier:pro",
   "source_label": "support-answers",
@@ -417,7 +417,7 @@ The result returns `learned`, `statement_id`, `action` (`created`, `replaced` or
 same question: an ACTIVE artifact holding one of its retrieval keys in the same exact
 scope becomes SUPERSEDED by it in the same mutation and is named in
 `superseded_statement_ids`. Learned responses remain shared knowledge
-(`introduced_by_user_id` is `""`), while the calling user's previous-response
+(`introduced_by_human_id` is `""`), while the calling user's previous-response
 context is updated. `request_id` makes retries idempotent and conflicting reuse
 is an error.
 
@@ -444,7 +444,7 @@ is retry-safe by `request_id`; conflicting request reuse is an error.
 Proposals and idempotency records are process-local
 and bounded to 1,000 records of each kind. They are cleared by `engram_stop`
 and process exit. Learned responses, scope/provenance metadata, statistics,
-retirements, and user context share that process-only lifetime.
+retirements, and human context share that process-only lifetime.
 
 Service calls are serialized by the conversation service lock. Concurrent
 identical resolutions therefore record exactly one accepted hit.
@@ -470,9 +470,9 @@ log.
 - The host can list all eleven tools after startup.
 - `engram_start` followed by `engram_send` preserves one runtime across calls.
 - A second `engram_start` fails until `engram_stop`.
-- `user_id` defaults to `"0"` and preserves explicit case.
+- `human_id` defaults to `"0"` and preserves explicit case.
 - `engram_inspect` preserves the turn count.
-- `engram_add_fact` changes shared knowledge and preserves user context.
+- `engram_add_fact` changes shared knowledge and preserves human context.
 - `engram_finish` returns the report without writing files and allows another send.
 - `engram_stop` discards process memory and releases the runtime.
 - `engram_query` returns the same unified result semantics as CLI, Python, and gRPC.

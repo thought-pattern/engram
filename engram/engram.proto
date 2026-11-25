@@ -6,14 +6,14 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 
 // A single Engram process owns one instance of this service and one shared
-// EngramCore. Conversation context is isolated by user_id; learned knowledge
+// EngramCore. Conversation context is isolated by human_id; learned knowledge
 // is shared by the core.
 service EngramService {
   rpc StartConversation(StartConversationRequest) returns (google.protobuf.Struct);
   rpc Chat(ChatRequest) returns (google.protobuf.Struct);
-  rpc InspectConversation(UserRequest) returns (google.protobuf.Struct);
-  rpc FinishConversation(UserRequest) returns (ConversationReport);
-  rpc StopConversation(UserRequest) returns (google.protobuf.Struct);
+  rpc InspectConversation(HumanRequest) returns (google.protobuf.Struct);
+  rpc FinishConversation(HumanRequest) returns (ConversationReport);
+  rpc StopConversation(HumanRequest) returns (google.protobuf.Struct);
 
   rpc AddFact(AddFactRequest) returns (google.protobuf.Struct);
   rpc SetPredicate(SetPredicateRequest) returns (PredicateResponse);
@@ -34,26 +34,26 @@ service EngramEvidenceService {
 }
 
 message StartConversationRequest {
-  string user_id = 1;
+  string human_id = 1;
   string initial_bot_text = 2;
   optional int64 random_seed = 3;
 }
 
 message ChatRequest {
-  string user_id = 1;
+  string human_id = 1;
   string text = 2;
   string conversation_token = 3;
 }
 
-message UserRequest {
-  string user_id = 1;
+message HumanRequest {
+  string human_id = 1;
   string conversation_token = 2;
 }
 
 message ConversationReport {
   string started_at = 1;
   string finished_at = 2;
-  string user_id = 3;
+  string human_id = 3;
   string initial_bot_text = 4;
   int64 random_seed = 5;
   bool random_seed_present = 6;
@@ -94,13 +94,13 @@ message AddFactRequest {
 }
 
 message SetPredicateRequest {
-  string user_id = 1;
+  string human_id = 1;
   string name = 2;
   string value = 3;
 }
 
 message GetPredicateRequest {
-  string user_id = 1;
+  string human_id = 1;
   string name = 2;
   string default_value = 3;
 }
@@ -112,7 +112,7 @@ message PredicateResponse {
 message ProposeRequest {
   string request = 1;
   string request_id = 2;
-  string user_id = 3;
+  string human_id = 3;
   string namespace = 4;
   string context_fingerprint = 5;
   optional int32 limit = 6;
@@ -140,7 +140,7 @@ message LearnResponseRequest {
   string request = 1;
   string response = 2;
   string request_id = 3;
-  string user_id = 4;
+  string human_id = 4;
   string namespace = 5;
   string context_fingerprint = 6;
   string source_label = 7;
@@ -160,7 +160,7 @@ message ResponsesBySupportRequest {
 message ResolveEvidenceRequest {
   string request = 1;
   string request_id = 2;
-  string user_id = 3;
+  string human_id = 3;
   string namespace = 4;
   string context_fingerprint = 5;
   google.protobuf.Struct identity = 6;

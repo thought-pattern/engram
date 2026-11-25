@@ -57,7 +57,7 @@ from engram.identity import query_identity_from_dict
 from engram.resolution import resolution_result_to_dict
 from engram.resolution_budget import resolution_budget_from_dict
 from engram.service import EngramCore
-from engram.service_requests import normalize_service_user_id
+from engram.service_requests import normalize_service_human_id
 
 LOGGER = getLogger(__name__)
 # Log levels for errors returned to a client: internal failures are errors,
@@ -191,7 +191,7 @@ def to_conversation_report(value: dict) -> engram_pb2.ConversationReport:
     result = engram_pb2.ConversationReport(
         started_at=str(value.get("started_at", "")),
         finished_at=str(value.get("finished_at", "")),
-        user_id=str(value.get("user_id", "")),
+        human_id=str(value.get("human_id", "")),
         initial_bot_text=str(value.get("initial_bot_text", "")),
         random_seed=int(value.get("random_seed", 0)),
         random_seed_present=bool(value.get("random_seed_present", False)),
@@ -426,7 +426,7 @@ class EngramGrpcService(EngramServiceServicer):
             "StartConversation",
             lambda: to_struct(
                 self.core.start_conversation(
-                    user_id=normalize_service_user_id(request.user_id),
+                    human_id=normalize_service_human_id(request.human_id),
                     initial_bot_text=request.initial_bot_text,
                     random_seed=random_seed,
                     random_seed_present=random_seed_present,
@@ -442,46 +442,46 @@ class EngramGrpcService(EngramServiceServicer):
             "Chat",
             lambda: to_struct(
                 self.core.chat(
-                    normalize_service_user_id(request.user_id), request.text, conversation_token=request.conversation_token
+                    normalize_service_human_id(request.human_id), request.text, conversation_token=request.conversation_token
                 )
             ),
         )
         result = require_struct_message(message, "Chat")
         return result
 
-    def InspectConversation(self, request: engram_pb2.UserRequest, context) -> struct_pb2.Struct:
+    def InspectConversation(self, request: engram_pb2.HumanRequest, context) -> struct_pb2.Struct:
         message = self.invoke(
             context,
             "InspectConversation",
             lambda: to_struct(
                 self.core.inspect_conversation(
-                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                    normalize_service_human_id(request.human_id), conversation_token=request.conversation_token
                 )
             ),
         )
         result = require_struct_message(message, "InspectConversation")
         return result
 
-    def FinishConversation(self, request: engram_pb2.UserRequest, context) -> engram_pb2.ConversationReport:
+    def FinishConversation(self, request: engram_pb2.HumanRequest, context) -> engram_pb2.ConversationReport:
         message = self.invoke(
             context,
             "FinishConversation",
             lambda: to_conversation_report(
                 self.core.finish_conversation(
-                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                    normalize_service_human_id(request.human_id), conversation_token=request.conversation_token
                 )
             ),
         )
         result = require_report_message(message)
         return result
 
-    def StopConversation(self, request: engram_pb2.UserRequest, context) -> struct_pb2.Struct:
+    def StopConversation(self, request: engram_pb2.HumanRequest, context) -> struct_pb2.Struct:
         message = self.invoke(
             context,
             "StopConversation",
             lambda: to_struct(
                 self.core.stop_conversation(
-                    normalize_service_user_id(request.user_id), conversation_token=request.conversation_token
+                    normalize_service_human_id(request.human_id), conversation_token=request.conversation_token
                 )
             ),
         )
@@ -497,7 +497,7 @@ class EngramGrpcService(EngramServiceServicer):
 
     def SetPredicate(self, request: engram_pb2.SetPredicateRequest, context) -> engram_pb2.PredicateResponse:
         def set_predicate() -> engram_pb2.PredicateResponse:
-            self.core.set_predicate(request.user_id, request.name, request.value)
+            self.core.set_predicate(request.human_id, request.name, request.value)
             result = engram_pb2.PredicateResponse(value=request.value)
             return result
 
@@ -510,7 +510,7 @@ class EngramGrpcService(EngramServiceServicer):
             context,
             "GetPredicate",
             lambda: engram_pb2.PredicateResponse(
-                value=self.core.get_predicate(request.user_id, request.name, request.default_value),
+                value=self.core.get_predicate(request.human_id, request.name, request.default_value),
             ),
         )
         result = require_predicate_message(message, "GetPredicate")
@@ -525,7 +525,7 @@ class EngramGrpcService(EngramServiceServicer):
                 self.core.propose(
                     request=request.request,
                     request_id=request.request_id,
-                    user_id=request.user_id,
+                    human_id=request.human_id,
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     limit=limit,
@@ -565,7 +565,7 @@ class EngramGrpcService(EngramServiceServicer):
                     request=request.request,
                     response=request.response,
                     request_id=request.request_id,
-                    user_id=request.user_id,
+                    human_id=request.human_id,
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     source_label=source_label,
@@ -632,7 +632,7 @@ class EngramEvidenceGrpcService(EngramEvidenceServiceServicer):
                 self.adapter.core.resolve_request(
                     request=request.request,
                     request_id=request.request_id,
-                    user_id=request.user_id,
+                    human_id=request.human_id,
                     namespace=request.namespace,
                     context_fingerprint=request.context_fingerprint,
                     identity=identity_from_struct(request.identity),

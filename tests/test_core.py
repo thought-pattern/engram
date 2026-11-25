@@ -467,11 +467,11 @@ def test_engram_sessions_create_session_with_id() -> None:
 
 def test_engram_sessions_create_session_with_metadata() -> None:
     engram = Engram()
-    sessions.start_session(engram, session_id="test", metadata={"user_id": "123"})
+    sessions.start_session(engram, session_id="test", metadata={"human_id": "123"})
 
     with engram.session_lock:
         session = sessions.get_session(engram, "test")
-        assert session.get("metadata", {}).get("user_id", "") == "123"
+        assert session.get("metadata", {}).get("human_id", "") == "123"
 
 
 def test_engram_sessions_get_session() -> None:
@@ -864,15 +864,15 @@ def test_engram_polish_repairs_spliced_captures_but_keeps_authored_code() -> Non
 def test_engram_redirect_reaches_a_learned_fact_alias() -> None:
     engram = Engram()
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
-    pipeline.chat(engram, "Sushi is good.", user_id="Robin")
+    pipeline.chat(engram, "Sushi is good.", human_id="Robin")
     engram.store("", pattern="WHAT TASTES GOOD", template={"redirect": "what is good"})
 
-    assert engram.pattern_query("What is good?", user_id="Robin")[2] == "Sushi is good."
-    result = engram.pattern_query("What tastes good?", user_id="Robin")
+    assert engram.pattern_query("What is good?", human_id="Robin")[2] == "Sushi is good."
+    result = engram.pattern_query("What tastes good?", human_id="Robin")
 
     assert result
     assert result[2] == "Sushi is good."
-    assert engram.pattern_query("What tastes good?", user_id="Alex")[2] == "Go on."
+    assert engram.pattern_query("What tastes good?", human_id="Alex")[2] == "Go on."
 
 
 def test_engram_context_matching_set_topic_applies_to_the_next_sentence() -> None:
@@ -1340,7 +1340,7 @@ def test_query_session_symmetry_query_creates_missing_session() -> None:
 
 def test_soak_regressions_typo_question_not_learned_as_fact() -> None:
     """Spelling correction reveals a typo'd question before fact learning."""
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Fallback.", pattern="*", tier=Tier.STATIC)
     engram.store("It is time.", pattern="WHAT TIME IS IT", tier=Tier.STATIC)
 
@@ -1352,7 +1352,7 @@ def test_soak_regressions_typo_question_not_learned_as_fact() -> None:
 
 def test_soak_regressions_possessive_sentence_not_greeted() -> None:
     """'His name is Rex.' must not stem-match a greeting pattern."""
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Hi there!", pattern="HI *", tier=Tier.STATIC)
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
@@ -1363,7 +1363,7 @@ def test_soak_regressions_possessive_sentence_not_greeted() -> None:
 
 def test_soak_regressions_learned_facts_keep_the_category() -> None:
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
 
     for i in range(12):
@@ -1380,14 +1380,14 @@ def test_user_assertions_answer_only_their_speaker() -> None:
 
     engram.pattern_query(
         "The support code is 9999.",
-        user_id="user-a",
+        human_id="user-a",
     )
 
-    assert engram.pattern_query("What is the support code?", user_id="user-b")[2] == "Go on."
+    assert engram.pattern_query("What is the support code?", human_id="user-b")[2] == "Go on."
     assert engram.pattern_query("What is the support code?")[2] == "Go on."
-    assert engram.pattern_query("What is the support code?", user_id="user-a")[2] == "The support code is 9999."
+    assert engram.pattern_query("What is the support code?", human_id="user-a")[2] == "The support code is 9999."
     learned_ids = engram.pattern_statements.get("SUPPORT CODE", [])
-    assert [engram.get_statement(learned_id).get("introduced_by_user_id", "") for learned_id in learned_ids] == ["user-a"]
+    assert [engram.get_statement(learned_id).get("introduced_by_human_id", "") for learned_id in learned_ids] == ["user-a"]
 
 
 # Research facts enter shared knowledge without entering a user context.
@@ -1402,11 +1402,11 @@ def test_external_fact_ingestion_add_fact_is_unattributed_and_globally_retrievab
     )
 
     stmt = engram.get_statement(stmt_id)
-    assert "introduced_by_user_id" in stmt
-    assert stmt.get("introduced_by_user_id", "") == ""
+    assert "introduced_by_human_id" in stmt
+    assert stmt.get("introduced_by_human_id", "") == ""
     assert stmt.get("source_label", "") == "research-tool"
     assert engram.sessions == {}
-    assert engram.pattern_query("What is Tokyo?", user_id="carol")[2] == ("Tokyo is the capital of Japan.")
+    assert engram.pattern_query("What is Tokyo?", human_id="carol")[2] == ("Tokyo is the capital of Japan.")
     assert metrics.get_dynamic_count(engram) == 1
     assert "WHAT IS TOKYO" in stmt.get("pattern_aliases", [])
 
@@ -1458,7 +1458,7 @@ def test_external_fact_ingestion_add_fact_validates_input() -> None:
 
 def test_known_fact_contradiction_keeps_the_category_and_replaces_the_stored_fact() -> None:
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     engram.pattern_query("The sky is blue.")
     result = engram.pattern_query("The sky is green.")
@@ -1471,7 +1471,7 @@ def test_known_fact_contradiction_keeps_the_category_and_replaces_the_stored_fac
 
 def test_known_fact_restatement_keeps_the_category() -> None:
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     engram.pattern_query("The sky is blue.")
     result = engram.pattern_query("The sky is blue.")
@@ -1486,7 +1486,7 @@ def test_known_fact_restatement_keeps_the_category() -> None:
 
 def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() -> None:
 
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     engram.pattern_query("The sky is blue.")
 
@@ -1498,7 +1498,7 @@ def test_fact_content_retrieval_yes_no_question_keeps_the_wildcard_category() ->
 
 
 def test_fact_content_retrieval_who_is_pattern_generated() -> None:
-    engram = Engram(config=engram_config(learn_user_facts=True))
+    engram = Engram(config=engram_config(learn_human_facts=True))
     engram.store("Go on.", pattern="*", tier=Tier.STATIC)
     engram.pattern_query("Rex is a golden retriever.")
 

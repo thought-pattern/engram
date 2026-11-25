@@ -94,7 +94,7 @@ lists retain their supplied order. Phrasing does not establish source entailment
 | --- | --- | --- |
 | `request` | nonempty string | Original caller text; bounded and validated |
 | `request_id` | nonempty string | Retry identity; conflicting reuse fails |
-| `user_id` | nonempty string, default `"0"` | Selects isolated, TTL-bound context for bounded follow-up enrichment |
+| `human_id` | nonempty string, default `"0"` | Selects isolated, TTL-bound context for bounded follow-up enrichment |
 | `namespace` | string, default `""` | Exact scope component |
 | `context_fingerprint` | string, default `""` | Exact scope component |
 | `identity` | mapping, default `{}` | Empty builds standalone identity; nonempty must be a validated authoritative `QueryIdentity` with matching scope |
@@ -144,7 +144,7 @@ access is:
 result = core.resolve_request(
     "What is Engram?",
     "resolution-42",
-    user_id="account-42",
+    human_id="account-42",
     namespace="support",
     configured_resolvers=("exact", "sparse", "support_semantic"),
 )
@@ -163,7 +163,7 @@ inside `evidence_package`; fusion authorizes an Engram answer.
 The compact previous query frame supplies session context; the repository owns
 accepted knowledge. It
 is defined with canonical relation resolution in the
-[graph retrieval contracts](graph-retrieval.md). `user_id` selects the bounded
+[graph retrieval contracts](graph-retrieval.md). `human_id` selects the bounded
 conversation context used to enrich the frame.
 
 ## Feedback and accounting

@@ -58,7 +58,7 @@ def test_resolve_request_keeps_contextual_frame_in_process_memory() -> None:
     core.resolve_request(
         "When was Ada Lovelace born?",
         "persisted-context-1",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
 
@@ -136,13 +136,13 @@ def test_follow_up_inherits_only_missing_fields_and_records_source_turn() -> Non
     core.resolve_request(
         "When was Ada Lovelace born?",
         "sarah-1",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
     core.resolve_request(
         "And where?",
         "sarah-2",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
 
@@ -164,7 +164,7 @@ def test_live_request_keeps_every_entity_while_the_carried_frame_is_bounded() ->
     core = EngramCore()
     request = "Compare Ada Lovelace, Charles Babbage, Alan Turing, Grace Hopper, Eve Adams, and the Paris Summit."
 
-    core.resolve_request(request, "many-entities", user_id="Sarah", configured_resolvers=("exact",))
+    core.resolve_request(request, "many-entities", human_id="Sarah", configured_resolvers=("exact",))
 
     live = core.resolution_requests.get("many-entities", {}).get("frame", {}).get("identity", {}).get("entities", ())
     carried = core.engram.sessions.get("Sarah", {}).get("previous_query_frame", {}).get("subjects", ())
@@ -178,16 +178,16 @@ def test_self_contained_request_and_other_user_do_not_receive_prior_context() ->
     core.resolve_request(
         "When was Ada Lovelace born?",
         "sarah-context",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
     core.resolve_request(
         "Where is London?",
         "sarah-reset",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
-    core.resolve_request("And when?", "robin-first", user_id="Robin", configured_resolvers=("exact",))
+    core.resolve_request("And when?", "robin-first", human_id="Robin", configured_resolvers=("exact",))
 
     sarah = core.engram.sessions.get("Sarah", {}).get("previous_query_frame", {})
     robin = core.engram.sessions.get("Robin", {}).get("previous_query_frame", {})
@@ -214,13 +214,13 @@ def test_topic_change_and_session_expiration_remove_follow_up_context() -> None:
     core.resolve_request(
         "When was Ada Lovelace born?",
         "topic-1",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
     first_turn_session = core.engram.sessions.get("Sarah", {})
     assert first_turn_session
     first_turn_session["active_topic"] = "Grace Hopper"
-    core.resolve_request("And then?", "topic-2", user_id="Sarah", configured_resolvers=("exact",))
+    core.resolve_request("And then?", "topic-2", human_id="Sarah", configured_resolvers=("exact",))
 
     topic_frame = core.resolution_requests.get("topic-2", {}).get("frame", {})
     topic_identity = topic_frame.get("identity", {})
@@ -244,7 +244,7 @@ def test_caller_topic_predicate_is_retained_in_contextual_frames() -> None:
     core.resolve_request(
         "When is the spring festival?",
         "predicate-topic",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
 
@@ -259,14 +259,14 @@ def test_operator_inheritance_obeys_the_same_turn_distance_as_other_fields() -> 
     core.resolve_request(
         "Where was Ada Lovelace born?",
         "distance-1",
-        user_id="Sarah",
+        human_id="Sarah",
         configured_resolvers=("exact",),
     )
     distance_session = core.engram.sessions.get("Sarah", {})
     assert distance_session
     distance_session["query_frame_turn"] = 3
 
-    core.resolve_request("And then?", "distance-4", user_id="Sarah", configured_resolvers=("exact",))
+    core.resolve_request("And then?", "distance-4", human_id="Sarah", configured_resolvers=("exact",))
 
     distant_frame = core.resolution_requests.get("distance-4", {}).get("frame", {})
     distant_identity = distant_frame.get("identity", {})

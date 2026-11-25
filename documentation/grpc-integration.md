@@ -133,7 +133,7 @@ pinned in `pyproject.toml`.
 
 | RPC | Purpose |
 | --- | --- |
-| `StartConversation` | Start one conversation; omitted/empty `user_id` means "0", whose session starts fresh. |
+| `StartConversation` | Start one conversation; omitted/empty `human_id` means "0", whose session starts fresh. |
 | `Chat` | Submit one observed conversation turn. |
 | `InspectConversation` | Return one active conversation and core diagnostics. |
 | `FinishConversation` | Return the current process-local report while the conversation remains active. |
@@ -190,10 +190,10 @@ from engram import engram_pb2, engram_pb2_grpc
 with grpc.insecure_channel("127.0.0.1:50051") as channel:
     conversation = engram_pb2_grpc.EngramServiceStub(channel)
     conversation.StartConversation(
-        engram_pb2.StartConversationRequest(user_id="Alice")
+        engram_pb2.StartConversationRequest(human_id="Alice")
     )
     turn = conversation.Chat(
-        engram_pb2.ChatRequest(user_id="Alice", text="Hello, Engram."),
+        engram_pb2.ChatRequest(human_id="Alice", text="Hello, Engram."),
         timeout=5,
     )
     print(MessageToDict(turn, preserving_proto_field_name=True).get("response", ""))
@@ -203,7 +203,7 @@ with grpc.insecure_channel("127.0.0.1:50051") as channel:
         engram_pb2.ResolveEvidenceRequest(
             request="What evidence is available?",
             request_id="resolve-1",
-            user_id="Alice",
+            human_id="Alice",
         ),
         timeout=5,
     )
