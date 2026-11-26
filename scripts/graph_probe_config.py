@@ -6,7 +6,14 @@ from yaml import safe_dump as yaml_safe_dump, safe_load as yaml_safe_load
 
 # The Tapestry memgraph connection fields an Engram graph config may carry, with their
 # concrete types; only fields present in the owner config are copied.
-CONNECTION_FIELD_DEFAULTS = {"host": "", "password": "", "port": 0, "username": ""}
+CONNECTION_FIELD_DEFAULTS = {
+    "ca_certificate": "",
+    "host": "",
+    "password": "",
+    "port": 0,
+    "use_tls": False,
+    "username": "",
+}
 
 
 def materialize_engram_graph_config(source: str, destination: Path) -> str:

@@ -185,6 +185,8 @@ def graph_connection(config_path: str) -> MemGraphConnection:
         port=int(memgraph.get("port", 0) or 0),
         username=str(memgraph.get("username", "") or ""),
         password=str(memgraph.get("password", "") or ""),
+        use_tls=memgraph.get("use_tls", False) is True,
+        ca_certificate=str(memgraph.get("ca_certificate", "") or ""),
     )
     if not client.connect():
         raise RuntimeError("the graph database is unavailable")

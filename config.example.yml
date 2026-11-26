@@ -153,6 +153,8 @@ graph:
   port: 7687
   username: ""
   password: ""
+  use_tls: false
+  ca_certificate: ""
   enabled: false # true runs with the graph database above
   vector_enabled: false
   vector_index_name: proposition_embeddings

@@ -88,6 +88,8 @@ def graph_config(
     port: int = DEFAULT_GRAPH_PORT,
     username: str = "",
     password: str = "",
+    use_tls: bool = False,
+    ca_certificate: str = "",
     enabled: bool = False,
     vector_enabled: bool = False,
     vector_index_name: str = PROPOSITION_VECTOR_INDEX_NAME,
@@ -112,6 +114,14 @@ def graph_config(
         raise ValueError("graph username must be a string")
     if not isinstance(password, str):
         raise ValueError("graph password must be a string")
+    if not isinstance(use_tls, bool):
+        raise ValueError("graph use_tls must be a boolean")
+    if not isinstance(ca_certificate, str):
+        raise ValueError("graph ca_certificate must be a string")
+    if ca_certificate.strip() and not use_tls:
+        raise ValueError("graph ca_certificate requires graph use_tls")
+    if ca_certificate.strip() and "-----BEGIN CERTIFICATE-----" not in ca_certificate:
+        raise ValueError("graph ca_certificate must contain PEM certificate data")
     if not isinstance(enabled, bool):
         raise ValueError("graph enabled must be a boolean")
     if not isinstance(vector_enabled, bool):
@@ -154,6 +164,8 @@ def graph_config(
         "port": port,
         "username": username,
         "password": password,
+        "use_tls": use_tls,
+        "ca_certificate": ca_certificate,
         "enabled": enabled,
         "vector_enabled": vector_enabled,
         "vector_index_name": vector_index_name.strip(),

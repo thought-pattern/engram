@@ -34,6 +34,8 @@ def main() -> None:
         "port": arguments.port or configured.get("port", 7687),
         "username": configured.get("username", ""),
         "password": configured.get("password", ""),
+        "use_tls": configured.get("use_tls", False) is True,
+        "ca_certificate": str(configured.get("ca_certificate", "") or ""),
     }
     connection = MemGraphConnection(**settings)
     try:

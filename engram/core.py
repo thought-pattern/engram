@@ -249,6 +249,8 @@ class Engram:
                 port=graph_config.get("port", 0),
                 username=graph_config.get("username", ""),
                 password=graph_config.get("password", ""),
+                use_tls=graph_config.get("use_tls", False) is True,
+                ca_certificate=str(graph_config.get("ca_certificate", "") or ""),
             )
         # A failed constructor returns no owner that could close the client,
         # so every later failure releases it here before propagating.

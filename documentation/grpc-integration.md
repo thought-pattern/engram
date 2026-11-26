@@ -255,6 +255,7 @@ in code without `http` serves no page, and GetStatus still carries the snapshot.
 | --- | --- |
 | `GET /` | The page; it polls `/api/health` |
 | `GET /health.js`, `/health-common.js`, `/health.css` | The page's renderer, the shared polling and drawing code, and the stylesheet |
+| `GET /brand.css`, `/brand-logo.svg`, and the declared font routes | The packaged Thought Pattern AI palette, seal and web fonts |
 | `GET /api/health` | The snapshot as JSON; GetStatus's `health` member holds the same snapshot |
 | `GET /health/live` | 200 while the listener answers |
 | `GET /health/ready` | 200 while the core is ready and healthy and shutdown has not begun, otherwise 503 |

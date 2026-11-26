@@ -24,6 +24,7 @@ from concurrent.futures import wait as futures_wait
 from datetime import datetime, timedelta
 from logging import getLogger as logging_getLogger
 from math import isfinite as math_isfinite
+from ssl import SSLError, create_default_context
 from threading import Lock as threading_Lock, RLock as threading_RLock, Thread as threading_Thread
 from uuid import UUID
 
@@ -724,6 +725,30 @@ class DriverSchemaConnection:
             raise RuntimeError(f"Query failed ({type(err).__name__})") from err
 
 
+def bolt_driver_target(host: str, port: int, use_tls: bool = False, ca_certificate: str = "") -> tuple[str, dict]:
+    """Build the direct Bolt URI and verified TLS options for one graph endpoint."""
+    if type(use_tls) is not bool:
+        raise ValueError("graph use_tls must be a boolean")
+    if not isinstance(ca_certificate, str):
+        raise ValueError("graph ca_certificate must be a string")
+    formatted_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    pem = ca_certificate.strip()
+    if not use_tls:
+        if pem:
+            raise ValueError("graph ca_certificate requires graph use_tls")
+        plain = (f"bolt://{formatted_host}:{port}", {})
+        return plain
+    if pem:
+        try:
+            tls_context = create_default_context(cadata=pem)
+        except (SSLError, ValueError) as err:
+            raise ValueError("graph ca_certificate is not valid PEM") from err
+        custom_tls = (f"bolt://{formatted_host}:{port}", {"ssl_context": tls_context})
+        return custom_tls
+    system_tls = (f"bolt+s://{formatted_host}:{port}", {})
+    return system_tls
+
+
 class MemGraphConnection:
     """Manages a connection to a Bolt graph database through the neo4j async driver.
 
@@ -743,11 +768,17 @@ class MemGraphConnection:
         port: int = DEFAULT_GRAPH_PORT,
         username: str = "",
         password: str = "",
+        *,
+        use_tls: bool = False,
+        ca_certificate: str = "",
     ):
+        bolt_driver_target(host, port, use_tls, ca_certificate)
         self.host = host
         self.port = port
         self.username = username
         self.password = password
+        self.use_tls = use_tls
+        self.ca_certificate = ca_certificate
         # Sockets the driver's pool has opened, how many had keepalive set, and how many were connected at the last scan.
         self.opened = 0
         self.kept_alive = 0
@@ -768,9 +799,8 @@ class MemGraphConnection:
 
     def driver_uri(self) -> str:
         """Return the direct (non-routing) Bolt URI for the configured host."""
-        host = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
-        result = f"bolt://{host}:{self.port}"
-        return result
+        uri, unused_options = bolt_driver_target(self.host, self.port, self.use_tls, self.ca_certificate)
+        return uri
 
     def socket_opening(self, address) -> list:
         """The pool's resolver: count each socket the pool opens, so its keepalive watchdog is set."""
@@ -797,12 +827,14 @@ class MemGraphConnection:
 
     async def open_driver(self):
         """Create a driver, prove it can reach the database and set its socket's keepalive watchdog."""
+        uri, tls_options = bolt_driver_target(self.host, self.port, self.use_tls, self.ca_certificate)
         driver = AsyncGraphDatabase.driver(
-            self.driver_uri(),
+            uri,
             auth=(self.username, self.password),
             # Taking a pooled connection, opening it included, waits as long as it takes.
             connection_acquisition_timeout=float("inf"),
             resolver=self.socket_opening,
+            **tls_options,
         )
         try:
             await driver.verify_connectivity()
@@ -1247,7 +1279,13 @@ class MemGraphConnection:
 
 
 def connect_graph(
-    host: str = DEFAULT_GRAPH_HOST, port: int = DEFAULT_GRAPH_PORT, username: str = "", password: str = ""
+    host: str = DEFAULT_GRAPH_HOST,
+    port: int = DEFAULT_GRAPH_PORT,
+    username: str = "",
+    password: str = "",
+    *,
+    use_tls: bool = False,
+    ca_certificate: str = "",
 ) -> MemGraphConnection:
     """Connect to the graph database and check that its schema is compatible.
 
@@ -1255,7 +1293,14 @@ def connect_graph(
     unreachable or incompatible graph fails startup rather than presenting
     an empty query result as graph readiness.
     """
-    client = MemGraphConnection(host=host, port=port, username=username, password=password)
+    client = MemGraphConnection(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        use_tls=use_tls,
+        ca_certificate=ca_certificate,
+    )
     client.schema_checked = True
     # Ownership passes to the caller only after validation; every unsuccessful
     # connection or preflight outcome, including a raised catalog read, stops

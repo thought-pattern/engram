@@ -69,7 +69,11 @@ def test_page_serves_the_status_snapshot_and_counts_calls_without_conversation_c
         listener = server.health_page.listener
         assert isinstance(listener, HealthPageServer)
         port = listener.server_port
-        for path, marker in (("/", b"Engram Health"), ("/health.js", b"dependency-issue-rows"), ("/health.css", b":root")):
+        for path, marker in (
+            ("/", b"Engram Health"),
+            ("/health.js", b"dependency-issue-rows"),
+            ("/health.css", b'@import url("/brand.css")'),
+        ):
             status, headers, body = fetch(port, path)
             assert status == 200 and marker in body
             assert headers.get("Cache-Control", "") == "no-store" and headers.get("X-Content-Type-Options", "") == "nosniff"
