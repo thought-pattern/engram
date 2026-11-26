@@ -76,7 +76,7 @@ networkx==3.7
 opentelemetry-api==1.45.2
 preshed==3.0.15
 pycparser==3.12
-pydantic==2.14.3
+pydantic==2.14.4
 # pydantic-core
 pygments==2.21.0
 pyjwt==2.15.1
