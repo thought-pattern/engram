@@ -23,7 +23,7 @@ classifiers = [
 # every module imports its dependencies at the top. Keep in step with
 # requirements.txt, which carries the pinned versions.
 dependencies = [
-    "PyYAML>=6.0.3",
+    "PyYAML>=6.0.4",
     "msgpack==1.2.4",
     "nltk>=3.10.4",
     "spacy>=3.8.18",
