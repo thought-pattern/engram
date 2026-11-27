@@ -11,7 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from engram.config import load_config
-from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, DEFAULT_HUMAN_ID, EMPTY_METADATA
+from engram.constants import DEFAULT_HUMAN_ID, DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_PROPOSE_LIMIT, EMPTY_METADATA
 from engram.constants_identity import QueryOperator
 from engram.conversation_seed import load_conversation_pairs, require_conversation_catch_all
 from engram.errors import (

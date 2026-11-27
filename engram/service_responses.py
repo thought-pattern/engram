@@ -8,7 +8,7 @@ of graph records supports. Each function that takes ``core`` is bound on
 from copy import deepcopy
 
 from engram import sessions
-from engram.constants import DEFAULT_LEARNED_SOURCE_LABEL, DEFAULT_HUMAN_ID, EMPTY_METADATA
+from engram.constants import DEFAULT_HUMAN_ID, DEFAULT_LEARNED_SOURCE_LABEL, EMPTY_METADATA
 from engram.constants_artifacts import (
     MAX_ARTIFACT_ID_BYTES,
     MAX_RESPONSE_BYTES,

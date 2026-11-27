@@ -23,7 +23,7 @@ Usage:
 from math import isfinite as math_isfinite
 
 from engram import sessions as sessions_mod
-from engram.constants import DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE, DEFAULT_HUMAN_ID
+from engram.constants import DEFAULT_HUMAN_ID, DEFAULT_PIPELINE_CONTEXT_LIMIT, DEFAULT_PIPELINE_HIGH_CONFIDENCE
 from engram.constants_artifacts import MAX_RESPONSE_BYTES
 from engram.constants_language import QUESTION_WORDS
 from engram.pattern import PatternMatcher

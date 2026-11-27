@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from engram import sessions
 from engram.artifacts import cached_response_artifact_to_dict, metadata_values_equal
-from engram.constants import DEFAULT_PROPOSE_LIMIT, DEFAULT_HUMAN_ID, EMPTY_METADATA, REGULATOR_OUTCOMES
+from engram.constants import DEFAULT_HUMAN_ID, DEFAULT_PROPOSE_LIMIT, EMPTY_METADATA, REGULATOR_OUTCOMES
 from engram.constants_artifacts import MAX_ARTIFACT_ID_BYTES, MAX_SOURCE_LABEL_BYTES, LifecycleState, Tier
 from engram.constants_evidence import EligibilityExclusionReason
 from engram.constants_feedback import MAX_FEEDBACK_REASON_BYTES, FeedbackObservationKind, FeedbackOutcome, LifecycleHandoffStatus
